@@ -85,7 +85,9 @@ export default defineConfig({
   publicDir: false, // dist/ holds index.html only
   plugins: [
     shaderChunkPaths(),
-    glsl({ root: '/src/shaders', watch: true, minify: false }),
+    // Chunks share helpers (two chunks may both include hash.glsl), and GLSL
+    // rejects a function defined twice, so each chunk lands in a shader once.
+    glsl({ root: '/src/shaders', watch: true, minify: false, removeDuplicatedImports: true }),
     shaderHotSwap(),
     stripShaderCommentUrls(),
     viteSingleFile({ removeViteModuleLoader: true }),

@@ -215,7 +215,8 @@ Don't break this. If a new system does async work, put it behind `ready`.
 - Shaders live in `.glsl/.vert/.frag` files next to the system that uses them, imported as strings and used
   with `ShaderMaterial` or `RawShaderMaterial`. Shared code goes in `src/shaders/chunks/`:
   - From any shader: `#include "chunks/noise.glsl"` (resolved to src/shaders/chunks/ from any folder).
-  - Inside a chunk, include sibling chunks relatively: `#include "hash.glsl"`.
+  - Inside a chunk, include sibling chunks relatively: `#include "hash.glsl"`. A chunk reached twice
+    (two chunks both include `hash.glsl`) lands in the shader once, so chunks need no include guards.
   - `#include <name>` with angle brackets is three.js's ShaderChunk system and is left untouched.
   - vite-plugin-glsl strips shader comments, and shader hot-swap matches materials by source string, so
     pass the imported string straight to the material where you can. Composed strings fall back to a
