@@ -66,11 +66,14 @@ Cloud sessions run in a Linux container with no GPU and no display, so screensho
 
 ### Deploying
 
-`.github/workflows/deploy.yml` runs on every push to `main` (and manually via "Run workflow"):
+`.github/workflows/deploy.yml` runs on every push to `main` (and manually via "Run workflow", which on
+any other branch runs only the build job):
 
 1. **build** (read-only token): `npm ci`, then `npm run verify -- --gl swiftshader` (runners have no GPU).
    It uploads the screenshots as a workflow artifact for review, even when the run fails.
-2. **deploy-pages**: publishes `dist/` to https://bstummer.github.io/tropical-island/.
+2. **deploy-pages**: publishes `dist/` to https://bstummer.github.io/tropical-island/. It needs
+   Settings → Pages → Source: "GitHub Actions". With "Deploy from a branch", GitHub's own Jekyll build
+   also publishes the raw repo on every push and races this job, so the job fails until that is set.
 3. **release**: points the `latest` tag at the commit and replaces the asset of the rolling release
    "Latest build". The download link is always the newest build:
    https://github.com/bstummer/tropical-island/releases/latest/download/tropical-island.html

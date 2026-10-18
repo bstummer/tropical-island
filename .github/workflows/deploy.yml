@@ -4,9 +4,11 @@
 #     https://github.com/bstummer/tropical-island/releases/latest/download/tropical-island.html
 #
 # One-time setup: Settings -> Pages -> Build and deployment -> Source: "GitHub Actions".
+# The deploy job fails until it is set (see its first step).
 #
 # Only the build job installs npm packages, and it gets a read-only token. The
 # jobs that publish (Pages, release) run no third-party code from node_modules.
+# They run for main only: "Run workflow" on another branch just verifies it.
 name: Build and deploy
 
 on:
@@ -62,6 +64,7 @@ jobs:
 
   deploy-pages:
     needs: build
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       pages: write
@@ -70,11 +73,27 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      # With Source "Deploy from a branch", GitHub also runs its own Jekyll build on every
+      # push. It publishes the raw repo (source index.html, src/, CLAUDE.md) and races this deploy.
+      - name: Check that Pages deploys from this workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if build_type=$(gh api "repos/$GITHUB_REPOSITORY/pages" --jq .build_type); then
+            if [ "$build_type" != workflow ]; then
+              echo "::error::GitHub Pages deploys from a branch, so its own Jekyll build publishes the raw repository and races this deploy. Set Settings -> Pages -> Build and deployment -> Source to \"GitHub Actions\", then re-run this workflow."
+              exit 1
+            fi
+          else
+            echo "::warning::Could not read the Pages settings; skipping the source check."
+          fi
+
       - id: deployment
         uses: actions/deploy-pages@v5
 
   release:
     needs: build
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: write
