@@ -30,8 +30,9 @@ When choosing between approaches, pick the one that looks better in the screensh
 - **`three` is the only runtime dependency.** Ask the user before adding another (runtime or dev).
 - **All randomness goes through `src/core/random.js`** (`ctx.rng('name')`), and **all time goes through
   `src/core/clock.js`** (`ctx.clock`, or the `dt`/`t` passed to `update`). `Math.random`, `Date.now`,
-  `new Date`, `performance.now`, `THREE.Clock`/`Timer` and `MathUtils.rand*`/`seededRandom` are
-  forbidden anywhere else in `src/`. `npm run check` lints for these. three.js internals are exempt.
+  `new Date`, `performance.now`, `THREE.Clock`/`Timer`, `MathUtils.rand*`/`seededRandom` and the
+  `.random()`/`.randomDirection()` methods of three's vectors and quaternions are forbidden anywhere
+  else in `src/`. `npm run check` lints for these. three.js internals are exempt.
 
 ## 3. Commands
 

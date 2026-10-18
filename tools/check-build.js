@@ -40,7 +40,8 @@ export const SOURCE_RULES = [
   { id: 'date', name: 'Date.now / new Date()', re: /\bDate\.now\b|\bnew\s+Date\b/g },
   { id: 'performance-now', name: 'performance.now', re: /\bperformance\.now\b/g, except: ['core/clock.js'] },
   { id: 'three-clock', name: 'three.js Clock/Timer', re: /\bnew\s+(THREE\.)?(Clock|Timer)\b/g },
-  { id: 'three-random', name: 'three.js MathUtils random', re: /\b(randInt|randFloat|randFloatSpread|seededRandom)\b/g },
+  // MathUtils helpers, and the .random()/.randomDirection() of three's vectors and quaternions.
+  { id: 'three-random', name: 'three.js random helper', re: /\b(randInt|randFloat|randFloatSpread|seededRandom)\b|(?<!\bMath)\.random(Direction)?\s*\(/g },
 ];
 
 // Content rules for the built HTML.
