@@ -1,0 +1,28 @@
+{
+  "name": "tropical-island",
+  "private": true,
+  "version": "0.0.0",
+  "description": "First-person procedural tropical island that ships as one self-contained HTML file.",
+  "type": "module",
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0"
+  },
+  "scripts": {
+    "postinstall": "playwright install --only-shell chromium",
+    "dev": "vite",
+    "test": "node --test",
+    "build": "vite build",
+    "check": "node tools/check-build.js",
+    "shot": "npm run build && node tools/screenshot.js",
+    "verify": "npm test && npm run build && npm run check && node tools/screenshot.js"
+  },
+  "dependencies": {
+    "three": "^0.186.1"
+  },
+  "devDependencies": {
+    "playwright": "^1.64.1",
+    "vite": "^8.3.4",
+    "vite-plugin-glsl": "^1.6.2",
+    "vite-plugin-singlefile": "^2.3.4"
+  }
+}

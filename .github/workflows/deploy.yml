@@ -1,0 +1,107 @@
+# On every push to main: verify the game (tests, build, check, screenshots), then
+#   - deploy dist/index.html to GitHub Pages, and
+#   - update the rolling "latest" release, whose asset is always the newest build:
+#     https://github.com/bstummer/tropical-island/releases/latest/download/tropical-island.html
+#
+# One-time setup: Settings -> Pages -> Build and deployment -> Source: "GitHub Actions".
+#
+# Only the build job installs npm packages, and it gets a read-only token. The
+# jobs that publish (Pages, release) run no third-party code from node_modules.
+name: Build and deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# One deploy at a time. A newer push waits rather than cancelling one halfway through.
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      # postinstall downloads Playwright's headless Chromium; install-deps adds the system libraries it needs.
+      - run: npm ci
+      - run: npx playwright install-deps chromium
+
+      # The same command as locally. CI runners have no GPU, so render with SwiftShader.
+      - run: npm run verify -- --gl swiftshader
+
+      - name: Upload screenshots for review
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: screenshots
+          path: screenshots/
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Upload the game for the release job
+        uses: actions/upload-artifact@v7
+        with:
+          name: game
+          path: dist/index.html
+          retention-days: 1
+
+      - name: Upload the Pages site
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: dist
+
+  deploy-pages:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: game
+
+      - name: Update the rolling "latest" release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          mv index.html tropical-island.html
+          pages_url="https://${GITHUB_REPOSITORY_OWNER}.github.io/${GITHUB_REPOSITORY#*/}/"
+          notes="Latest build of main at ${GITHUB_SHA::7}, built $(date -u '+%Y-%m-%d %H:%M UTC').
+
+          Download **tropical-island.html** below and open it in a desktop browser. It's a single file that works offline.
+          Play online: ${pages_url}"
+
+          # Point the "latest" tag at this commit (created on the first run).
+          gh api -X PATCH "repos/$GH_REPO/git/refs/tags/latest" -f sha="$GITHUB_SHA" -F force=true > /dev/null \
+            || gh api -X POST "repos/$GH_REPO/git/refs" -f ref=refs/tags/latest -f sha="$GITHUB_SHA" > /dev/null
+
+          if gh release view latest > /dev/null 2>&1; then
+            gh release upload latest tropical-island.html --clobber
+            gh release edit latest --title "Latest build" --notes "$notes" --latest
+          else
+            gh release create latest tropical-island.html --title "Latest build" --notes "$notes" --latest
+          fi

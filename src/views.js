@@ -1,0 +1,25 @@
+// Named camera viewpoints, used by ?view=<name> and by tools/screenshot.js.
+// Plain ESM with no browser APIs, so Node can import it.
+//
+// position: [x, y, z] in meters. Y is up, sea level is y = 0, the island is centred on the origin.
+// yaw:      degrees around +Y. 0 looks toward -Z, 90 looks toward -X (three.js rotation.y).
+// pitch:    degrees, positive looks up.
+// fov:      optional vertical FOV in degrees (defaults to config.camera.fov).
+// timeOfDay: hours, 0–24. ?time=<hours> overrides it.
+//
+// In a dev build, press P to log the current camera as an entry ready to paste here.
+
+export const views = [
+  { name: 'beach', position: [10, 2.2, 88], yaw: 165, pitch: -7, timeOfDay: 11 },
+  { name: 'shoreline', position: [80, 9, 80], yaw: 110, pitch: -14, timeOfDay: 14.5 },
+  { name: 'jungle-edge', position: [-14, 5.1, 70], yaw: -15, pitch: 4, timeOfDay: 9.5 },
+  { name: 'overview', position: [-250, 135, 210], yaw: -50, pitch: -24, fov: 55, timeOfDay: 17 },
+];
+
+export function findView(name) {
+  const view = views.find((v) => v.name === name);
+  if (!view) {
+    throw new Error(`Unknown view "${name}". Known views: ${views.map((v) => v.name).join(', ')}`);
+  }
+  return view;
+}
