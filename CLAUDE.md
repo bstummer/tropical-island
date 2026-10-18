@@ -30,8 +30,9 @@ When choosing between approaches, pick the one that looks better in the screensh
 - **`three` is the only runtime dependency.** Ask the user before adding another (runtime or dev).
 - **All randomness goes through `src/core/random.js`** (`ctx.rng('name')`), and **all time goes through
   `src/core/clock.js`** (`ctx.clock`, or the `dt`/`t` passed to `update`). `Math.random`, `Date.now`,
-  `new Date`, `performance.now`, `THREE.Clock`/`Timer` and `MathUtils.rand*`/`seededRandom` are
-  forbidden anywhere else in `src/`. `npm run check` lints for these. three.js internals are exempt.
+  `new Date`, `performance.now`, `THREE.Clock`/`Timer`, `MathUtils.rand*`/`seededRandom` and the
+  `.random()`/`.randomDirection()` methods of three's vectors and quaternions are forbidden anywhere
+  else in `src/`. `npm run check` lints for these. three.js internals are exempt.
 
 ## 3. Commands
 
@@ -42,7 +43,7 @@ When choosing between approaches, pick the one that looks better in the screensh
 | `npm test` | Unit and invariant tests: `node --test` over `tests/*.test.js` (Node's built-in runner, no test deps). |
 | `npm run build` | Production build to `dist/index.html` (single file, no sourcemaps). The build fails if it would emit anything other than `index.html`. |
 | `npm run check` | `tools/check-build.js`: exactly one file in dist, no `<script src>`/`<link href>`, no URLs except XML namespaces, no network APIs or `import()`, size vs budget (warn > 3 MB raw, fail > 6 MB), plus the src/ determinism lint. |
-| `npm run shot -- [args]` | Builds, then `tools/screenshot.js`: one PNG per view + `contact-sheet.png` + `info.json` in `screenshots/<label>/`. |
+| `npm run shot -- [args]` | Builds, then `tools/screenshot.js`: one PNG per view + `contact-sheet.png` + `info.json` in `screenshots/<label>/`. Then it runs the game for 30 frames in player mode (no `?capture`: real-time loop, input, start screen), which captures never exercise. |
 | `npm run verify` | test + build + check + shot. **The definition-of-done command.** |
 | `node tools/screenshot.js --compare A B` | Before/after sheet `screenshots/compare/A_vs_B.png`: A, B and a diff column per view, with the % of changed pixels. No build needed. |
 
@@ -65,11 +66,14 @@ Cloud sessions run in a Linux container with no GPU and no display, so screensho
 
 ### Deploying
 
-`.github/workflows/deploy.yml` runs on every push to `main` (and manually via "Run workflow"):
+`.github/workflows/deploy.yml` runs on every push to `main` (and manually via "Run workflow", which on
+any other branch runs only the build job):
 
 1. **build** (read-only token): `npm ci`, then `npm run verify -- --gl swiftshader` (runners have no GPU).
    It uploads the screenshots as a workflow artifact for review, even when the run fails.
-2. **deploy-pages**: publishes `dist/` to https://bstummer.github.io/tropical-island/.
+2. **deploy-pages**: publishes `dist/` to https://bstummer.github.io/tropical-island/. It needs
+   Settings → Pages → Source: "GitHub Actions". With "Deploy from a branch", GitHub's own Jekyll build
+   also publishes the raw repo on every push and races this job, so the job fails until that is set.
 3. **release**: points the `latest` tag at the commit and replaces the asset of the rolling release
    "Latest build". The download link is always the newest build:
    https://github.com/bstummer/tropical-island/releases/latest/download/tropical-island.html
@@ -180,6 +184,7 @@ optionally `ready` (a Promise, awaited before a capture starts, for async setup)
 
 - `update(dt, t)`: `dt` and `t` come from the clock. In capture mode `dt` is 0 and `t` is frozen, so
   anything time-driven must be a function of `t`, not an accumulation of `dt`, to look right in screenshots.
+  An exception in `update()` stops the loop and shows the error overlay (in capture mode it fails the capture).
 - Each system uses its own rng stream name (`rng('palms')`, `rng('palms/fronds')`). `rng(name)` always
   restarts the same sequence, and new names never shift existing systems.
 - `dispose()` removes everything the system added and disposes GPU resources.
@@ -215,7 +220,8 @@ Don't break this. If a new system does async work, put it behind `ready`.
 - Shaders live in `.glsl/.vert/.frag` files next to the system that uses them, imported as strings and used
   with `ShaderMaterial` or `RawShaderMaterial`. Shared code goes in `src/shaders/chunks/`:
   - From any shader: `#include "chunks/noise.glsl"` (resolved to src/shaders/chunks/ from any folder).
-  - Inside a chunk, include sibling chunks relatively: `#include "hash.glsl"`.
+  - Inside a chunk, include sibling chunks relatively: `#include "hash.glsl"`. A chunk reached twice
+    (two chunks both include `hash.glsl`) lands in the shader once, so chunks need no include guards.
   - `#include <name>` with angle brackets is three.js's ShaderChunk system and is left untouched.
   - vite-plugin-glsl strips shader comments, and shader hot-swap matches materials by source string, so
     pass the imported string straight to the material where you can. Composed strings fall back to a
@@ -230,7 +236,8 @@ water detail, post effects) reads its knobs from `ctx.quality`.
 
 ## 11. Definition of done
 
-- `npm run verify` passes: tests, build, check, and screenshots with zero console, page or shader errors.
+- `npm run verify` passes: tests, build, check, and screenshots plus the player-mode run with zero
+  console, page or shader errors.
 - New or changed pure logic has tests, and new world logic has invariant tests (section 5).
 - The before/after `--compare` contact sheet has been opened and reviewed, and you can say what changed.
 - New areas have views in `views.js`.

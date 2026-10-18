@@ -103,6 +103,23 @@ test('source lint flags forbidden time and randomness APIs', (t) => {
   assert.equal(checkSources(dir).filter((f) => f.rule === 'date').length, 2);
 });
 
+test('source lint flags three.js methods that call Math.random internally', (t) => {
+  const dir = tempDir(t, {
+    'scatter.js': [
+      "import * as THREE from 'three';",
+      'export const tilt = new THREE.Vector3().randomDirection();',
+      'export const spin = new THREE.Quaternion().random();',
+      'export const offset = new THREE.Vector2().random ();',
+      'export const once = Math.random(); // reported by its own rule only',
+      'export const fine = { randomize: () => 1 }.randomize();',
+    ].join('\n'),
+  });
+  const failures = checkSources(dir);
+  assert.equal(failures.filter((f) => f.rule === 'three-random').length, 3);
+  assert.equal(failures.filter((f) => f.rule === 'math-random').length, 1);
+  assert.equal(failures.length, 4);
+});
+
 test('source lint allows performance.now only in core/clock.js', (t) => {
   const dir = tempDir(t, {
     'core/clock.js': 'export const t = () => performance.now();\n',
