@@ -6,9 +6,10 @@
 //   node tools/screenshot.js --compare <labelA> <labelB>
 //
 // Capture writes screenshots/<label>/<view>.png, contact-sheet.png and info.json.
+// It then runs the game for a few frames in player mode (no ?capture).
 // Compare writes screenshots/compare/<A>_vs_<B>.png: A | B | diff for every view.
 // Exits non-zero on console errors, page errors, shader errors, network requests,
-// capture errors or timeouts.
+// capture errors or timeouts, in either mode.
 // The pure helpers are exported for tests/screenshot.test.js.
 import { chromium } from 'playwright';
 import { execFileSync } from 'node:child_process';
@@ -21,6 +22,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const BUILT_HTML = join(ROOT, 'dist', 'index.html');
 const SHOTS = join(ROOT, 'screenshots');
 const READY_TIMEOUT_MS = 60_000;
+const PLAYER_MODE = { frames: 30, viewport: { width: 640, height: 360 } }; // errors only, so small
 const SHEET_ORIGIN = 'http://contact-sheet.local';
 
 const HARDWARE_ARGS = {
@@ -63,23 +65,12 @@ async function capture(args) {
   const context = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: 1 });
   const results = [];
   const outputs = [];
+  let player = null;
 
   try {
     for (const view of views) {
       const page = await context.newPage();
-      const problems = [];
-      const warnings = [];
-      page.on('console', (msg) => {
-        if (msg.type() === 'error') problems.push(classify(msg.text()));
-        else if (msg.type() === 'warning') warnings.push(msg.text());
-      });
-      page.on('pageerror', (err) => problems.push({ kind: 'page error', text: err.stack ?? err.message }));
-      page.on('request', (req) => {
-        const url = req.url();
-        if (url.split('?')[0] !== fileUrl && !/^(data|blob):/.test(url)) {
-          problems.push({ kind: 'network request', text: url });
-        }
-      });
+      const { problems, warnings } = watchPage(page, fileUrl);
 
       const url = `${fileUrl}?${new URLSearchParams({ ...query, view: view.name })}`;
       const started = Date.now();
@@ -112,12 +103,12 @@ async function capture(args) {
       }
       await page.close();
 
-      const ms = Date.now() - started;
-      console.log(`  ${problems.length ? 'FAIL' : 'ok  '} ${view.name.padEnd(14)} ${String(ms).padStart(5)} ms  ${rel(file)}`);
-      for (const p of problems) console.log(indent(`[${p.kind}] ${p.text}`, 7));
-      if (warnings.length) console.log(indent(`${warnings.length} console warning(s); first: ${warnings[0]}`, 7));
+      report(view.name, Date.now() - started, rel(file), problems, warnings);
       results.push({ view: view.name, file: `${view.name}.png`, info, problems });
     }
+
+    player = await checkPlayerMode(context, fileUrl, query, views[0]);
+    report('player mode', player.ms, `${views[0].name}, real-time loop without ?capture`, player.problems, player.warnings);
 
     const meta = {
       label,
@@ -128,6 +119,7 @@ async function capture(args) {
       size: [width, height],
       params: query,
       results,
+      playerMode: { view: views[0].name, problems: player.problems },
     };
     writeFileSync(join(outDir, 'info.json'), JSON.stringify(meta, null, 2));
     outputs.push(join(outDir, 'info.json'));
@@ -139,14 +131,67 @@ async function capture(args) {
     await browser.close();
   }
 
-  const failed = results.filter((r) => r.problems.length);
+  const failed = results.filter((r) => r.problems.length).map((r) => r.view);
+  if (player.problems.length) failed.push('player mode');
   printOutputs(outputs);
   if (failed.length) {
-    console.log(`screenshot: FAILED (${failed.map((r) => r.view).join(', ')})`);
+    console.log(`screenshot: FAILED (${failed.join(', ')})`);
     return 1;
   }
   console.log('screenshot: OK');
   return 0;
+}
+
+// Capture mode freezes time and skips input, so it never runs the game the way
+// players get it. Run it that way for a few frames: no errors or requests, and
+// the start screen must be up.
+async function checkPlayerMode(context, fileUrl, query, view) {
+  const page = await context.newPage();
+  await page.setViewportSize(PLAYER_MODE.viewport);
+  const { problems, warnings } = watchPage(page, fileUrl);
+  const params = new URLSearchParams({ ...query, view: view.name });
+  params.delete('capture');
+  const started = Date.now();
+  try {
+    await page.goto(`${fileUrl}?${params}`);
+    // Polled once per animation frame, the same frames that drive the game loop.
+    await page.waitForFunction(
+      (frames) => (window.__PLAYER_FRAMES__ = (window.__PLAYER_FRAMES__ ?? 0) + 1) >= frames,
+      PLAYER_MODE.frames,
+      { polling: 'raf', timeout: READY_TIMEOUT_MS },
+    );
+    if (!(await page.evaluate(() => document.getElementById('start').checkVisibility()))) {
+      problems.push({ kind: 'player mode', text: 'the start screen is not showing' });
+    }
+  } catch (err) {
+    problems.push({ kind: 'player mode', text: err.message.split('\n')[0] });
+  }
+  await page.close();
+  return { problems, warnings, ms: Date.now() - started };
+}
+
+// Turns console errors, page errors and requests for anything but the built file into problems.
+function watchPage(page, fileUrl) {
+  const problems = [];
+  const warnings = [];
+  page.on('console', (msg) => {
+    if (msg.type() === 'error') problems.push(classify(msg.text()));
+    else if (msg.type() === 'warning') warnings.push(msg.text());
+  });
+  page.on('pageerror', (err) => problems.push({ kind: 'page error', text: err.stack ?? err.message }));
+  page.on('request', (req) => {
+    const url = req.url();
+    if (url.split('?')[0] !== fileUrl && !/^(data|blob):/.test(url)) {
+      problems.push({ kind: 'network request', text: url });
+    }
+  });
+  return { problems, warnings };
+}
+
+function report(name, ms, detail, problems, warnings) {
+  console.log(`  ${problems.length ? 'FAIL' : 'ok  '} ${name.padEnd(14)} ${String(ms).padStart(5)} ms  ${detail}`);
+  for (const p of problems) console.log(indent(`[${p.kind}] ${p.text}`, 7));
+  if (warnings.length) console.log(indent(`${warnings.length} console warning(s); first: ${warnings[0]}`, 7));
 }
 
 function classify(text, fallback = 'console error') {

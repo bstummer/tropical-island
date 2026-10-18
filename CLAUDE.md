@@ -42,7 +42,7 @@ When choosing between approaches, pick the one that looks better in the screensh
 | `npm test` | Unit and invariant tests: `node --test` over `tests/*.test.js` (Node's built-in runner, no test deps). |
 | `npm run build` | Production build to `dist/index.html` (single file, no sourcemaps). The build fails if it would emit anything other than `index.html`. |
 | `npm run check` | `tools/check-build.js`: exactly one file in dist, no `<script src>`/`<link href>`, no URLs except XML namespaces, no network APIs or `import()`, size vs budget (warn > 3 MB raw, fail > 6 MB), plus the src/ determinism lint. |
-| `npm run shot -- [args]` | Builds, then `tools/screenshot.js`: one PNG per view + `contact-sheet.png` + `info.json` in `screenshots/<label>/`. |
+| `npm run shot -- [args]` | Builds, then `tools/screenshot.js`: one PNG per view + `contact-sheet.png` + `info.json` in `screenshots/<label>/`. Then it runs the game for 30 frames in player mode (no `?capture`: real-time loop, input, start screen), which captures never exercise. |
 | `npm run verify` | test + build + check + shot. **The definition-of-done command.** |
 | `node tools/screenshot.js --compare A B` | Before/after sheet `screenshots/compare/A_vs_B.png`: A, B and a diff column per view, with the % of changed pixels. No build needed. |
 
@@ -232,7 +232,8 @@ water detail, post effects) reads its knobs from `ctx.quality`.
 
 ## 11. Definition of done
 
-- `npm run verify` passes: tests, build, check, and screenshots with zero console, page or shader errors.
+- `npm run verify` passes: tests, build, check, and screenshots plus the player-mode run with zero
+  console, page or shader errors.
 - New or changed pure logic has tests, and new world logic has invariant tests (section 5).
 - The before/after `--compare` contact sheet has been opened and reviewed, and you can say what changed.
 - New areas have views in `views.js`.
