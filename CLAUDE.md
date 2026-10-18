@@ -180,6 +180,7 @@ optionally `ready` (a Promise, awaited before a capture starts, for async setup)
 
 - `update(dt, t)`: `dt` and `t` come from the clock. In capture mode `dt` is 0 and `t` is frozen, so
   anything time-driven must be a function of `t`, not an accumulation of `dt`, to look right in screenshots.
+  An exception in `update()` stops the loop and shows the error overlay (in capture mode it fails the capture).
 - Each system uses its own rng stream name (`rng('palms')`, `rng('palms/fronds')`). `rng(name)` always
   restarts the same sequence, and new names never shift existing systems.
 - `dispose()` removes everything the system added and disposes GPU resources.

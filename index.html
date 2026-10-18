@@ -56,6 +56,10 @@
         user-select: text;
         white-space: pre-wrap;
       }
+      /* An error replaces the start screen, which input.js shows whenever the pointer is free. */
+      body:has(#error:not([hidden])) #start {
+        display: none;
+      }
     </style>
   </head>
   <body>

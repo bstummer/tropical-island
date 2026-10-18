@@ -77,7 +77,16 @@ function boot() {
   if (params.capture) {
     runCapture(ctx, display, systems, frame).catch(fail);
   } else {
-    renderer.setAnimationLoop(frame);
+    // three.js schedules the next frame before running this one, so an error
+    // would otherwise repeat every frame behind a frozen image.
+    renderer.setAnimationLoop(() => {
+      try {
+        frame();
+      } catch (err) {
+        renderer.setAnimationLoop(null);
+        fail(err, 'Stopped.');
+      }
+    });
   }
 }
 
@@ -121,15 +130,16 @@ function captureFail(err) {
   window.__CAPTURE_ERROR__ = String(err?.message ?? err);
 }
 
-function fail(err) {
+function fail(err, title = 'Could not start.') {
   console.error(err);
   captureMode = captureMode || new URLSearchParams(window.location.search).get('capture') === '1';
   if (captureMode) {
     captureFail(err);
     return;
   }
+  if (document.pointerLockElement) document.exitPointerLock(); // free the cursor to read the error
   const box = document.getElementById('error');
-  box.textContent = `Could not start.\n\n${err?.message ?? err}`;
+  box.textContent = `${title}\n\n${err?.message ?? err}`;
   box.hidden = false;
 }
 
