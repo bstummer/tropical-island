@@ -1,10 +1,11 @@
 # Tropical Island
 
 Standing instructions for every session in this repo. Read this file fully before changing anything.
+Then read [PLAN.md](PLAN.md): the stages the game is built in, what's done and what's next.
 
 ## 1. Vision
 
-A first-person walk around a tropical island that runs in the browser and ships as one HTML file. The goal is a place so beautiful that people stop and ask, "Wait, this is in a browser?" Beauty is the product. It ranks above feature count, above code cleverness and above size of the world: one breathtaking cove beats a whole island that merely looks fine.
+A first-person walk around a tropical island that runs in a desktop browser and ships as one HTML file. The goal is a place so beautiful that people stop and ask, "Wait, this is in a browser?" Beauty is the product. It ranks above feature count, above code cleverness and above size of the world: one breathtaking cove beats a whole island that merely looks fine.
 
 The target look is heightened realism, not photorealism: light that behaves physically, with an art-directed, slightly saturated palette. Think of the island a travel poster promises, then make it move.
 
@@ -97,7 +98,8 @@ For every change that can affect pixels:
 4. `node tools/screenshot.js --compare before after`, then **open and look at**
    `screenshots/compare/before_vs_after.png`, and at full-size PNGs where detail matters.
 5. **Never claim a visual improvement without actually looking at the images.** Say what you saw,
-   including what got worse.
+   including what got worse. A still frame can't show motion or speed on real hardware: name what you
+   couldn't check and leave it to the user.
 
 - Only compare captures from the **same GL backend**: hardware and SwiftShader differ by a few levels
   everywhere and more at edges. The compare sheet warns when the backends, Chromium builds, size or params
@@ -108,6 +110,8 @@ For every change that can affect pixels:
   same (`info.json` records it; `package-lock.json` pins Playwright, which pins the build).
 - When you build a new area or feature, add views for it to `src/views.js` (fly there in dev, press P,
   paste). Keep the existing views stable so history stays comparable.
+- Give each new view a `brief`: one line on what the shot is for (focal point, where the sun sits, the
+  mood). Reviews judge each capture against its brief.
 
 ## 5. Testing
 
@@ -121,9 +125,13 @@ check properties of the output, not specific numbers. Examples:
 - Every view is above the terrain and above the water.
 - No plants below the waterline or on slopes steeper than the species allows.
 - Placement zones are ordered from shore to jungle, and every point on the island falls in exactly one.
-- The JS height function and the uploaded heightmap agree at sample points.
+- Anything computed both in JS and on the GPU agrees at sample points (the height function and its
+  heightmap, for one). Where the GPU side can't run in Node, check it in the browser, in the screenshot
+  tool's run.
 
-Run invariants over several seeds (say 1–20), not just the default, so a lucky seed can't hide a bug.
+Run invariants over several seeds (say 1–20), not just the game's seed, so a lucky seed can't hide a bug.
+The game uses one seed for now (`config.defaults.seed`; PLAN.md, Decisions), and the views are framed on it,
+so checks tied to the views (such as "every view is above the terrain") run on that seed only.
 
 How tests are written:
 
@@ -146,6 +154,7 @@ How tests are written:
 index.html            source template: canvas + start overlay + error overlay; loads src/main.js
 vite.config.js        single-file build to dist/; glsl includes; dev shader hot-swap; strips URLs from three's GLSL comments
 README.md             for players and visitors: play/download links, controls, dev quickstart
+PLAN.md               staged build plan, status and session log; update it at the end of every session
 .github/workflows/    deploy.yml: verify, then GitHub Pages + rolling "latest" release on every push to main
 src/
   main.js             boot: params -> renderer/scene/camera -> systems -> loop, plus the capture contract
@@ -158,9 +167,11 @@ tools/                screenshot.js, check-build.js (Node only; both export thei
 tests/                node:test suites + fixtures/check-build/{pass,fail}/*.html
 ```
 
-Planned folders. Create each one when its first real system lands, not before (no empty stubs):
+Planned folders. Create each one when its first real system lands, not before (no empty stubs). The
+contents listed are suggestions, except that `world/island.js` holds the one height function, which is a
+rule:
 
-- `sky/`: atmosphere scattering, clouds, sun and moon, time of day (owns `ctx.timeOfDay` progression).
+- `sky/`: atmosphere scattering, clouds, the sun, time of day (owns `ctx.timeOfDay`: daylight hours only; it changes only when set, never on its own).
 - `water/`: ocean surface, shoreline wash and foam, ripples, shallow-water colour from depth.
 - `plants/`: leaf atlas, shared wind, one file per species (`palm-coconut.js`, ...).
 - `world/`: `island.js` is the **single source of truth for the height function**. It is evaluated in JS
@@ -183,7 +194,9 @@ optionally `ready` (a Promise, awaited before a capture starts, for async setup)
 `frozen`), and `rng` (`rng('name')` returns a stream with `next/range/int/chance/pick/normal`).
 
 - `update(dt, t)`: `dt` and `t` come from the clock. In capture mode `dt` is 0 and `t` is frozen, so
-  anything time-driven must be a function of `t`, not an accumulation of `dt`, to look right in screenshots.
+  anything time-driven must look the same at a given `t` in a capture as in the running game. A function
+  of `t` is the simplest way. Effects that need history (things that build up and fade) may simulate
+  instead, if the simulation is deterministic and a capture can reproduce its state at `t`.
   An exception in `update()` stops the loop and shows the error overlay (in capture mode it fails the capture).
 - Each system uses its own rng stream name (`rng('palms')`, `rng('palms/fronds')`). `rng(name)` always
   restarts the same sequence, and new names never shift existing systems.
@@ -198,6 +211,7 @@ Don't break this. If a new system does async work, put it behind `ready`.
 
 ## 8. Rendering conventions
 
+- **WebGL2** through three's `WebGLRenderer`, with GLSL shaders. Not WebGPU (PLAN.md, Decisions).
 - Linear colour workflow. Author colours as sRGB hex through `THREE.Color` (converted to linear) or as
   linear floats in shaders, and say which in a comment.
 - Render the scene into an **HDR render target** (HalfFloat). Tonemapping happens **only in the post pass**;
@@ -209,8 +223,8 @@ Don't break this. If a new system does async work, put it behind `ready`.
   `#include <common>`, `<dithering_pars_fragment>` and `<dithering_fragment>`, or the post pass's dither.
 - Avoid huge triangles. Tessellate large planes (water, ground skirts): rasterizers clip and interpolate
   giant triangles differently, which moved the shoreline by metres between GPUs.
-- Big outdoor depth range: keep `camera.near` as large as close-up plants allow, and consider reversed-Z
-  or a log depth when shoreline z-fighting shows up.
+- Big outdoor depth range: keep `camera.near` as large as close-up plants allow, with enough depth
+  precision that water and sand never z-fight at the shoreline (PLAN.md Stage 1 picks the approach).
 
 ## 9. Code conventions
 
@@ -242,3 +256,5 @@ water detail, post effects) reads its knobs from `ctx.quality`.
 - The before/after `--compare` contact sheet has been opened and reviewed, and you can say what changed.
 - New areas have views in `views.js`.
 - This file is updated if the structure, commands, conventions or contract changed.
+- PLAN.md's status table and log are updated. A finished stage goes to `review` with its list of known
+  flaws; only the user marks it `done`.

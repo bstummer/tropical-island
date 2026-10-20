@@ -62,7 +62,7 @@ export function create(ctx) {
     const p = camera.position;
     const entry =
       `{ name: 'new-view', position: [${r(p.x)}, ${r(p.y)}, ${r(p.z)}], ` +
-      `yaw: ${deg(look.y)}, pitch: ${deg(look.x)}, fov: ${r(camera.fov, 1)}, timeOfDay: ${r(ctx.timeOfDay)} },`;
+      `yaw: ${deg(look.y)}, pitch: ${deg(look.x)}, fov: ${r(camera.fov, 1)}, timeOfDay: ${r(ctx.timeOfDay)}, brief: '' },`;
     console.log(entry);
     navigator.clipboard?.writeText(entry).then(
       () => console.log('[input] view copied to clipboard'),

@@ -6,6 +6,8 @@
 // pitch:    degrees, positive looks up.
 // fov:      optional vertical FOV in degrees (defaults to config.camera.fov).
 // timeOfDay: hours, 0–24. ?time=<hours> overrides it.
+// brief:    one line on what the shot is for (focal point, where the sun sits, mood). Every new view
+//           needs one; the existing views get theirs in PLAN.md Stage 3.
 //
 // In a dev build, press P to log the current camera as an entry ready to paste here.
 

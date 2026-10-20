@@ -22,7 +22,8 @@ for (const view of views) {
     assert.ok(Math.abs(view.pitch) <= config.movement.maxPitch);
     assert.ok(view.timeOfDay >= 0 && view.timeOfDay <= 24);
     if (view.fov !== undefined) assert.ok(view.fov >= 10 && view.fov <= 120);
-    const extra = Object.keys(view).filter((k) => !['name', 'position', 'yaw', 'pitch', 'fov', 'timeOfDay'].includes(k));
+    if (view.brief !== undefined) assert.ok(typeof view.brief === 'string' && view.brief.trim(), 'brief must be a non-empty line');
+    const extra = Object.keys(view).filter((k) => !['name', 'position', 'yaw', 'pitch', 'fov', 'timeOfDay', 'brief'].includes(k));
     assert.deepEqual(extra, []);
   });
 }
