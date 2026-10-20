@@ -7,6 +7,7 @@
 //   seed     world seed (any string)
 //   capture  1 = screenshot mode
 //   quality  preset name from config.quality.presets
+//   fixture  a test scene from src/fixtures/ instead of the island (for tools/screenshot.js)
 
 export function parseParams(search) {
   const q = new URLSearchParams(search);
@@ -17,6 +18,7 @@ export function parseParams(search) {
     seed: text(q, 'seed'),
     capture: q.get('capture') === '1',
     quality: text(q, 'quality'),
+    fixture: text(q, 'fixture'),
   };
 }
 

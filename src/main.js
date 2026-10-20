@@ -1,6 +1,5 @@
 // Boot sequence: params -> renderer, scene, camera -> systems -> loop.
-// With ?capture=1 it instead renders a fixed number of frames at a frozen time
-// and signals tools/screenshot.js through window.__CAPTURE_READY__ / __CAPTURE_ERROR__.
+// With ?capture=1, core/capture.js takes over the loop for tools/screenshot.js.
 import * as THREE from 'three';
 import { config } from './config.js';
 import { findView } from './views.js';
@@ -8,12 +7,20 @@ import { parseParams } from './core/params.js';
 import { createClock } from './core/clock.js';
 import { createRandom } from './core/random.js';
 import { createRenderer } from './core/renderer.js';
+import { applyView } from './core/camera.js';
+import { runCapture } from './core/capture.js';
 import * as input from './core/input.js';
 import * as placeholder from './world/placeholder.js';
+import * as shimmerFixture from './fixtures/shimmer.js';
+import * as heavyFixture from './fixtures/heavy.js';
 
 // Updated in this order every frame. Each module exports create(ctx) -> { update(dt, t), dispose(), ready? }
 // where the optional `ready` promise is awaited before a capture starts.
 const WORLD_SYSTEMS = [placeholder];
+
+// Test scenes that replace the world with ?fixture=<name>, so tools/screenshot.js
+// can prove each measurement catches what it measures.
+const FIXTURES = { shimmer: [shimmerFixture], heavy: [heavyFixture] };
 
 let captureMode = false;
 
@@ -64,9 +71,10 @@ function boot() {
 
   const systems = [];
   if (!params.capture) systems.push(input.create(ctx));
-  for (const system of WORLD_SYSTEMS) systems.push(system.create(ctx));
+  for (const system of worldSystems(params.fixture)) systems.push(system.create(ctx));
 
   function frame() {
+    display.stats.beginFrame();
     ctx.clock.tick();
     for (const system of systems) system.update(ctx.clock.dt, ctx.clock.elapsed);
     renderer.render(scene, camera);
@@ -90,39 +98,10 @@ function boot() {
   }
 }
 
-async function runCapture(ctx, display, systems, frame) {
-  const { renderer, scene, camera, config } = ctx;
-  await Promise.all(systems.map((s) => s.ready)); // optional async setup per system
-  renderer.compile(scene, camera);
-  for (let i = 0; i < config.capture.warmupFrames; i++) {
-    await nextFrame();
-    frame();
-  }
-  const broken = (renderer.info.programs ?? []).filter((p) => p.diagnostics && !p.diagnostics.runnable);
-  if (broken.length) {
-    throw new Error(`Shader compile failed: ${broken.map((p) => p.name).join(', ')}`);
-  }
-  await nextFrame(); // let the final frame reach the screen
-  window.__CAPTURE_INFO__ = {
-    backend: display.backend(),
-    view: ctx.view.name,
-    timeOfDay: ctx.timeOfDay,
-    t: ctx.clock.elapsed,
-    seed: ctx.params.seed ?? config.defaults.seed,
-    size: [display.size.width, display.size.height],
-    pixelRatio: display.size.pixelRatio,
-  };
-  window.__CAPTURE_READY__ = true;
-}
-
-function applyView(camera, view) {
-  camera.position.fromArray(view.position);
-  camera.rotation.set(THREE.MathUtils.degToRad(view.pitch), THREE.MathUtils.degToRad(view.yaw), 0, 'YXZ');
-  camera.updateMatrixWorld();
-}
-
-function nextFrame() {
-  return new Promise((resolve) => requestAnimationFrame(resolve));
+function worldSystems(fixture) {
+  if (!fixture) return WORLD_SYSTEMS;
+  if (!FIXTURES[fixture]) throw new Error(`Unknown fixture "${fixture}". Fixtures: ${Object.keys(FIXTURES).join(', ')}`);
+  return FIXTURES[fixture];
 }
 
 function captureFail(err) {

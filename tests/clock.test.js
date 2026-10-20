@@ -69,6 +69,35 @@ test('normal mode: a long stall is clamped to 0.1 s', (t) => {
   assert.equal(clock.elapsed, 0.1);
 });
 
+test('seek jumps a frozen clock and keeps it frozen there', (t) => {
+  const time = fakeTime(t);
+  const clock = createClock({ frozen: true, start: 2 });
+  clock.tick();
+  clock.seek(9.5);
+  assert.equal(clock.elapsed, 9.5);
+  for (let i = 0; i < 3; i++) clock.tick();
+  assert.equal(clock.elapsed, 9.5);
+  assert.equal(clock.dt, 0);
+  assert.equal(clock.frame, 4);
+  assert.equal(time.calls, 0);
+});
+
+test('seek in normal mode resumes real time from the new point without a jump', (t) => {
+  const time = fakeTime(t);
+  const clock = createClock({ start: 0 });
+  clock.tick();
+  time.now += 50;
+  clock.tick();
+  clock.seek(100);
+  time.now += 3000; // e.g. a long pause before the next frame
+  clock.tick();
+  assert.equal(clock.dt, 0);
+  assert.equal(clock.elapsed, 100);
+  time.now += 20;
+  clock.tick();
+  assert.ok(Math.abs(clock.elapsed - 100.02) < 1e-9);
+});
+
 test('defaults: not frozen, starts at 0', () => {
   const clock = createClock();
   assert.equal(clock.frozen, false);

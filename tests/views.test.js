@@ -23,7 +23,11 @@ for (const view of views) {
     assert.ok(view.timeOfDay >= 0 && view.timeOfDay <= 24);
     if (view.fov !== undefined) assert.ok(view.fov >= 10 && view.fov <= 120);
     if (view.brief !== undefined) assert.ok(typeof view.brief === 'string' && view.brief.trim(), 'brief must be a non-empty line');
-    const extra = Object.keys(view).filter((k) => !['name', 'position', 'yaw', 'pitch', 'fov', 'timeOfDay', 'brief'].includes(k));
+    for (const [name, centre] of Object.entries(view.crops ?? {})) {
+      assert.match(name, /^[a-z0-9]+(-[a-z0-9]+)*$/, `crop name "${name}"`);
+      assert.ok(centre.length === 2 && centre.every((c) => c >= 0 && c <= 1), `crop "${name}" centre must be [x, y] in 0–1`);
+    }
+    const extra = Object.keys(view).filter((k) => !['name', 'position', 'yaw', 'pitch', 'fov', 'timeOfDay', 'brief', 'crops'].includes(k));
     assert.deepEqual(extra, []);
   });
 }
@@ -46,5 +50,14 @@ test('quality presets are complete and sane', () => {
     assert.ok(preset.renderScale > 0 && preset.renderScale <= 1, `${name}.renderScale`);
     assert.ok(preset.maxPixelRatio >= 1, `${name}.maxPixelRatio`);
     assert.equal(typeof preset.antialias, 'boolean', `${name}.antialias`);
+  }
+});
+
+test('every quality preset has the same cost limits, all positive', () => {
+  assert.deepEqual(Object.keys(config.budget).sort(), Object.keys(config.quality.presets).sort());
+  const metrics = Object.keys(config.budget.high).sort();
+  for (const [name, limits] of Object.entries(config.budget)) {
+    assert.deepEqual(Object.keys(limits).sort(), metrics, `${name} limits`);
+    for (const [metric, limit] of Object.entries(limits)) assert.ok(limit > 0, `${name}.${metric}`);
   }
 });

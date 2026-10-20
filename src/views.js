@@ -8,14 +8,23 @@
 // timeOfDay: hours, 0–24. ?time=<hours> overrides it.
 // brief:    one line on what the shot is for (focal point, where the sun sits, mood). Every new view
 //           needs one; the existing views get theirs in PLAN.md Stage 3.
+// crops:    optional { name: [x, y] }: centres of regions the screenshot tool also saves zoomed in,
+//           as fractions of the frame from the top left. Without it the tool crops the centre.
 //
 // In a dev build, press P to log the current camera as an entry ready to paste here.
 
 export const views = [
-  { name: 'beach', position: [10, 2.2, 88], yaw: 165, pitch: -7, timeOfDay: 11 },
+  {
+    name: 'beach',
+    position: [10, 2.2, 88],
+    yaw: 165,
+    pitch: -7,
+    timeOfDay: 11,
+    crops: { shoreline: [0.5, 0.75], horizon: [0.5, 0.41] },
+  },
   { name: 'shoreline', position: [80, 9, 80], yaw: 110, pitch: -14, timeOfDay: 14.5 },
   { name: 'jungle-edge', position: [-14, 5.1, 70], yaw: -15, pitch: 4, timeOfDay: 9.5 },
-  { name: 'overview', position: [-250, 135, 210], yaw: -50, pitch: -24, fov: 55, timeOfDay: 17 },
+  { name: 'overview', position: [-250, 135, 210], yaw: -50, pitch: -24, fov: 55, timeOfDay: 17, crops: { shoreline: [0.36, 0.49] } },
 ];
 
 export function findView(name) {

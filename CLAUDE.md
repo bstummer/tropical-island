@@ -44,7 +44,7 @@ When choosing between approaches, pick the one that looks better in the screensh
 | `npm test` | Unit and invariant tests: `node --test` over `tests/*.test.js` (Node's built-in runner, no test deps). |
 | `npm run build` | Production build to `dist/index.html` (single file, no sourcemaps). The build fails if it would emit anything other than `index.html`. |
 | `npm run check` | `tools/check-build.js`: exactly one file in dist, no `<script src>`/`<link href>`, no URLs except XML namespaces, no network APIs or `import()`, size vs budget (warn > 3 MB raw, fail > 6 MB), plus the src/ determinism lint. |
-| `npm run shot -- [args]` | Builds, then `tools/screenshot.js`: one PNG per view + `contact-sheet.png` + `info.json` in `screenshots/<label>/`. Then it runs the game for 30 frames in player mode (no `?capture`: real-time loop, input, start screen), which captures never exercise. |
+| `npm run shot -- [args]` | Builds, then `tools/screenshot.js`: one PNG per view + `contact-sheet.png` + `info.json` in `screenshots/<label>/`, plus each view's measurements (banding view, zoomed crops, shimmer, motion strip, overdraw) in `screenshots/<label>/<view>/`, with the numbers and over-limit warnings in `info.json`. It checks that each measurement still catches a test scene built to fail it. Then it runs the game for 30 frames in player mode (no `?capture`: real-time loop, input, start screen), which captures never exercise. |
 | `npm run verify` | test + build + check + shot. **The definition-of-done command.** |
 | `node tools/screenshot.js --compare A B` | Before/after sheet `screenshots/compare/A_vs_B.png`: A, B and a diff column per view, with the % of changed pixels. No build needed. |
 
@@ -52,7 +52,8 @@ Screenshot args: `--views beach,shoreline` (default all), `--label before` (defa
 `--size 1600x900`, `--t 12.5` (sim seconds), `--time 17.5` (hours, overrides each view's time),
 `--seed 1`, `--quality high`, `--gl auto|hardware|swiftshader` (default auto: hardware GL, falling back to SwiftShader).
 
-URL params (dev server or `dist/index.html`): `?view=beach&time=17.5&t=12.5&seed=1&quality=low&capture=1`.
+URL params (dev server or `dist/index.html`): `?view=beach&time=17.5&t=12.5&seed=1&quality=low&capture=1`, and
+`fixture=<name>` (a test scene from `src/fixtures/` instead of the island, for the screenshot tool).
 
 Dev-only key: **P** logs the camera as a ready-to-paste `views.js` entry and copies it to the clipboard.
 
@@ -62,7 +63,7 @@ Cloud sessions run in a Linux container with no GPU and no display, so screensho
 
 - Run `npm ci`, then once per machine `npx playwright install-deps chromium` (apt, needs root). Without the
   system libraries, the screenshot tool fails with "missing system library ..." and prints that command.
-- `--gl auto` finds no GPU and falls back to SwiftShader (about 1–3 s per view at 1600×900 today).
+- `--gl auto` finds no GPU and falls back to SwiftShader (about 5 s per view at 1600×900 today, measurements included).
 - SwiftShader captures from here compare directly with CI and local `--gl swiftshader` captures (see section 4).
 
 ### Deploying
@@ -157,13 +158,15 @@ README.md             for players and visitors: play/download links, controls, d
 PLAN.md               staged build plan, status and session log; update it at the end of every session
 .github/workflows/    deploy.yml: verify, then GitHub Pages + rolling "latest" release on every push to main
 src/
-  main.js             boot: params -> renderer/scene/camera -> systems -> loop, plus the capture contract
-  config.js           ALL tunables (quality presets, camera, movement, defaults, capture, size budget). No browser APIs.
+  main.js             boot: params -> renderer/scene/camera -> systems -> loop; capture mode hands over to core/capture.js
+  config.js           ALL tunables (quality presets, camera, movement, defaults, capture, frame-cost budget, size budget). No browser APIs.
   views.js            named viewpoints. No browser APIs (Node imports it).
-  core/               params.js, clock.js, random.js, renderer.js, input.js (free-fly + pointer lock)
+  core/               params.js, clock.js, random.js, renderer.js, camera.js, input.js (free-fly + pointer lock),
+                      capture.js (the capture contract), gl-stats.js (GPU call counts and memory), overdraw.js (capture only)
+  fixtures/           test scenes the screenshot tool must flag (?fixture=); not part of the island
   world/placeholder*  TEMPORARY stand-in world (sky dome, sand mound, flat water). Delete once replaced.
   shaders/chunks/     shared GLSL: noise.glsl today; wind and lighting code later
-tools/                screenshot.js, check-build.js (Node only; both export their pure helpers for tests)
+tools/                screenshot.js, measure.js, image.js, png.js, check-build.js (Node only; pure helpers exported for tests)
 tests/                node:test suites + fixtures/check-build/{pass,fail}/*.html
 ```
 
@@ -196,7 +199,8 @@ optionally `ready` (a Promise, awaited before a capture starts, for async setup)
 - `update(dt, t)`: `dt` and `t` come from the clock. In capture mode `dt` is 0 and `t` is frozen, so
   anything time-driven must look the same at a given `t` in a capture as in the running game. A function
   of `t` is the simplest way. Effects that need history (things that build up and fade) may simulate
-  instead, if the simulation is deterministic and a capture can reproduce its state at `t`.
+  instead, if the simulation is deterministic and a capture can reproduce its state at `t`, also when it
+  jumps to another `t` in the same page (`clock.seek`).
   An exception in `update()` stops the loop and shows the error overlay (in capture mode it fails the capture).
 - Each system uses its own rng stream name (`rng('palms')`, `rng('palms/fronds')`). `rng(name)` always
   restarts the same sequence, and new names never shift existing systems.
@@ -204,10 +208,12 @@ optionally `ready` (a Promise, awaited before a capture starts, for async setup)
 - UI must stay hidden when `ctx.params.capture` is true.
 
 **Capture contract** (`?capture=1`, used by tools/screenshot.js): no UI or pointer lock. The camera goes to
-the requested view and the clock is frozen at `t`. main.js awaits `ready`, compiles, renders
+the requested view and the clock is frozen at `t`. `core/capture.js` awaits `ready`, compiles, renders
 `config.capture.warmupFrames` frames, checks every shader program compiled, then sets
 `window.__CAPTURE_READY__ = true` (and `__CAPTURE_INFO__`). Any failure sets `window.__CAPTURE_ERROR__`.
-Don't break this. If a new system does async work, put it behind `ready`.
+Once ready, `window.__CAPTURE__` renders more frames in the same page (another `t`, the camera nudged) and
+reports GPU counts and overdraw. A frame rendered at another `t` must match a fresh load at that `t`; the
+tool checks this. Don't break this. If a new system does async work, put it behind `ready`.
 
 ## 8. Rendering conventions
 

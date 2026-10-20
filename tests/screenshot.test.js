@@ -1,6 +1,49 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { explainLaunchError, mismatchWarnings, parseArgs } from '../tools/screenshot.js';
+import { checkLimits, describeWarning, explainLaunchError, isSameFile, metricChanges, mismatchWarnings, parseArgs } from '../tools/screenshot.js';
+
+// ---------------------------------------------------------------- own-page requests
+
+test('the page itself is not a network request, whatever the drive letter case', () => {
+  const node = 'file:///c:/Users/me/tropical-island/dist/index.html';
+  const chromium = 'file:///C:/Users/me/tropical-island/dist/index.html?capture=1&view=beach';
+  assert.equal(isSameFile(chromium, node, 'win32'), true);
+  assert.equal(isSameFile(`${node}#top`, node, 'win32'), true);
+});
+
+test('other files are still requests', () => {
+  const page = 'file:///C:/game/dist/index.html';
+  assert.equal(isSameFile('file:///C:/game/dist/other.html', page, 'win32'), false);
+  assert.equal(isSameFile('https://example.com/index.html', page, 'win32'), false);
+  // Linux paths are case-sensitive: a different case is a different file.
+  assert.equal(isSameFile('file:///home/Me/dist/index.html', 'file:///home/me/dist/index.html', 'linux'), false);
+  assert.equal(isSameFile('file:///home/me/dist/index.html?t=1', 'file:///home/me/dist/index.html', 'linux'), true);
+});
+
+// ---------------------------------------------------------------- limits
+
+test('only values above their limit are reported', () => {
+  const warnings = checkLimits({ captureMs: 15001, drawCalls: 10, triangles: 5 }, { captureMs: 15000, drawCalls: 10 });
+  assert.deepEqual(warnings, [{ metric: 'captureMs', value: 15001, limit: 15000 }]);
+});
+
+test('missing or non-numeric values and limits never warn', () => {
+  assert.deepEqual(checkLimits({ captureMs: null, gpuMs: NaN }, { captureMs: 1, gpuMs: 1 }), []);
+  assert.deepEqual(checkLimits({ captureMs: 99 }, {}), []);
+});
+
+test('compare lists the numbers that changed, as shown', () => {
+  const before = { drawCalls: 3, triangles: 162208, overdraw: 1.891, shimmerPercent: 0.03, gpuMs: null };
+  const after = { drawCalls: 5, triangles: 162210, overdraw: 1.8912, shimmerPercent: 0.03, gpuMs: 1.2 };
+  assert.deepEqual(metricChanges(before, after), ['draw calls 3 → 5']); // the rest round the same, or is missing on one side
+  assert.deepEqual(metricChanges({ textureMB: 10 }, { textureMB: 300 }), ['texture memory 10 MB → 300 MB']);
+  assert.deepEqual(metricChanges(undefined, after), []);
+});
+
+test('warnings read as sentences with units', () => {
+  assert.equal(describeWarning({ metric: 'captureMs', value: 16240, limit: 15000 }), 'capture time 16.2 s is over the limit of 15.0 s');
+  assert.equal(describeWarning({ metric: 'unknown', value: 3, limit: 2 }), 'unknown 3 is over the limit of 2');
+});
 
 // ---------------------------------------------------------------- launch errors
 

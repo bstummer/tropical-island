@@ -36,13 +36,39 @@ export const defaults = {
 };
 
 export const capture = {
-  // Frames rendered at the frozen time before the app signals ready.
-  // Reserved for temporal effects (TAA history, exposure adaptation).
-  warmupFrames: 8,
+  // Frames rendered at the frozen time before the app signals ready, and again
+  // for every extra frame the tool asks for. Raise it only for an effect that
+  // builds up over frames: each frame costs ~0.1 s on SwiftShader.
+  warmupFrames: 1,
+  // tools/screenshot.js warns when one view's capture, measurements included,
+  // takes longer. Captures must stay quick on SwiftShader, the one renderer
+  // every machine has.
+  timeBudgetMs: 15000,
+  // What the screenshot tool measures per view (tools/measure.js).
+  motion: { frames: 6, stepSeconds: 0.5, threshold: 4 }, // strip at t, t + 0.5 s, ...; threshold in 8-bit levels
+  // Frames panned by stepPixels at the centre; see shimmer() in tools/image.js.
+  shimmer: { frames: 5, stepPixels: 0.25, threshold: 24, ratio: 0.5, limitPercent: 0.5 },
+  crop: { width: 400, height: 225, zoom: 2 }, // source pixels, shown at zoom x
+  banding: { radius: 6, gain: 32 },
+};
+
+// Frame cost limits per quality preset. tools/screenshot.js measures every view
+// and warns above them. Guesses until PLAN.md Stage 11 calibrates them on real
+// machines; the counts are the same on every GPU, so they work in CI too.
+//   drawCalls, triangles   per frame, all passes
+//   passes                 runs of drawing into one framebuffer, per frame
+//   programs               linked shader programs
+//   overdraw               fragments shaded per pixel of the main view, on average
+//   textureMB              textures, mipmaps included
+//   renderTargetMB         render targets, renderbuffers and the canvas
+export const budget = {
+  high: { drawCalls: 1500, triangles: 3e6, passes: 16, programs: 64, overdraw: 5, textureMB: 512, renderTargetMB: 256 },
+  medium: { drawCalls: 1000, triangles: 1.5e6, passes: 12, programs: 64, overdraw: 4, textureMB: 384, renderTargetMB: 160 },
+  low: { drawCalls: 600, triangles: 7.5e5, passes: 8, programs: 64, overdraw: 3, textureMB: 128, renderTargetMB: 96 },
 };
 
 export const build = {
   sizeBudgetBytes: 3 * 1024 * 1024, // raw size of dist/index.html; warn above, fail above 2x
 };
 
-export const config = { quality, camera, movement, defaults, capture, build };
+export const config = { quality, camera, movement, defaults, capture, budget, build };

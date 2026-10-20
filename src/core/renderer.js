@@ -1,22 +1,33 @@
 import * as THREE from 'three';
+import { instrument } from './gl-stats.js';
 
 // WebGL2 renderer setup. Drawing-buffer size = CSS size x pixel ratio, where
 // pixel ratio = min(devicePixelRatio, preset.maxPixelRatio) x preset.renderScale.
+// The context is created here, not by three.js, so gl-stats.js can count every
+// call from the first one on.
 export function createRenderer({ canvas, quality, capture }) {
+  // Attributes as three.js would request them (it always asks for alpha).
+  const gl = canvas.getContext('webgl2', {
+    alpha: true,
+    depth: true,
+    stencil: false,
+    antialias: quality.antialias,
+    premultipliedAlpha: true,
+    powerPreference: 'high-performance',
+    // Capture mode stops rendering once ready; keep the last frame readable.
+    preserveDrawingBuffer: capture,
+  });
+  if (!gl) throw new Error('WebGL2 is not available.');
+  const stats = instrument(gl);
+
   let renderer;
   try {
-    renderer = new THREE.WebGLRenderer({
-      canvas,
-      antialias: quality.antialias,
-      alpha: false,
-      stencil: false,
-      powerPreference: 'high-performance',
-      // Capture mode stops rendering once ready; keep the last frame readable.
-      preserveDrawingBuffer: capture,
-    });
+    renderer = new THREE.WebGLRenderer({ canvas, context: gl });
   } catch (err) {
     throw new Error(`WebGL2 is not available: ${err.message}`);
   }
+  // three.js clears transparent when the context has alpha; the frame is opaque.
+  renderer.setClearAlpha(1);
 
   // Linear workflow, sRGB output. Tonemapping belongs to the post pass, not here.
   renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -39,6 +50,7 @@ export function createRenderer({ canvas, quality, capture }) {
 
   return {
     renderer,
+    stats, // see gl-stats.js
     size,
     // fn(size) runs now and after every resize.
     onResize(fn) {

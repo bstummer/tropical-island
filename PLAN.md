@@ -69,7 +69,7 @@ when a choice is about taste or scope rather than engineering (see Open question
 
 | # | Stage | Milestone | Status |
 |---|---|---|---|
-| 1 | HDR frame and measurement | The cove | todo |
+| 1 | HDR frame and measurement | The cove | in progress |
 | 2 | Sky, sun and atmosphere | The cove | todo |
 | 3 | Island shape | The cove | todo |
 | 4 | Ground surfaces and rocks | The cove | todo |
@@ -143,16 +143,38 @@ Measurement in `tools/screenshot.js` (pure parts get tests):
   every backend, so they work in CI and cloud sessions. Limits per quality preset live in `config.js`, and
   the tool warns above them. Add GPU time where hardware GL exposes timer queries.
 - **Proof:** each measurement is shown to catch its problem on a deliberately bad case (something that
-  shimmers, an undithered gradient, a scene over the limits). The placeholder has none of these, so it
-  can't prove the tools on its own. The bad cases are fixtures for the tools, not views, so normal
-  captures stay clean.
+  shimmers, an undithered gradient, a scene over the limits). The placeholder can't prove the tools on its
+  own: nothing in it shimmers or goes over a limit, and the banding it shows (water and sand) goes away in
+  this stage. The bad cases are fixtures for the tools, not views, so normal captures stay clean.
 - **Speed:** captures stay fast on SwiftShader (see Principles), and `npm run verify` stays a quick gate.
   `info.json` records how long each capture took, and the tool warns above a time budget in `config.js`.
 - **Done when** the placeholder renders through post with no banding and no new visible flaws (every pixel
   may change); the tool produces motion strips, shimmer scores, crops, banding views and cost numbers, each
   proven on a bad case; teardown is checked; the readout and benchmark work in the built game; and
-  CLAUDE.md's commands, visual workflow, module contract and rendering conventions describe all of it,
-  including that tonemapping and colour-space output now live in post.
+  CLAUDE.md is corrected wherever this stage made it wrong, including that tonemapping and colour-space
+  output now live in post.
+
+Sub-steps, in order. Each one ends with `npm run verify` green and `main` shippable, and fixes whatever it
+made untrue in CLAUDE.md. The tools come first, so the pipeline change in 1.4 is judged with them.
+
+- [x] **1.1 Capture groundwork.** The tool works from any working directory (on Windows it failed every
+  capture when the shell's drive letter was lowercase, `c:\`, flagging its own page as a network
+  request). One page load can render extra frames (other `t` values, small camera offsets) without
+  reloading, so the measurements below stay fast. `info.json` records each capture's time, with a warning
+  above a budget in `config.js`. Check: the game's pixels are identical to `stage1-before`.
+- [x] **1.2 Detail and motion.** Crops, banding views, motion strips and shimmer scores, each proven on a
+  bad case.
+- [x] **1.3 Cost.** The cost numbers, their limits per preset and the warnings, proven on a scene over the
+  limits.
+- [ ] **1.4 HDR frame.** The image pipeline and the choices that bind every material. Thin dark shapes
+  against a bright sky stay anti-aliased after tonemapping: backlit fronds against a sunset depend on it.
+  The look of the tonemapping is a matter of taste, so show the user candidates side by side and let them
+  pick. Check: the banding views show no bands, no shimmer score went up, and the compare sheet shows no
+  new flaw.
+- [ ] **1.5 Teardown.** The teardown check, proven on a system that leaks on purpose.
+- [ ] **1.6 Readout and benchmark.** Both work in the built game, and the screenshot tool's player-mode
+  run exercises them, so breaking either fails `verify`. Then the user runs the benchmark on the machines
+  they have, for the first real numbers.
 
 ### 2. Sky, sun and atmosphere
 
@@ -413,5 +435,31 @@ Not part of the plan. Build one only if the user asks for it: a passing rain sho
 Newest first. One entry per session: the date, the stage, what changed, what got worse or is still open,
 and the next step.
 
+- **2026-10-20, Stage 1, sub-steps 1.1–1.3 (the tools).** Every capture now also writes, per view, a
+  banding view, zoomed crops (`crops` in views.js), a shimmer map and score, a motion strip and share,
+  an overdraw map, and the frame cost (draw calls, triangles, passes, programs, overdraw, texture and
+  render-target memory; GPU time on hardware GL only) with warnings above `config.budget`. Two fixtures
+  (`?fixture=shimmer`, `?fixture=heavy`) must be caught on every run, or `verify` fails; the in-browser
+  checks were each broken on purpose once and failed. `--compare` now also lists the numbers that changed.
+  The game's pixels stayed identical to `stage1-before` throughout. Cost of the placeholder at `high`:
+  3 draws, 162 k triangles, 1 pass, 3 programs, overdraw 1.6–2.3, 49 MB of render targets (the canvas).
+  `verify` takes ~30 s on SwiftShader here (~5 s per view); warmup frames dropped from 8 to 1, since
+  nothing builds up over frames yet. Still open:
+  - The placeholder's water and sand band (banding views); 1.4 must fix it. Banding has no numeric score:
+    once post dithers every pixel, a score built on flat 8-bit runs would always read zero.
+  - The beach and overview waterlines shimmer slightly (0.03–0.07%, under the limit), probably depth
+    precision where the mound meets the water. Recheck after 1.4's depth choice.
+  - The shimmer score uses sub-pixel camera turns only: moving the camera shifts near things by many
+    pixels, which the score can't tell from aliasing. It is tuned on synthetic edges and one fixture, not
+    yet on real foliage (Stage 8 may need to retune it).
+  - GPU time in headless hardware captures is noisy (0.8–5.5 ms for near-identical views); it has no limit.
+  - All limits are guesses until Stage 11. Overdraw ignores points, lines and sprites.
+  - The fixtures ship in the build (a few KB, reachable only through `?fixture=`).
+  Next: 1.4.
+- **2026-10-20, Stage 1 planning.** Split Stage 1 into sub-steps 1.1–1.6. Baseline capture
+  `stage1-before` (SwiftShader): in a contrast-boosted copy the sky is cleanly dithered, but the water and
+  the sand show contour bands. Found that `tools/screenshot.js` fails every capture when the working
+  directory's drive letter is lowercase (fix in 1.1). SwiftShader supports reversed depth, MSAA on
+  half-float targets and timer queries, so captures can exercise all three. Next: 1.1.
 - **2026-10-20, plan.** Wrote this plan. The tooling (build, check, screenshots, CI deploy) and the
   placeholder world exist. Next: Stage 1.

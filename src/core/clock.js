@@ -28,6 +28,14 @@ export function createClock({ frozen = false, start = 0 } = {}) {
       return frozen;
     },
 
+    // Jumps to `t` seconds; the next tick has dt = 0. Captures use it to render
+    // other times in the same page, so time-driven state must follow t alone.
+    seek(t) {
+      elapsed = t;
+      dt = 0;
+      last = null;
+    },
+
     // Call exactly once per rendered frame, before updating systems.
     tick() {
       frame++;
