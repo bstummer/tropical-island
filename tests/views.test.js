@@ -43,13 +43,24 @@ test('config defaults point at things that exist', () => {
   assert.ok(config.defaults.timeOfDay >= 0 && config.defaults.timeOfDay <= 24);
   assert.ok(Number.isInteger(config.capture.warmupFrames) && config.capture.warmupFrames >= 1);
   assert.ok(config.build.sizeBudgetBytes > 0);
+  assert.ok(config.post.tonemaps[config.post.tonemap], 'the default tonemap exists');
+  assert.equal(new Set(Object.values(config.post.tonemaps)).size, Object.keys(config.post.tonemaps).length, 'tonemap defines are distinct');
+  assert.ok(config.post.exposure > 0);
+});
+
+test('the depth range covers a leaf at the lens and the horizon from a hilltop', () => {
+  const { near, nearFallback, far } = config.camera;
+  assert.ok(near > 0 && near <= 0.05, `near = ${near} m`);
+  assert.ok(nearFallback > near && nearFallback < 1, `nearFallback = ${nearFallback} m`);
+  const horizonFrom300m = Math.sqrt(2 * 6371000 * 300); // about 62 km
+  assert.ok(far > horizonFrom300m, `far = ${far} m`);
 });
 
 test('quality presets are complete and sane', () => {
   for (const [name, preset] of Object.entries(config.quality.presets)) {
     assert.ok(preset.renderScale > 0 && preset.renderScale <= 1, `${name}.renderScale`);
     assert.ok(preset.maxPixelRatio >= 1, `${name}.maxPixelRatio`);
-    assert.equal(typeof preset.antialias, 'boolean', `${name}.antialias`);
+    assert.ok([0, 2, 4, 8].includes(preset.msaa), `${name}.msaa`);
   }
 });
 

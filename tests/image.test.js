@@ -128,6 +128,34 @@ test('an aliased edge panned by quarter pixels shimmers, an anti-aliased one doe
   }
 });
 
+test('high-contrast edges with 4x MSAA coverage do not count as shimmer, at any angle', () => {
+  // Coverage from the standard rotated-grid pattern: a quarter-pixel pan moves it a whole
+  // sample at a time, leaving up to about half the contrast unpredicted.
+  const samples = [[0.375, 0.125], [0.875, 0.375], [0.125, 0.625], [0.625, 0.875]];
+  const size = 32;
+  const shift = { dx: new Float32Array(size * size).fill(0.25), dy: new Float32Array(size * size).fill(0.25) };
+  const edge = (angle, offset) => {
+    const [nx, ny] = [Math.cos(angle), Math.sin(angle)];
+    const image = createImage(size, size);
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        const covered = samples.filter(([sx, sy]) => nx * (x + sx - 16) + ny * (y + sy - 16) >= offset).length / 4;
+        const v = Math.round(10 + 235 * covered);
+        image.data.set([v, v, v], 4 * (y * size + x));
+      }
+    }
+    return image;
+  };
+  for (let degrees = 0; degrees < 180; degrees += 7) {
+    const angle = (degrees * Math.PI) / 180;
+    const step = 0.25 * (Math.cos(angle) + Math.sin(angle)); // how far the pan moves the edge along its normal
+    for (const start of [0, 0.13, 0.31, 0.47]) {
+      const { percent, heat } = shimmer([0, 1, 2, 3, 4].map((k) => edge(angle, start + step * k)), { shift, threshold: 24 });
+      assert.equal(percent, 0, `${degrees}° from ${start}: worst ${Math.max(...heat).toFixed(1)}`);
+    }
+  }
+});
+
 test('thin stripes finer than a pixel shimmer', () => {
   const stripes = (phase) => greyImage(WIDTH, HEIGHT, (x) => (Math.floor((x + 0.5 + phase) / 0.7) % 2 ? 230 : 20));
   const { percent } = shimmer([0, 0.25, 0.5, 0.75, 1].map(stripes), { shift: uniformShift(-0.25, 0), threshold: 24 });

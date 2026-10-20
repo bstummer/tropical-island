@@ -44,16 +44,18 @@ When choosing between approaches, pick the one that looks better in the screensh
 | `npm test` | Unit and invariant tests: `node --test` over `tests/*.test.js` (Node's built-in runner, no test deps). |
 | `npm run build` | Production build to `dist/index.html` (single file, no sourcemaps). The build fails if it would emit anything other than `index.html`. |
 | `npm run check` | `tools/check-build.js`: exactly one file in dist, no `<script src>`/`<link href>`, no URLs except XML namespaces, no network APIs or `import()`, size vs budget (warn > 3 MB raw, fail > 6 MB), plus the src/ determinism lint. |
-| `npm run shot -- [args]` | Builds, then `tools/screenshot.js`: one PNG per view + `contact-sheet.png` + `info.json` in `screenshots/<label>/`, plus each view's measurements (banding view, zoomed crops, shimmer, motion strip, overdraw) in `screenshots/<label>/<view>/`, with the numbers and over-limit warnings in `info.json`. It checks that each measurement still catches a test scene built to fail it. Then it runs the game for 30 frames in player mode (no `?capture`: real-time loop, input, start screen), which captures never exercise. |
+| `npm run shot -- [args]` | Builds, then `tools/screenshot.js`: one PNG per view + `contact-sheet.png` + `info.json` in `screenshots/<label>/`, plus each view's measurements (banding view, zoomed crops, shimmer, motion strip, overdraw) in `screenshots/<label>/<view>/`, with the numbers and over-limit warnings in `info.json`. It checks that each measurement still catches a test scene built to fail it, and that the frame keeps its promises (smooth dark edges against a bright sky, depth precision from a hilltop). Then it runs the game for 30 frames in player mode (no `?capture`: real-time loop, input, start screen), which captures never exercise. |
 | `npm run verify` | test + build + check + shot. **The definition-of-done command.** |
 | `node tools/screenshot.js --compare A B` | Before/after sheet `screenshots/compare/A_vs_B.png`: A, B and a diff column per view, with the % of changed pixels. No build needed. |
 
 Screenshot args: `--views beach,shoreline` (default all), `--label before` (default `<git hash>[-dirty]-<timestamp>`),
 `--size 1600x900`, `--t 12.5` (sim seconds), `--time 17.5` (hours, overrides each view's time),
-`--seed 1`, `--quality high`, `--gl auto|hardware|swiftshader` (default auto: hardware GL, falling back to SwiftShader).
+`--seed 1`, `--quality high`, `--tonemap agx`, `--fixture tonecard`, `--gl auto|hardware|swiftshader` (default
+auto: hardware GL, falling back to SwiftShader).
 
-URL params (dev server or `dist/index.html`): `?view=beach&time=17.5&t=12.5&seed=1&quality=low&capture=1`, and
-`fixture=<name>` (a test scene from `src/fixtures/` instead of the island, for the screenshot tool).
+URL params (dev server or `dist/index.html`): `?view=beach&time=17.5&t=12.5&seed=1&quality=low&capture=1`,
+`tonemap=<name>` (a curve from `config.post.tonemaps`, to compare looks) and `fixture=<name>` (a test scene
+from `src/fixtures/` instead of the island; `tonecard` is an HDR test card for judging the look).
 
 Dev-only key: **P** logs the camera as a ready-to-paste `views.js` entry and copies it to the clipboard.
 
@@ -63,7 +65,7 @@ Cloud sessions run in a Linux container with no GPU and no display, so screensho
 
 - Run `npm ci`, then once per machine `npx playwright install-deps chromium` (apt, needs root). Without the
   system libraries, the screenshot tool fails with "missing system library ..." and prints that command.
-- `--gl auto` finds no GPU and falls back to SwiftShader (about 5 s per view at 1600×900 today, measurements included).
+- `--gl auto` finds no GPU and falls back to SwiftShader (about 8 s per view at 1600×900 today, measurements included).
 - SwiftShader captures from here compare directly with CI and local `--gl swiftshader` captures (see section 4).
 
 ### Deploying
@@ -158,14 +160,16 @@ README.md             for players and visitors: play/download links, controls, d
 PLAN.md               staged build plan, status and session log; update it at the end of every session
 .github/workflows/    deploy.yml: verify, then GitHub Pages + rolling "latest" release on every push to main
 src/
-  main.js             boot: params -> renderer/scene/camera -> systems -> loop; capture mode hands over to core/capture.js
-  config.js           ALL tunables (quality presets, camera, movement, defaults, capture, frame-cost budget, size budget). No browser APIs.
+  main.js             boot: params -> renderer/scene/camera/frame -> systems -> loop; capture mode hands over to core/capture.js
+  config.js           ALL tunables (quality presets, camera, post, movement, defaults, capture, frame-cost budget, size budget). No browser APIs.
   views.js            named viewpoints. No browser APIs (Node imports it).
   core/               params.js, clock.js, random.js, renderer.js, camera.js, input.js (free-fly + pointer lock),
                       capture.js (the capture contract), gl-stats.js (GPU call counts and memory), overdraw.js (capture only)
-  fixtures/           test scenes the screenshot tool must flag (?fixture=); not part of the island
+  post/               frame.js (HDR target, passes, output pass: tonemap, sRGB, dither), scene-output.js; later
+                      bloom and colour grading. The only place tonemapping happens.
+  fixtures/           test scenes for the screenshot tool's checks and the tonecard (?fixture=); not part of the island
   world/placeholder*  TEMPORARY stand-in world (sky dome, sand mound, flat water). Delete once replaced.
-  shaders/chunks/     shared GLSL: noise.glsl today; wind and lighting code later
+  shaders/chunks/     shared GLSL: noise.glsl, scene-output.glsl (how every scene material ends); wind and lighting later
 tools/                screenshot.js, measure.js, image.js, png.js, check-build.js (Node only; pure helpers exported for tests)
 tests/                node:test suites + fixtures/check-build/{pass,fail}/*.html
 ```
@@ -182,7 +186,6 @@ rule:
   in GLSL. Also terrain and placement zones from shore to jungle (wet sand, dry sand, beach scrub,
   palm belt, jungle).
 - `textures/`: procedural texture generators (render-to-texture or CPU canvases), cached per session.
-- `post/`: HDR target, tonemapping, bloom, anti-aliasing, colour grading. The only place tonemapping happens.
 - `audio/`: procedural WebAudio (surf, wind, birds). Must not start before a user gesture.
 - `player/`: walking, terrain collision, head bob; replaces free-fly as the default controller.
 
@@ -194,7 +197,9 @@ optionally `ready` (a Promise, awaited before a capture starts, for async setup)
 
 `ctx` holds: `renderer`, `scene`, `camera`, `config`, `quality` (the active preset object), `params`
 (parsed URL params), `view` (the starting view), `timeOfDay` (hours), `clock` (`elapsed`, `dt`, `frame`,
-`frozen`), and `rng` (`rng('name')` returns a stream with `next/range/int/chance/pick/normal`).
+`frozen`), `rng` (`rng('name')` returns a stream with `next/range/int/chance/pick/normal`), and `frame`
+(`post/frame.js`: `size` and `onResize(fn)` for the drawing buffer, `uniforms` every scene material shares,
+`beforeScene(fn)` for passes of a system's own such as shadow maps, and `sceneTarget`).
 
 - `update(dt, t)`: `dt` and `t` come from the clock. In capture mode `dt` is 0 and `t` is frozen, so
   anything time-driven must look the same at a given `t` in a capture as in the running game. A function
@@ -220,17 +225,23 @@ tool checks this. Don't break this. If a new system does async work, put it behi
 - **WebGL2** through three's `WebGLRenderer`, with GLSL shaders. Not WebGPU (PLAN.md, Decisions).
 - Linear colour workflow. Author colours as sRGB hex through `THREE.Color` (converted to linear) or as
   linear floats in shaders, and say which in a comment.
-- Render the scene into an **HDR render target** (HalfFloat). Tonemapping happens **only in the post pass**;
-  materials and the renderer keep `NoToneMapping`. Until `post/` exists, the placeholder renders straight
-  to the canvas.
-- **sRGB output**: `renderer.outputColorSpace = SRGBColorSpace`. Custom `ShaderMaterial`s end with
-  `#include <colorspace_fragment>` while they render to the screen; that moves to the output pass with post.
-- **Dither gradients** (sky, fog, water depth, vignettes) to avoid banding: `dithering: true` plus
-  `#include <common>`, `<dithering_pars_fragment>` and `<dithering_fragment>`, or the post pass's dither.
+- The scene renders into the **HDR target** of `post/frame.js` (half float, MSAA). Its output pass is the
+  **only** place for tonemapping, sRGB conversion and dithering; the renderer keeps `NoToneMapping`.
+- **Every scene material ends with `gl_FragColor = sceneOutput(radiance, alpha);`**
+  (`chunks/scene-output.glsl`): it applies the exposure and compresses the colour so MSAA averages edges
+  close to how they look after tonemapping. Spread `ctx.frame.uniforms` into the material's uniforms.
+  Built-in three.js materials go through `withSceneOutput()` (`post/scene-output.js`). Scene materials
+  never include `<colorspace_fragment>` or dithering. Blending happens in the compressed space, so
+  alpha blending is fine but additive blending of bright values is not.
+- **Anti-aliasing is MSAA** (`quality.msaa`), which shades once per pixel. Cut-out edges (leaves) use
+  alpha-to-coverage. Shading that can sparkle or crawl (glints, fine procedural detail) is filtered in the
+  shader by its pixel footprint (`fwidth`). Geometry thinner than about two pixels crawls even with MSAA,
+  so each system's level of detail keeps it out.
+- **Depth is reversed 32-bit float** (EXT_clip_control), so precision is about the same fraction of the
+  distance everywhere: `camera.near` is 2 cm and `far` 100 km (`config.camera`). Without the extension,
+  near moves out to 0.5 m and distant shallow water can z-fight.
 - Avoid huge triangles. Tessellate large planes (water, ground skirts): rasterizers clip and interpolate
   giant triangles differently, which moved the shoreline by metres between GPUs.
-- Big outdoor depth range: keep `camera.near` as large as close-up plants allow, with enough depth
-  precision that water and sand never z-fight at the shoreline (PLAN.md Stage 1 picks the approach).
 
 ## 9. Code conventions
 

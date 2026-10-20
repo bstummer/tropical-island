@@ -166,7 +166,7 @@ made untrue in CLAUDE.md. The tools come first, so the pipeline change in 1.4 is
   bad case.
 - [x] **1.3 Cost.** The cost numbers, their limits per preset and the warnings, proven on a scene over the
   limits.
-- [ ] **1.4 HDR frame.** The image pipeline and the choices that bind every material. Thin dark shapes
+- [x] **1.4 HDR frame.** The image pipeline and the choices that bind every material. Thin dark shapes
   against a bright sky stay anti-aliased after tonemapping: backlit fronds against a sunset depend on it.
   The look of the tonemapping is a matter of taste, so show the user candidates side by side and let them
   pick. Check: the banding views show no bands, no shimmer score went up, and the compare sheet shows no
@@ -435,6 +435,29 @@ Not part of the plan. Build one only if the user asks for it: a passing rain sho
 Newest first. One entry per session: the date, the stage, what changed, what got worse or is still open,
 and the next step.
 
+- **2026-10-20, Stage 1, sub-step 1.4 (HDR frame).** The scene renders into `post/frame.js`'s HDR target
+  (half float, 4x MSAA on high and medium, 2x on low; reversed 32-bit float depth, near 2 cm, far 100 km).
+  The output pass decodes, tonemaps, converts to sRGB and dithers. Every scene material ends with
+  `sceneOutput()`, which applies exposure and compresses colour so MSAA averages dark edges against a
+  bright sky in roughly display space. Systems get `ctx.frame` (size, shared uniforms, passes before the
+  scene). New checks on every run: thin dark bars against a sunset sky (0.01% shimmer; 0.42% with a plain
+  linear resolve) and two planes 5 cm apart seen from 100 m up (0.14%; 43% without reversed depth). The
+  shimmer score now counts only what 4x MSAA can't explain (mismatches above half the local contrast):
+  before, it flagged every MSAA edge at sunset contrast. Results: the water and sand no longer band;
+  the waterline shimmer (0.03–0.07%) is gone; each view costs 4 draws, 2 passes, 4 programs and 88 MB of
+  render targets. Works on hardware GL too. Tonemapping candidates (neutral, agx, agx-punchy, aces) are
+  in `screenshots/tonemaps/comparison.png` (not in git); agx-punchy is the default until the user picks.
+  Still open:
+  - At exposure 1, agx-punchy makes the placeholder's display-authored colours darker: a grey-blue sky,
+    brown sand. Stage 2 sets the exposure for a real sky.
+  - Geometry thinner than about two pixels crawls even with 4x MSAA; the plants' level of detail must
+    keep it out (Stage 8).
+  - Without EXT_clip_control the near plane falls back to 0.5 m, and shallow water seen from a hilltop
+    z-fights (8% in the depth fixture). Check which browsers lack it in Stage 18.
+  - Saturated primaries show kinks where the tonemapper clamps (tonecard ramps); natural colours don't.
+  - Captures got slower: a 4x MSAA frame costs ~0.4 s on SwiftShader, so ~8 s per view and ~52 s for
+    `verify` here. Within budget; watch it as scenes grow.
+  Next: 1.5.
 - **2026-10-20, Stage 1, sub-steps 1.1–1.3 (the tools).** Every capture now also writes, per view, a
   banding view, zoomed crops (`crops` in views.js), a shimmer map and score, a motion strip and share,
   an overdraw map, and the frame cost (draw calls, triangles, passes, programs, overdraw, texture and

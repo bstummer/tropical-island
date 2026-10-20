@@ -7,6 +7,7 @@ import skyVert from './placeholder-sky.vert';
 import skyFrag from './placeholder-sky.frag';
 import waterVert from './placeholder-water.vert';
 import waterFrag from './placeholder-water.frag';
+import { withSceneOutput } from '../post/scene-output.js';
 
 const SKY = {
   day: { zenith: '#2a6fd0', horizon: '#b8dcf0', sun: '#fff1dc' },
@@ -24,6 +25,7 @@ export function create(ctx) {
 
   // Sky dome, kept centred on the camera.
   const skyUniforms = {
+    ...ctx.frame.uniforms,
     uZenith: { value: new THREE.Color() },
     uHorizon: { value: new THREE.Color() },
     uSunDir: { value: new THREE.Vector3() },
@@ -38,7 +40,6 @@ export function create(ctx) {
       uniforms: skyUniforms,
       side: THREE.BackSide,
       depthWrite: false,
-      dithering: true,
     }),
   );
   sky.renderOrder = -1;
@@ -51,13 +52,14 @@ export function create(ctx) {
   const pos = moundGeo.attributes.position;
   for (let i = 0; i < pos.count; i++) pos.setY(i, height(pos.getX(i), pos.getZ(i)));
   moundGeo.computeVertexNormals();
-  const mound = new THREE.Mesh(moundGeo, new THREE.MeshLambertMaterial({ color: '#dcc596' }));
+  const mound = new THREE.Mesh(moundGeo, withSceneOutput(new THREE.MeshLambertMaterial({ color: '#dcc596' }), ctx.frame));
   group.add(mound);
 
   // Flat water plane that follows the camera; the shader works in world space.
   // Tessellated because a few huge triangles clipped at the near plane get
   // rasterised differently by different GPUs (the shoreline moved by metres).
   const waterUniforms = {
+    ...ctx.frame.uniforms,
     uTime: { value: 0 },
     uDeep: { value: new THREE.Color() },
     uShallow: { value: new THREE.Color() },

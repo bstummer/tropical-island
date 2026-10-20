@@ -5,6 +5,7 @@
 import * as THREE from 'three';
 import vertexShader from './heavy.vert';
 import fragmentShader from './heavy.frag';
+import { withSceneOutput } from '../post/scene-output.js';
 
 const BOXES = 800; // draw calls
 const VARIANTS = 70; // shader programs, one per material variant
@@ -15,7 +16,7 @@ const TARGETS = 3; // 2048^2 half-float colour + depth: 48 MB each
 const PASSES = 10; // extra render passes per frame, into tiny targets
 
 export function create(ctx) {
-  const { scene, camera, renderer } = ctx;
+  const { scene, camera, renderer, frame } = ctx;
   const group = new THREE.Group();
   group.position.copy(camera.position);
   group.quaternion.copy(camera.quaternion);
@@ -24,7 +25,8 @@ export function create(ctx) {
   const box = new THREE.BoxGeometry(0.15, 0.15, 0.15);
   const variants = Array.from(
     { length: VARIANTS },
-    (_, i) => new THREE.ShaderMaterial({ name: `fixture-heavy-${i}`, vertexShader, fragmentShader, defines: { VARIANT: i } }),
+    (_, i) =>
+      new THREE.ShaderMaterial({ name: `fixture-heavy-${i}`, vertexShader, fragmentShader, uniforms: { ...frame.uniforms }, defines: { VARIANT: i } }),
   );
   for (let i = 0; i < BOXES; i++) {
     const mesh = new THREE.Mesh(box, variants[i % VARIANTS]);
@@ -32,7 +34,10 @@ export function create(ctx) {
     group.add(mesh);
   }
 
-  const wall = new THREE.Mesh(new THREE.PlaneGeometry(200, 120, WALL_SEGMENTS, WALL_SEGMENTS), new THREE.MeshBasicMaterial({ color: '#334455' }));
+  const wall = new THREE.Mesh(
+    new THREE.PlaneGeometry(200, 120, WALL_SEGMENTS, WALL_SEGMENTS),
+    withSceneOutput(new THREE.MeshBasicMaterial({ color: '#334455' }), frame),
+  );
   wall.position.z = -40;
   group.add(wall);
 
@@ -46,7 +51,7 @@ export function create(ctx) {
   textures.forEach((map, i) => {
     const layer = new THREE.Mesh(
       new THREE.PlaneGeometry(20, 12),
-      new THREE.MeshBasicMaterial({ map, transparent: true, opacity: 0.05, depthWrite: false }),
+      withSceneOutput(new THREE.MeshBasicMaterial({ map, transparent: true, opacity: 0.05, depthWrite: false }), frame),
     );
     layer.position.z = -2 - 0.1 * i;
     group.add(layer);
@@ -61,17 +66,17 @@ export function create(ctx) {
   const tinyScene = new THREE.Scene();
   tinyScene.add(new THREE.Mesh(box, variants[0]));
   const tinyTargets = Array.from({ length: PASSES }, () => new THREE.WebGLRenderTarget(16, 16));
+  const removePasses = frame.beforeScene(() => {
+    for (const target of tinyTargets) {
+      renderer.setRenderTarget(target);
+      renderer.render(tinyScene, camera);
+    }
+  });
 
   return {
-    update() {
-      const previous = renderer.getRenderTarget();
-      for (const target of tinyTargets) {
-        renderer.setRenderTarget(target);
-        renderer.render(tinyScene, camera);
-      }
-      renderer.setRenderTarget(previous);
-    },
+    update() {},
     dispose() {
+      removePasses();
       scene.remove(group);
       group.traverse((object) => {
         object.geometry?.dispose();

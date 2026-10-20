@@ -20,7 +20,7 @@ export async function runCapture(ctx, display, systems, frame) {
   const { renderer, scene, camera, config } = ctx;
   const start = ctx.clock.elapsed;
   await Promise.all(systems.map((s) => s.ready)); // optional async setup per system
-  renderer.compile(scene, camera);
+  ctx.frame.compile();
   await warmUp(frame, config.capture.warmupFrames);
   const broken = (renderer.info.programs ?? []).filter((p) => p.diagnostics && !p.diagnostics.runnable);
   if (broken.length) {
@@ -39,6 +39,9 @@ export async function runCapture(ctx, display, systems, frame) {
     pixelRatio: display.size.pixelRatio,
     drawingBuffer: [gl.drawingBufferWidth, gl.drawingBufferHeight],
     fov: camera.fov,
+    reversedDepth: renderer.capabilities.reversedDepthBuffer,
+    msaa: ctx.frame.sceneTarget.samples,
+    tonemap: ctx.frame.tonemap,
   };
   window.__CAPTURE__ = {
     // Back to back, without waiting for the display: the clock is frozen, so

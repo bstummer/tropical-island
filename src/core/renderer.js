@@ -6,12 +6,13 @@ import { instrument } from './gl-stats.js';
 // The context is created here, not by three.js, so gl-stats.js can count every
 // call from the first one on.
 export function createRenderer({ canvas, quality, capture }) {
-  // Attributes as three.js would request them (it always asks for alpha).
+  // The canvas only receives post's output pass (post/frame.js), so it needs no
+  // depth and no MSAA. Alpha as three.js would request it.
   const gl = canvas.getContext('webgl2', {
     alpha: true,
-    depth: true,
+    depth: false,
     stencil: false,
-    antialias: quality.antialias,
+    antialias: false,
     premultipliedAlpha: true,
     powerPreference: 'high-performance',
     // Capture mode stops rendering once ready; keep the last frame readable.
@@ -22,7 +23,9 @@ export function createRenderer({ canvas, quality, capture }) {
 
   let renderer;
   try {
-    renderer = new THREE.WebGLRenderer({ canvas, context: gl });
+    // Reversed depth needs EXT_clip_control; three.js falls back to normal depth
+    // without it (renderer.capabilities.reversedDepthBuffer says which).
+    renderer = new THREE.WebGLRenderer({ canvas, context: gl, reversedDepthBuffer: true });
   } catch (err) {
     throw new Error(`WebGL2 is not available: ${err.message}`);
   }

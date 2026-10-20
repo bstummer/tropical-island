@@ -2,6 +2,7 @@
 //
 //   node tools/screenshot.js [--views beach,shoreline] [--label before] [--size 1600x900]
 //                            [--t 12.5] [--time 17.5] [--seed 1] [--quality high]
+//                            [--tonemap agx] [--fixture tonecard]
 //                            [--gl auto|hardware|swiftshader]
 //   node tools/screenshot.js --compare <labelA> <labelB>
 //
@@ -44,7 +45,7 @@ const BACKENDS = {
 };
 const SOFTWARE_GL = /swiftshader|llvmpipe|softpipe|software|basic render/i;
 
-const OPTIONS = new Set(['views', 'label', 'size', 't', 'time', 'seed', 'quality', 'gl']);
+const OPTIONS = new Set(['views', 'label', 'size', 't', 'time', 'seed', 'quality', 'tonemap', 'fixture', 'gl']);
 
 // ---------------------------------------------------------------- capture
 
@@ -58,7 +59,7 @@ async function capture(args) {
   mkdirSync(outDir, { recursive: true });
 
   const query = { capture: '1' };
-  for (const key of ['t', 'time', 'seed', 'quality']) {
+  for (const key of ['t', 'time', 'seed', 'quality', 'tonemap', 'fixture']) {
     if (args[key] !== undefined) query[key] = args[key];
   }
   for (const key of ['t', 'time']) {
@@ -78,8 +79,8 @@ async function capture(args) {
   let toolChecks = [];
   try {
     for (const [i, view] of views.entries()) {
-      // One seek check per run is enough to catch state that depends on more than t.
-      const result = await captureView(context, fileUrl, query, view, outDir, { seekCheck: i === 0, gpuTime: kind === 'hardware' });
+      // The contract checks test the game's capture code, not the view: once per run is enough.
+      const result = await captureView(context, fileUrl, query, view, outDir, { contractChecks: i === 0, gpuTime: kind === 'hardware' });
       if (existsSync(join(outDir, result.file))) outputs.push(join(outDir, result.file));
       if (result.files) outputs.push(join(outDir, view.name, '*.png'));
       report(view.name, result.timing.totalMs, summarize(result), result.problems, result.consoleWarnings, result.warnings);
@@ -132,9 +133,10 @@ async function capture(args) {
 }
 
 // One view: load the page, save the still, then measure it with extra frames
-// rendered in the same page (tools/measure.js). With `seekCheck`, also load the
-// view fresh at the last motion frame's time and require the same pixels.
-async function captureView(context, fileUrl, query, view, outDir, { seekCheck, gpuTime }) {
+// rendered in the same page (tools/measure.js). With `contractChecks`, also
+// require that rendering the start frame again, and loading the view fresh at
+// the last motion frame's time, both reproduce the pixels exactly.
+async function captureView(context, fileUrl, query, view, outDir, { contractChecks, gpuTime }) {
   const started = Date.now();
   const { page, info, problems, consoleWarnings } = await openCapture(context, fileUrl, { ...query, view: view.name });
   const result = { view: view.name, file: `${view.name}.png`, info, timing: { loadMs: Date.now() - started }, problems, warnings: [], consoleWarnings };
@@ -152,13 +154,13 @@ async function captureView(context, fileUrl, query, view, outDir, { seekCheck, g
       // Rendering the start frame again must reproduce it exactly; otherwise extra
       // frames would depend on what was rendered before them.
       const first = await page.evaluate(() => window.__CAPTURE__.image());
-      if ((await renderFrame(page)) !== first) {
+      if (contractChecks && (await renderFrame(page)) !== first) {
         problems.push({ kind: 'capture', text: 'rendering the start frame again changed its pixels' });
       }
       const measured = await measureView(page, { info, crops: view.crops, first, dir: join(outDir, view.name), gpuTime });
       result.measurements = measured.measurements;
       result.files = Object.fromEntries(Object.entries(measured.files).map(([k, f]) => [k, `${view.name}/${f}`]));
-      if (seekCheck) {
+      if (contractChecks) {
         const t = measured.measurements.motionTimes.at(-1);
         const fresh = await openCapture(context, fileUrl, { ...query, view: view.name, t });
         problems.push(...fresh.problems);
@@ -262,7 +264,27 @@ async function checkTools(context, fileUrl, query, view, outDir) {
       }
       return `over the low preset's limit on ${over.size} of ${Object.keys(limits).length} metrics`;
     }),
+    // What the frame promises (post/frame.js): edges stay anti-aliased against a
+    // bright sky after tonemapping, and depth holds from a hilltop to the horizon.
+    // The bars' edges are about 1% of the frame: 0.01% shimmers as built, 0.4%
+    // with a plain linear MSAA resolve, so this check gets a tighter limit.
+    await checkClean(context, fileUrl, { ...params, fixture: 'silhouette' }, dir, 'thin dark bars against a bright sky', 0.1),
+    // 0.14% as built (where the planes end at the horizon), 43% without reversed depth.
+    await checkClean(context, fileUrl, { ...params, fixture: 'depth' }, dir, 'two planes 5 cm apart, from a hilltop'),
   ];
+}
+
+// A fixture the frame must render without shimmer.
+function checkClean(context, fileUrl, params, dir, what, limitPercent = config.capture.shimmer.limitPercent) {
+  return checkFixture(context, fileUrl, params, async (page, info, problems) => {
+    const { threshold } = config.capture.shimmer;
+    const start = decodeDataUrl(await page.evaluate(() => window.__CAPTURE__.image()));
+    const { percent, heat } = await measureShimmer(page, info, start);
+    writeFileSync(join(dir, `${params.fixture}.png`), encodePng(heatImage(start, heat, threshold)));
+    const detail = `${what}: ${percent.toFixed(2)}% shimmers (limit ${limitPercent}%)`;
+    if (percent > limitPercent) problems.push({ kind: 'tool check', text: `${params.fixture} fixture: ${detail}` });
+    return detail;
+  });
 }
 
 // Opens a fixture and runs `check(page, info, problems)`, which returns a one-line detail.

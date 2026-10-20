@@ -5,17 +5,31 @@
 // from ctx.quality, so a new system adds its per-preset knobs here.
 export const quality = {
   default: 'high',
+  // msaa: samples per pixel in the HDR target (post/frame.js); 0 turns it off.
   presets: {
-    low: { renderScale: 0.67, maxPixelRatio: 1, antialias: false },
-    medium: { renderScale: 0.85, maxPixelRatio: 1.5, antialias: true },
-    high: { renderScale: 1, maxPixelRatio: 2, antialias: true },
+    low: { renderScale: 0.67, maxPixelRatio: 1, msaa: 2 },
+    medium: { renderScale: 0.85, maxPixelRatio: 1.5, msaa: 4 },
+    high: { renderScale: 1, maxPixelRatio: 2, msaa: 4 },
   },
 };
 
+// Depth is reversed and 32-bit float (post/frame.js), so precision is about
+// the same fraction of the distance everywhere: a near plane at a leaf's
+// distance costs nothing at the horizon. Without reversed depth (no
+// EXT_clip_control) the near plane moves out to nearFallback instead.
 export const camera = {
   fov: 70, // vertical, degrees; a view may override it
-  near: 0.1,
-  far: 6000,
+  near: 0.02,
+  nearFallback: 0.5,
+  far: 100000, // beyond the horizon from any hilltop
+};
+
+// The output pass (post/output.frag). `tonemap` picks one of `tonemaps`
+// (?tonemap=<name> overrides it); the numbers are the shader's TONEMAP define.
+export const post = {
+  exposure: 1, // the scene materials' pre-exposure (chunks/scene-output.glsl)
+  tonemap: 'agx-punchy',
+  tonemaps: { neutral: 1, agx: 2, 'agx-punchy': 3, aces: 4 },
 };
 
 export const movement = {
@@ -47,7 +61,7 @@ export const capture = {
   // What the screenshot tool measures per view (tools/measure.js).
   motion: { frames: 6, stepSeconds: 0.5, threshold: 4 }, // strip at t, t + 0.5 s, ...; threshold in 8-bit levels
   // Frames panned by stepPixels at the centre; see shimmer() in tools/image.js.
-  shimmer: { frames: 5, stepPixels: 0.25, threshold: 24, ratio: 0.5, limitPercent: 0.5 },
+  shimmer: { frames: 5, stepPixels: 0.25, threshold: 24, ratio: 0.5, fullRatio: 0.7, limitPercent: 0.5 },
   crop: { width: 400, height: 225, zoom: 2 }, // source pixels, shown at zoom x
   banding: { radius: 6, gain: 32 },
 };
@@ -71,4 +85,4 @@ export const build = {
   sizeBudgetBytes: 3 * 1024 * 1024, // raw size of dist/index.html; warn above, fail above 2x
 };
 
-export const config = { quality, camera, movement, defaults, capture, budget, build };
+export const config = { quality, camera, post, movement, defaults, capture, budget, build };

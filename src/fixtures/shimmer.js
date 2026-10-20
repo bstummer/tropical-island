@@ -12,7 +12,7 @@ export function create(ctx) {
   const { scene, camera } = ctx;
   const card = new THREE.Mesh(
     new THREE.PlaneGeometry(40, 24),
-    new THREE.ShaderMaterial({ name: 'fixture-shimmer', vertexShader, fragmentShader }),
+    new THREE.ShaderMaterial({ name: 'fixture-shimmer', vertexShader, fragmentShader, uniforms: { ...ctx.frame.uniforms } }),
   );
   card.position.copy(camera.position);
   card.quaternion.copy(camera.quaternion);

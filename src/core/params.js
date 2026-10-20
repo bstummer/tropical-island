@@ -8,6 +8,7 @@
 //   capture  1 = screenshot mode
 //   quality  preset name from config.quality.presets
 //   fixture  a test scene from src/fixtures/ instead of the island (for tools/screenshot.js)
+//   tonemap  tonemapping curve from config.post.tonemaps, to compare looks
 
 export function parseParams(search) {
   const q = new URLSearchParams(search);
@@ -19,6 +20,7 @@ export function parseParams(search) {
     capture: q.get('capture') === '1',
     quality: text(q, 'quality'),
     fixture: text(q, 'fixture'),
+    tonemap: text(q, 'tonemap'),
   };
 }
 

@@ -119,14 +119,16 @@ export function panShift(width, height, fov, step) {
 // matches the previous one shifted with bilinear interpolation. Aliased content
 // (edges or detail that pop between pixels) does not.
 //
-// A mismatch counts in full when it is at least `ratio` of the local contrast
-// (the range over 3 x 3 pixels in either frame): a quarter-pixel step leaves a
-// box-filtered edge off by under 0.2 of its contrast, a point-sampled one by up
-// to 0.75. Smaller mismatches count proportionally less. `heat` holds the worst
-// count per pixel over all steps and channels, in 8-bit levels; `percent` is
-// the share of pixels at or above `threshold`. A `border` where content enters
-// the frame is left out.
-export function shimmer(frames, { shift, threshold = 24, ratio = 0.5, border = 2 }) {
+// How much a mismatch counts depends on its share of the local contrast (the
+// range over 3 x 3 pixels in either frame). A quarter-pixel step leaves a
+// box-filtered edge off by under 0.2 of its contrast and a 4x MSAA edge by up
+// to about 0.5 (coverage moves a whole sample at a time); point-sampled detail
+// pops by 0.75 and more. So mismatches start to count at `ratio` (the MSAA
+// baseline) and count in full from `fullRatio`. `heat` holds the worst count
+// per pixel over all steps and channels, in 8-bit levels; `percent` is the
+// share of pixels at or above `threshold`. A `border` where content enters the
+// frame is left out.
+export function shimmer(frames, { shift, threshold = 24, ratio = 0.5, fullRatio = 0.7, border = 2 }) {
   const { width, height } = frames[0];
   const heat = new Float32Array(width * height);
   const ranges = frames.map(localRange);
@@ -157,7 +159,8 @@ export function shimmer(frames, { shift, threshold = 24, ratio = 0.5, border = 2
           const predicted = w00 * a[j00 + c] + w10 * a[j00 + 4 + c] + w01 * a[j01 + c] + w11 * a[j01 + 4 + c];
           const miss = Math.abs(b[4 * i + c] - predicted);
           const contrast = Math.max(ranges[k][nearest + c], ranges[k + 1][4 * i + c]);
-          const counted = miss * Math.min(1, miss / (ratio * contrast || 1));
+          const share = miss / (contrast || 1);
+          const counted = miss * Math.min(1, Math.max(0, (share - ratio) / (fullRatio - ratio)));
           if (counted > worst) worst = counted;
         }
       }

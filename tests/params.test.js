@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { parseParams } from '../src/core/params.js';
 
 test('parses every supported param', () => {
-  assert.deepEqual(parseParams('?view=beach&time=17.5&t=12.5&seed=abc&capture=1&quality=low&fixture=shimmer'), {
+  assert.deepEqual(parseParams('?view=beach&time=17.5&t=12.5&seed=abc&capture=1&quality=low&fixture=shimmer&tonemap=aces'), {
     view: 'beach',
     time: 17.5,
     t: 12.5,
@@ -11,11 +11,13 @@ test('parses every supported param', () => {
     capture: true,
     quality: 'low',
     fixture: 'shimmer',
+    tonemap: 'aces',
   });
 });
 
 test('missing params are null and capture is off', () => {
-  assert.deepEqual(parseParams(''), { view: null, time: null, t: null, seed: null, capture: false, quality: null, fixture: null });
+  const none = { view: null, time: null, t: null, seed: null, capture: false, quality: null, fixture: null, tonemap: null };
+  assert.deepEqual(parseParams(''), none);
 });
 
 test('the leading ? is optional', () => {

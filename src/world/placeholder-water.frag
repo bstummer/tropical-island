@@ -2,6 +2,7 @@
 // Its only job is to prove that #include of shared chunks and uTime work.
 
 #include "chunks/noise.glsl"
+#include "chunks/scene-output.glsl"
 
 uniform float uTime;
 uniform vec3 uDeep;
@@ -22,6 +23,5 @@ void main() {
   float fresnel = pow(1.0 - max(viewDir.y, 0.0), 5.0);
   color = mix(color, uHorizon, fresnel);
 
-  gl_FragColor = vec4(color, 1.0);
-  #include <colorspace_fragment>
+  gl_FragColor = sceneOutput(color, 1.0);
 }

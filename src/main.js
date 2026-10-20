@@ -1,4 +1,4 @@
-// Boot sequence: params -> renderer, scene, camera -> systems -> loop.
+// Boot sequence: params -> renderer, scene, camera, frame -> systems -> loop.
 // With ?capture=1, core/capture.js takes over the loop for tools/screenshot.js.
 import * as THREE from 'three';
 import { config } from './config.js';
@@ -9,18 +9,29 @@ import { createRandom } from './core/random.js';
 import { createRenderer } from './core/renderer.js';
 import { applyView } from './core/camera.js';
 import { runCapture } from './core/capture.js';
+import { createFrame } from './post/frame.js';
 import * as input from './core/input.js';
 import * as placeholder from './world/placeholder.js';
 import * as shimmerFixture from './fixtures/shimmer.js';
 import * as heavyFixture from './fixtures/heavy.js';
+import * as silhouetteFixture from './fixtures/silhouette.js';
+import * as depthFixture from './fixtures/depth.js';
+import * as tonecardFixture from './fixtures/tonecard.js';
 
 // Updated in this order every frame. Each module exports create(ctx) -> { update(dt, t), dispose(), ready? }
 // where the optional `ready` promise is awaited before a capture starts.
 const WORLD_SYSTEMS = [placeholder];
 
-// Test scenes that replace the world with ?fixture=<name>, so tools/screenshot.js
-// can prove each measurement catches what it measures.
-const FIXTURES = { shimmer: [shimmerFixture], heavy: [heavyFixture] };
+// Test scenes that replace the world with ?fixture=<name>: tools/screenshot.js
+// uses them to prove its measurements and the frame's guarantees, the tonecard
+// shows the tonemapping.
+const FIXTURES = {
+  shimmer: [shimmerFixture],
+  heavy: [heavyFixture],
+  silhouette: [silhouetteFixture],
+  depth: [depthFixture],
+  tonecard: [tonecardFixture],
+};
 
 let captureMode = false;
 
@@ -49,7 +60,8 @@ function boot() {
   const { renderer } = display;
 
   const scene = new THREE.Scene();
-  const camera = new THREE.PerspectiveCamera(view.fov ?? config.camera.fov, 1, config.camera.near, config.camera.far);
+  const near = renderer.capabilities.reversedDepthBuffer ? config.camera.near : config.camera.nearFallback;
+  const camera = new THREE.PerspectiveCamera(view.fov ?? config.camera.fov, 1, near, config.camera.far);
   applyView(camera, view);
   display.onResize(({ width, height }) => {
     camera.aspect = width / height;
@@ -68,6 +80,7 @@ function boot() {
     clock: createClock({ frozen: params.capture, start: params.t ?? config.defaults.t }),
     rng: createRandom(params.seed ?? config.defaults.seed),
   };
+  ctx.frame = createFrame(ctx, display);
 
   const systems = [];
   if (!params.capture) systems.push(input.create(ctx));
@@ -77,10 +90,10 @@ function boot() {
     display.stats.beginFrame();
     ctx.clock.tick();
     for (const system of systems) system.update(ctx.clock.dt, ctx.clock.elapsed);
-    renderer.render(scene, camera);
+    ctx.frame.render();
   }
 
-  if (import.meta.env.DEV) installShaderHotSwap(scene);
+  if (import.meta.env.DEV) installShaderHotSwap([scene, ctx.frame.outputScene]);
 
   if (params.capture) {
     runCapture(ctx, display, systems, frame).catch(fail);
@@ -124,21 +137,23 @@ function fail(err, title = 'Could not start.') {
 
 // Dev only: when a .glsl/.vert/.frag module hot-updates (see vite.config.js),
 // swap the source into every material that uses it. Falls back to a reload
-// when the shader isn't found on a material in the scene.
-function installShaderHotSwap(scene) {
+// when the shader isn't found on a material in the scenes.
+function installShaderHotSwap(scenes) {
   window.addEventListener('shader-hot-swap', ({ detail: { prev, next } }) => {
     let swapped = 0;
-    scene.traverse((obj) => {
-      for (const material of [].concat(obj.material ?? [])) {
-        for (const key of ['vertexShader', 'fragmentShader']) {
-          if (material[key] === prev) {
-            material[key] = next;
-            material.needsUpdate = true;
-            swapped++;
+    for (const scene of scenes) {
+      scene.traverse((obj) => {
+        for (const material of [].concat(obj.material ?? [])) {
+          for (const key of ['vertexShader', 'fragmentShader']) {
+            if (material[key] === prev) {
+              material[key] = next;
+              material.needsUpdate = true;
+              swapped++;
+            }
           }
         }
-      }
-    });
+      });
+    }
     if (swapped) console.info(`[hmr] shader updated in ${swapped} material(s)`);
     else window.location.reload();
   });
