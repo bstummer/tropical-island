@@ -9,6 +9,10 @@
 //   quality  preset name from config.quality.presets
 //   fixture  a test scene from src/fixtures/ instead of the island (for tools/screenshot.js)
 //   tonemap  tonemapping curve from config.post.tonemaps, to compare looks
+//   exposure scene exposure, instead of config.post.exposure, to compare looks
+//   stats    1 = show the frame readout from the start (F3 toggles it)
+//   bench    1 = run the benchmark (core/benchmark.js) instead of the game
+//   benchSeconds  seconds measured per view, instead of config.bench.seconds
 
 export function parseParams(search) {
   const q = new URLSearchParams(search);
@@ -21,6 +25,10 @@ export function parseParams(search) {
     quality: text(q, 'quality'),
     fixture: text(q, 'fixture'),
     tonemap: text(q, 'tonemap'),
+    exposure: number(q, 'exposure', 0.001, 1000),
+    stats: q.get('stats') === '1',
+    bench: q.get('bench') === '1',
+    benchSeconds: number(q, 'benchSeconds', 0.05, 600),
   };
 }
 

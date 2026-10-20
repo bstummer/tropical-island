@@ -76,20 +76,55 @@ export function tile(images, { columns = images.length, gap = 0, background = [2
 
 // Contrast-boosted copy: each channel's deviation from its local mean, times
 // `gain`, around mid-grey. Banding shows up as contour lines that follow the
-// gradient; dithering shows up as fine noise; flat areas stay grey.
-export function bandingView(image, { radius = 6, gain = 32 } = {}) {
+// gradient; dithering shows up as fine noise; flat areas stay grey. Real edges
+// (any channel off its local mean by more than `edge` levels) are drawn in flat
+// dark grey, so they don't drown out bands of a level or two.
+export function bandingView(image, { radius = 6, gain = 32, edge = 6 } = {}) {
   const { width, height } = image;
   const n = width * height;
   const out = createImage(width, height);
   const channel = new Float32Array(n);
   const blurred = new Float32Array(n);
   const scratch = new Float32Array(n);
+  const isEdge = new Uint8Array(n);
   for (let c = 0; c < 3; c++) {
     for (let i = 0; i < n; i++) channel[i] = image.data[4 * i + c];
     boxBlur(channel, blurred, scratch, width, height, radius);
-    for (let i = 0; i < n; i++) out.data[4 * i + c] = clamp(128 + gain * (channel[i] - blurred[i]));
+    for (let i = 0; i < n; i++) {
+      const deviation = channel[i] - blurred[i];
+      if (Math.abs(deviation) > edge) isEdge[i] = 1;
+      out.data[4 * i + c] = clamp(128 + gain * deviation);
+    }
   }
+  for (let i = 0; i < n; i++) if (isEdge[i]) out.data.set([64, 64, 64], 4 * i);
   return out;
+}
+
+// Share of the image (percent) in visible bands: runs of at least `minRun`
+// identical pixels along a row whose neighbouring run differs by 1 to
+// `maxStep` levels, the staircase of an undithered gradient. Dither breaks such
+// runs up; flat areas and real edges have no stepped neighbour.
+export function bandedShare({ width, height, data }, { minRun = 16, maxStep = 3 } = {}) {
+  let banded = 0;
+  for (let y = 0; y < height; y++) {
+    const runs = [];
+    const row = y * width * 4;
+    for (let x = 0, start = 0; x <= width; x++) {
+      const i = row + 4 * x;
+      const j = row + 4 * start;
+      if (x < width && data[i] === data[j] && data[i + 1] === data[j + 1] && data[i + 2] === data[j + 2]) continue;
+      runs.push({ length: x - start, at: j });
+      start = x;
+    }
+    const stepped = (a, b) => {
+      const d = Math.max(...[0, 1, 2].map((c) => Math.abs(data[a.at + c] - data[b.at + c])));
+      return a.length >= minRun && b.length >= minRun && d >= 1 && d <= maxStep;
+    };
+    runs.forEach((run, k) => {
+      if ((k > 0 && stepped(run, runs[k - 1])) || (k + 1 < runs.length && stepped(run, runs[k + 1]))) banded += run.length;
+    });
+  }
+  return (100 * banded) / (width * height);
 }
 
 // How a still scene's image moves when the camera turns by `step` pixels'
@@ -126,14 +161,18 @@ export function panShift(width, height, fov, step) {
 // pops by 0.75 and more. So mismatches start to count at `ratio` (the MSAA
 // baseline) and count in full from `fullRatio`. `heat` holds the worst count
 // per pixel over all steps and channels, in 8-bit levels; `percent` is the
-// share of pixels at or above `threshold`. A `border` where content enters the
-// frame is left out.
-export function shimmer(frames, { shift, threshold = 24, ratio = 0.5, fullRatio = 0.7, border = 2 }) {
+// share of pixels at or above `threshold`, and `edgePercent` the share among
+// edge pixels only (local contrast of `edge` levels or more in the first
+// frame), which tells crawling edges apart from a clean frame with few edges.
+// A `border` where content enters the frame is left out.
+export function shimmer(frames, { shift, threshold = 24, ratio = 0.5, fullRatio = 0.7, edge = 48, border = 2 }) {
   const { width, height } = frames[0];
   const heat = new Float32Array(width * height);
   const ranges = frames.map(localRange);
   let flagged = 0;
   let counted = 0;
+  let edges = 0;
+  let flaggedEdges = 0;
   for (let y = border; y < height - border; y++) {
     for (let x = border; x < width - border; x++) {
       const i = y * width + x;
@@ -167,31 +206,45 @@ export function shimmer(frames, { shift, threshold = 24, ratio = 0.5, fullRatio 
       heat[i] = worst;
       counted++;
       if (worst >= threshold) flagged++;
+      const r = ranges[0];
+      if (Math.max(r[4 * i], r[4 * i + 1], r[4 * i + 2]) >= edge) {
+        edges++;
+        if (worst >= threshold) flaggedEdges++;
+      }
     }
   }
-  return { percent: counted ? (100 * flagged) / counted : 0, heat };
+  return { percent: counted ? (100 * flagged) / counted : 0, edgePercent: edges ? (100 * flaggedEdges) / edges : 0, heat };
 }
 
-// Where it shimmers: the frame in dim grey, pixels at or above `threshold` in
-// magenta, weaker second differences as a faint tint.
+// A per-pixel map over a base frame: the frame in grey at 60%, pixels whose
+// heat reaches `threshold` in magenta, grown by a pixel so single ones show at
+// any scale, and weaker heat as a faint tint.
 export function heatImage(base, heat, threshold) {
-  const out = createImage(base.width, base.height);
+  const { width, height } = base;
+  const out = createImage(width, height);
   const d = base.data;
-  for (let i = 0; i < heat.length; i++) {
-    const grey = 0.3 * (0.2126 * d[4 * i] + 0.7152 * d[4 * i + 1] + 0.0722 * d[4 * i + 2]);
-    const k = heat[i] >= threshold ? 1 : 0.4 * (heat[i] / threshold);
-    out.data[4 * i] = grey + (255 - grey) * k;
-    out.data[4 * i + 1] = grey + (40 - grey) * k;
-    out.data[4 * i + 2] = grey + (200 - grey) * k;
+  const hot = (x, y) => x >= 0 && y >= 0 && x < width && y < height && heat[y * width + x] >= threshold;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const i = y * width + x;
+      const grey = 0.6 * (0.2126 * d[4 * i] + 0.7152 * d[4 * i + 1] + 0.0722 * d[4 * i + 2]);
+      const near = hot(x, y) || hot(x - 1, y) || hot(x + 1, y) || hot(x, y - 1) || hot(x, y + 1);
+      const k = near ? 1 : 0.4 * (heat[i] / threshold);
+      out.data[4 * i] = grey + (255 - grey) * k;
+      out.data[4 * i + 1] = grey + (40 - grey) * k;
+      out.data[4 * i + 2] = grey + (200 - grey) * k;
+    }
   }
   return out;
 }
 
-// How much of the frame moves over a series of frames: the percentage of pixels
-// where some channel's range (max - min across the frames) exceeds `threshold`.
-// Slow drifts count as much as fast changes.
+// How much of the frame moves over a series of frames: `heat` holds each
+// pixel's largest channel range (max - min across the frames, in 8-bit
+// levels), and `percent` is the share of pixels whose range exceeds
+// `threshold`. Slow drifts count as much as fast changes.
 export function motion(frames, { threshold = 4 } = {}) {
   const n = frames[0].width * frames[0].height;
+  const heat = new Float32Array(n);
   let moving = 0;
   for (let i = 0; i < n; i++) {
     for (let c = 4 * i; c < 4 * i + 3; c++) {
@@ -202,17 +255,15 @@ export function motion(frames, { threshold = 4 } = {}) {
         if (v < min) min = v;
         if (v > max) max = v;
       }
-      if (max - min > threshold) {
-        moving++;
-        break;
-      }
+      if (max - min > heat[i]) heat[i] = max - min;
     }
+    if (heat[i] > threshold) moving++;
   }
-  return (100 * moving) / n;
+  return { percent: (100 * moving) / n, heat };
 }
 
-// Fragments shaded per pixel as colours: black 0, then blue, teal, green,
-// yellow, orange and red for 1 to 6, magenta for 7 to 9, white from 10.
+// Fragments shaded per pixel as colours: black 0; blue, teal, green, yellow,
+// orange and red for 1 to 6; magenta for 7 to 9; pink for 10 to 15; white from 16.
 const OVERDRAW_RAMP = [
   [0, 0, 0],
   [25, 45, 130],
@@ -228,7 +279,8 @@ export function overdrawImage({ width, height, counts }) {
   const out = createImage(width, height);
   for (let i = 0; i < counts.length; i++) {
     const n = counts[i];
-    out.data.set(n >= 10 ? [255, 255, 255] : OVERDRAW_RAMP[Math.min(n, OVERDRAW_RAMP.length - 1)], 4 * i);
+    const colour = n >= 16 ? [255, 255, 255] : n >= 10 ? [255, 175, 225] : OVERDRAW_RAMP[Math.min(n, OVERDRAW_RAMP.length - 1)];
+    out.data.set(colour, 4 * i);
   }
   return out;
 }
@@ -242,12 +294,6 @@ export function overdrawStats({ counts }) {
     if (n > max) max = n;
   }
   return { mean: sum / counts.length, max };
-}
-
-export function samePixels(a, b) {
-  if (a.width !== b.width || a.height !== b.height) return false;
-  for (let i = 0; i < a.data.length; i++) if (a.data[i] !== b.data[i]) return false;
-  return true;
 }
 
 // Per pixel and channel (RGBA layout), max - min over its 3 x 3 neighbourhood:

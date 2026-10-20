@@ -134,6 +134,17 @@ test('texture memory follows uploads, storage, mipmaps and deletes', () => {
   near(stats.memory().textureBytes, expected - (256 * 256 * 4 * 4) / 3);
 });
 
+test('mipmaps of a cube map count all six faces', () => {
+  const gl = fakeContext({ width: 0, height: 0 });
+  const stats = instrument(gl);
+  gl.bind(GL.TEXTURE_CUBE_MAP, {});
+  for (let face = 0; face < 6; face++) {
+    gl.texImage2D(GL.TEXTURE_CUBE_MAP_POSITIVE_X + face, 0, GL.RGBA8, 32, 32, 0, GL.RGBA, GL.UNSIGNED_BYTE, null);
+  }
+  gl.generateMipmap(GL.TEXTURE_CUBE_MAP);
+  near(stats.memory().textureBytes, (6 * 32 * 32 * 4 * 4) / 3);
+});
+
 test('textures drawn into, renderbuffers and the canvas count as render targets', () => {
   const gl = fakeContext({ antialias: true, width: 100, height: 50 });
   const stats = instrument(gl);
@@ -179,6 +190,66 @@ test('a multi-draw is one draw call with all its triangles', () => {
   ext.multiDrawElementsInstancedWEBGL(GL.TRIANGLES, [0, 3, 6], 1, GL.UNSIGNED_BYTE, [0, 0, 0], 0, [9, 2, 10], 1, 2);
   assert.deepEqual([stats.frame().drawCalls, stats.frame().triangles], [2, 6 + (1 * 2 + 2 * 10)]);
   assert.equal(ext.calls, 2);
+});
+
+test('live WebGL objects are counted by kind, and deleting twice or deleting null is harmless', () => {
+  const gl = fakeContext();
+  let id = 0;
+  for (const kind of ['Texture', 'Buffer', 'VertexArray']) {
+    gl[`create${kind}`] = () => ({ id: id++ });
+    gl[`delete${kind}`] = () => {};
+  }
+  const stats = instrument(gl);
+  const [a, b] = [gl.createTexture(), gl.createTexture()];
+  gl.createBuffer();
+  const vao = gl.createVertexArray();
+  gl.deleteTexture(a);
+  gl.deleteTexture(a);
+  gl.deleteTexture(null);
+  gl.deleteVertexArray(vao);
+  const objects = stats.objects();
+  assert.deepEqual([objects.Texture, objects.Buffer, objects.VertexArray, objects.Framebuffer], [1, 1, 0, 0]);
+  assert.ok(b);
+});
+
+test('lastFrame keeps the finished frame while the next one is being drawn', () => {
+  const gl = fakeContext();
+  const stats = instrument(gl);
+  gl.drawArrays(GL.TRIANGLES, 0, 3);
+  stats.beginFrame();
+  gl.drawArrays(GL.TRIANGLES, 0, 30);
+  gl.drawArrays(GL.TRIANGLES, 0, 30);
+  assert.deepEqual([stats.lastFrame().drawCalls, stats.frame().drawCalls], [1, 2]);
+});
+
+test('per-frame GPU time reaches listeners only while they listen', () => {
+  const ext = { TIME_ELAPSED_EXT: 1, GPU_DISJOINT_EXT: 2 };
+  const queries = [];
+  const gl = fakeContext();
+  Object.assign(gl, {
+    QUERY_RESULT_AVAILABLE: 3,
+    QUERY_RESULT: 4,
+    getExtension: (name) => (name === 'EXT_disjoint_timer_query_webgl2' ? ext : null),
+    createQuery: () => queries[queries.push({ ns: 2e6 * (queries.length + 1) }) - 1],
+    beginQuery() {},
+    endQuery() {},
+    deleteQuery() {},
+    getQueryParameter: (query, pname) => (pname === 3 ? true : query.ns),
+  });
+  const stats = instrument(gl);
+  const times = [];
+  stats.beginFrame();
+  stats.endFrame();
+  assert.equal(queries.length, 0, 'no listener, no queries');
+  const stop = stats.onGpuTime((ms) => times.push(ms));
+  stats.beginFrame();
+  stats.endFrame();
+  stop();
+  stats.beginFrame();
+  stats.endFrame();
+  assert.deepEqual(times, [2]);
+  assert.equal(queries.length, 1);
+  assert.equal(instrument(fakeContext()).onGpuTime(() => {}), null, 'no timer queries, no listener');
 });
 
 test('the GPU timer returns finished spans in order and drops disjoint ones', () => {

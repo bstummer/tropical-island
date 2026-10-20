@@ -60,6 +60,39 @@
       body:has(#error:not([hidden])) #start {
         display: none;
       }
+      /* Frame readout (core/readout.js) and benchmark (core/benchmark.js). */
+      #readout,
+      #bench {
+        position: fixed;
+        top: 12px;
+        left: 12px;
+        margin: 0;
+        padding: 8px 10px;
+        border-radius: 6px;
+        background: rgba(10, 12, 14, 0.72);
+        font: 12px/1.45 ui-monospace, 'Cascadia Mono', Consolas, monospace;
+        white-space: pre;
+      }
+      #readout {
+        left: auto;
+        right: 12px; /* clear of the benchmark panel */
+        pointer-events: none;
+      }
+      #bench {
+        max-width: calc(100vw - 48px);
+        max-height: calc(100vh - 48px);
+        overflow: auto;
+        user-select: text;
+      }
+      #bench pre {
+        margin: 0 0 8px;
+        font: inherit;
+      }
+      #readout[hidden],
+      #bench[hidden],
+      #bench button[hidden] {
+        display: none;
+      }
     </style>
   </head>
   <body>
@@ -71,6 +104,8 @@
         <p><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move &middot; <kbd>Space</kbd> up &middot; <kbd>Shift</kbd> down &middot; <kbd>Esc</kbd> release mouse</p>
       </div>
     </div>
+    <div id="readout" hidden></div>
+    <div id="bench" hidden><pre></pre><button type="button" hidden>Copy summary</button></div>
     <div id="error" class="overlay" hidden></div>
     <script type="module" src="/src/main.js"></script>
   </body>

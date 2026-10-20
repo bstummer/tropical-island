@@ -3,8 +3,8 @@
 // window.__CAPTURE_READY__ (with __CAPTURE_INFO__) or window.__CAPTURE_ERROR__.
 //
 // Once ready, window.__CAPTURE__ lets the tool take many frames per page load:
-//   render({ t, offset, turn })  renders the view again at another time and/or
-//                                with the camera nudged (see camera.js). Every call
+//   render({ t, turn })          renders the view again at another time and/or
+//                                with the camera turned (see camera.js). Every call
 //                                starts from the view, so a frame never depends on
 //                                the calls before it.
 //   image()                      the canvas as a PNG data URL. Faster than a page
@@ -12,14 +12,19 @@
 //   stats()                      the last frame's GPU counts and live memory (gl-stats.js)
 //   gpuTime(frames)              median GPU milliseconds per frame, or null without timer queries
 //   overdraw()                   fragments shaded per pixel (overdraw.js), base64, one byte each
+//   rebuild(quality)             tears down the frame and the world and builds them again with
+//                                another preset, as a quality change in the game would; then renders
+//   resources()                  live WebGL objects by kind, memory, and objects and settings
+//                                (fog, background, environment) left in the scene
+//   teardown()                   tears it all down for good and returns resources()
 import { applyView } from './camera.js';
-import { createGpuTimer } from './gl-stats.js';
 import { measureOverdraw } from './overdraw.js';
 
-export async function runCapture(ctx, display, systems, frame) {
+// `app` is main.js's handle on the systems: { systems, setQuality(name), teardown() }.
+export async function runCapture(ctx, display, app, frame) {
   const { renderer, scene, camera, config } = ctx;
   const start = ctx.clock.elapsed;
-  await Promise.all(systems.map((s) => s.ready)); // optional async setup per system
+  await Promise.all(app.systems.map((s) => s.ready)); // optional async setup per system
   ctx.frame.compile();
   await warmUp(frame, config.capture.warmupFrames);
   const broken = (renderer.info.programs ?? []).filter((p) => p.diagnostics && !p.diagnostics.runnable);
@@ -46,31 +51,27 @@ export async function runCapture(ctx, display, systems, frame) {
   window.__CAPTURE__ = {
     // Back to back, without waiting for the display: the clock is frozen, so
     // pacing changes nothing, and image() reads the buffer directly.
-    render({ t = start, offset, turn } = {}) {
+    render({ t = start, turn } = {}) {
       ctx.clock.seek(t);
-      applyView(camera, ctx.view, { offset, turn });
+      applyView(camera, ctx.view, { turn });
       for (let i = 0; i < config.capture.warmupFrames; i++) frame();
     },
     image() {
       return renderer.domElement.toDataURL('image/png');
     },
     stats() {
-      return { ...display.stats.frame(), ...display.stats.memory() };
+      return { ...ctx.stats.frame(), ...ctx.stats.memory() };
     },
     async gpuTime(frames = 10) {
-      const timer = createGpuTimer(gl);
-      if (!timer) return null;
-      for (let i = 0; i < frames; i++) {
-        await nextFrame();
-        timer.begin();
-        frame();
-        timer.end();
-      }
       const times = [];
-      while (timer.pending) {
+      const stop = ctx.stats.onGpuTime((ms) => times.length < frames && times.push(ms));
+      if (!stop) return null;
+      // Results arrive a few frames late, and disjoint ones are dropped: render until enough came in.
+      for (let i = 0; times.length < frames && i < 4 * frames; i++) {
         await nextFrame();
-        times.push(...timer.poll());
+        frame();
       }
+      stop();
       times.sort((a, b) => a - b);
       return times.length ? times[Math.floor(times.length / 2)] : null;
     },
@@ -79,6 +80,20 @@ export async function runCapture(ctx, display, systems, frame) {
       let binary = '';
       for (let i = 0; i < counts.length; i += 0x8000) binary += String.fromCharCode(...counts.subarray(i, i + 0x8000));
       return { width, height, counts: btoa(binary) };
+    },
+    async rebuild(quality) {
+      app.setQuality(quality);
+      await Promise.all(app.systems.map((s) => s.ready));
+      ctx.frame.compile();
+      window.__CAPTURE__.render();
+    },
+    resources() {
+      const settings = ['fog', 'background', 'environment'].filter((key) => scene[key]);
+      return { objects: ctx.stats.objects(), ...ctx.stats.memory(), sceneObjects: scene.children.length, sceneSettings: settings };
+    },
+    teardown() {
+      app.teardown();
+      return window.__CAPTURE__.resources();
     },
   };
   window.__CAPTURE_READY__ = true;

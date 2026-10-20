@@ -13,7 +13,9 @@
 //   beforeScene(fn)   fn(renderer) every frame after all systems updated and before
 //                     the scene renders, for passes of their own (shadow maps,
 //                     reflections); returns a remover
-//   sceneTarget       the HDR target; sceneTarget.depthTexture holds the resolved depth
+//   sceneTarget       the HDR target (compressed colour: read it with sceneRadiance() from
+//                     chunks/scene-output.glsl); its depthTexture gets the depth only once
+//                     a system turns on sceneTarget.resolveDepthBuffer
 //   outputScene       the output pass, for the dev shader hot-swap
 import * as THREE from 'three';
 import vertexShader from './output.vert';
@@ -29,7 +31,11 @@ export function createFrame(ctx, display) {
   const sceneTarget = new THREE.WebGLRenderTarget(1, 1, {
     type: THREE.HalfFloatType,
     samples: quality.msaa,
+    // A float depth texture is what makes three.js give MSAA a 32-bit float depth
+    // buffer. Copying the depth out costs bandwidth every frame, so it stays
+    // off until a system reads it (set resolveDepthBuffer).
     depthTexture: new THREE.DepthTexture(1, 1, THREE.FloatType),
+    resolveDepthBuffer: false,
   });
 
   const geometry = new THREE.BufferGeometry();
@@ -64,7 +70,7 @@ export function createFrame(ctx, display) {
 
   return {
     size,
-    uniforms: { uExposure: { value: config.post.exposure } },
+    uniforms: { uExposure: { value: params.exposure ?? config.post.exposure } },
     sceneTarget,
     outputScene,
     tonemap,

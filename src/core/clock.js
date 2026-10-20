@@ -11,6 +11,7 @@ const MAX_DT = 0.1; // seconds; avoids a huge step after a stall or a background
 export function createClock({ frozen = false, start = 0 } = {}) {
   let elapsed = start;
   let dt = 0;
+  let interval = 0;
   let frame = 0;
   let last = null;
 
@@ -26,6 +27,11 @@ export function createClock({ frozen = false, start = 0 } = {}) {
     },
     get frozen() {
       return frozen;
+    },
+    // Real seconds since the previous tick, not clamped: frame timing for the
+    // readout and the benchmark. 0 when frozen and on the first tick.
+    get interval() {
+      return interval;
     },
 
     // Jumps to `t` seconds; the next tick has dt = 0. Captures use it to render
@@ -44,7 +50,8 @@ export function createClock({ frozen = false, start = 0 } = {}) {
         return;
       }
       const now = performance.now() / 1000;
-      dt = last === null ? 0 : Math.min(now - last, MAX_DT);
+      interval = last === null ? 0 : now - last;
+      dt = Math.min(interval, MAX_DT);
       last = now;
       elapsed += dt;
     },

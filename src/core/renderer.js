@@ -5,7 +5,8 @@ import { instrument } from './gl-stats.js';
 // pixel ratio = min(devicePixelRatio, preset.maxPixelRatio) x preset.renderScale.
 // The context is created here, not by three.js, so gl-stats.js can count every
 // call from the first one on.
-export function createRenderer({ canvas, quality, capture }) {
+export function createRenderer({ canvas, quality: preset, capture }) {
+  let quality = preset;
   // The canvas only receives post's output pass (post/frame.js), so it needs no
   // depth and no MSAA. Alpha as three.js would request it.
   const gl = canvas.getContext('webgl2', {
@@ -60,6 +61,11 @@ export function createRenderer({ canvas, quality, capture }) {
       listeners.add(fn);
       fn(size);
       return () => listeners.delete(fn);
+    },
+    // A new preset changes the pixel ratio: resizes and tells the listeners.
+    setQuality(preset) {
+      quality = preset;
+      resize();
     },
     // Human-readable GL backend, e.g. "ANGLE (NVIDIA, ... Direct3D11 ...)" or "... SwiftShader ...".
     backend() {

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import {
+  bandedShare,
   bandingView,
   createImage,
   crop,
@@ -10,7 +11,6 @@ import {
   overdrawImage,
   overdrawStats,
   panShift,
-  samePixels,
   shimmer,
   shrink,
   tile,
@@ -51,7 +51,7 @@ test('zoom repeats pixels and shrink averages them back', () => {
   assert.deepEqual([big.width, big.height], [6, 4]);
   assert.deepEqual(at(big, 5, 3), at(image, 2, 1));
   assert.deepEqual(at(big, 4, 2), at(image, 2, 1));
-  assert.ok(samePixels(shrink(big, 2), image));
+  assert.deepEqual(shrink(big, 2), image);
 });
 
 test('tile lays images out in rows with gaps', () => {
@@ -93,6 +93,21 @@ test('the banding view turns an undithered gradient into lines and a dithered on
   assert.ok(bandingView(flat).data.every((v, i) => v === (i % 4 === 3 ? 255 : 128)), 'a flat image stays mid-grey');
 });
 
+test('banded share: an undithered slow gradient is all bands, a dithered one, a flat image and hard edges none', () => {
+  const r = createRandom('image-test')('banded');
+  const slope = 1 / 32;
+  assert.ok(bandedShare(greyImage(320, 4, (x) => 100 + Math.floor(x * slope))) > 90);
+  assert.equal(bandedShare(greyImage(320, 4, (x) => 100 + x * slope + r.next() + r.next() - 1)), 0);
+  assert.equal(bandedShare(greyImage(320, 4, () => 100)), 0);
+  assert.equal(bandedShare(greyImage(320, 4, (x) => (Math.floor(x / 40) % 2 ? 30 : 220))), 0);
+});
+
+test('the banding view draws real edges in flat dark grey', () => {
+  const view = bandingView(greyImage(40, 8, (x) => (x < 20 ? 30 : 220)));
+  assert.deepEqual(at(view, 19, 4), [64, 64, 64]);
+  assert.deepEqual(at(view, 2, 4), [128, 128, 128]);
+});
+
 test('the banding view shows banding in a single channel', () => {
   const blueSteps = createImage(64, 8);
   for (let i = 0; i < 64 * 8; i++) blueSteps.data.set([30, 60, 150 + Math.floor((i % 64) / 16)], 4 * i);
@@ -124,6 +139,7 @@ test('an aliased edge panned by quarter pixels shimmers, an anti-aliased one doe
     const aliased = shimmer(edges.map((e) => edgeFrame(e, false)), options);
     const smooth = shimmer(edges.map((e) => edgeFrame(e, true)), options);
     assert.ok(aliased.percent > 0, `aliased edge from ${start} flagged`);
+    assert.ok(aliased.edgePercent > aliased.percent, 'measured among edge pixels, the share is larger');
     assert.equal(smooth.percent, 0, `anti-aliased edge from ${start}: worst mismatch ${Math.max(...smooth.heat)}`);
   }
 });
@@ -166,7 +182,9 @@ test('static dither noise and smooth gradients do not count as shimmer', () => {
   const r = createRandom('image-test')('noise');
   const dither = Array.from({ length: WIDTH * HEIGHT }, () => r.int(-1, 1));
   const frames = [0, 1, 2, 3, 4].map((k) => greyImage(WIDTH, HEIGHT, (x, y) => 60 + 6 * (x - 0.25 * k) + dither[y * WIDTH + x]));
-  assert.equal(shimmer(frames, { shift: uniformShift(0.25, 0), threshold: 24 }).percent, 0);
+  const result = shimmer(frames, { shift: uniformShift(0.25, 0), threshold: 24 });
+  assert.equal(result.percent, 0);
+  assert.equal(result.edgePercent, 0, 'no edges, nothing to share');
 });
 
 test('the frame border is left out', () => {
@@ -201,21 +219,23 @@ test('panShift matches how three.js projects a turned camera', () => {
   assert.ok(Math.abs(dx[90 * width + 160] - step) < 0.01, 'a quarter pixel at the centre');
 });
 
-test('the shimmer image marks flagged pixels in magenta', () => {
-  const base = greyImage(2, 1, () => 100);
-  const out = heatImage(base, Float32Array.from([0, 50]), 16);
-  assert.deepEqual(at(out, 0, 0), [30, 30, 30]);
-  assert.deepEqual(at(out, 1, 0), [255, 40, 200]);
+test('the shimmer image marks flagged pixels in magenta, grown by a pixel', () => {
+  const base = greyImage(5, 1, () => 100);
+  const out = heatImage(base, Float32Array.from([0, 0, 0, 0, 50]), 16);
+  assert.deepEqual(at(out, 0, 0), [60, 60, 60]);
+  assert.deepEqual(at(out, 3, 0), [255, 40, 200], 'neighbour of a flagged pixel');
+  assert.deepEqual(at(out, 4, 0), [255, 40, 200]);
 });
 
 // ---------------------------------------------------------------- overdraw
 
 test('overdraw stats and colours follow the fragment counts', () => {
-  const field = { width: 4, height: 1, counts: Uint8Array.from([0, 1, 3, 12]) };
-  assert.deepEqual(overdrawStats(field), { mean: 4, max: 12 });
+  const field = { width: 5, height: 1, counts: Uint8Array.from([0, 1, 3, 12, 34]) };
+  assert.deepEqual(overdrawStats(field), { mean: 10, max: 34 });
   const image = overdrawImage(field);
   assert.deepEqual(at(image, 0, 0), [0, 0, 0]);
-  assert.deepEqual(at(image, 3, 0), [255, 255, 255]);
+  assert.deepEqual(at(image, 4, 0), [255, 255, 255]);
+  assert.notDeepEqual(at(image, 3, 0), at(image, 4, 0), '10 to 15 differ from 16 and up');
   assert.notDeepEqual(at(image, 1, 0), at(image, 2, 0));
 });
 
@@ -224,13 +244,14 @@ test('overdraw stats and colours follow the fragment counts', () => {
 test('motion measures the share of pixels that change across the frames', () => {
   const still = greyImage(10, 10, () => 50);
   const half = greyImage(10, 10, (x) => (x < 5 ? 50 : 90));
-  assert.equal(motion([still, still, still]), 0);
-  assert.equal(motion([still, half]), 50);
-  assert.equal(motion([still, half, still]), 50);
-  assert.equal(motion([still]), 0);
+  assert.equal(motion([still, still, still]).percent, 0);
+  assert.equal(motion([still, half]).percent, 50);
+  assert.equal(motion([still, half, still]).percent, 50);
+  assert.equal(motion([still]).percent, 0);
+  assert.equal(motion([still, half]).heat[9], 40, 'the map holds the range per pixel');
 });
 
 test('a slow drift counts as motion even when no single step passes the threshold', () => {
   const frames = [0, 1, 2, 3, 4, 5].map((k) => greyImage(10, 10, () => 100 + 2 * k));
-  assert.equal(motion(frames, { threshold: 4 }), 100);
+  assert.equal(motion(frames, { threshold: 4 }).percent, 100);
 });

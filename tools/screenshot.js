@@ -2,7 +2,7 @@
 //
 //   node tools/screenshot.js [--views beach,shoreline] [--label before] [--size 1600x900]
 //                            [--t 12.5] [--time 17.5] [--seed 1] [--quality high]
-//                            [--tonemap agx] [--fixture tonecard]
+//                            [--tonemap agx] [--exposure 1.5] [--fixture tonecard]
 //                            [--gl auto|hardware|swiftshader]
 //   node tools/screenshot.js --compare <labelA> <labelB>
 //
@@ -25,13 +25,14 @@ import { views as allViews } from '../src/views.js';
 import { config } from '../src/config.js';
 import { decodeDataUrl, measureCost, measureShimmer, measureView, renderFrame } from './measure.js';
 import { encodePng } from './png.js';
-import { heatImage, overdrawImage } from './image.js';
+import { bandedShare, bandingView, heatImage, overdrawImage } from './image.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const BUILT_HTML = join(ROOT, 'dist', 'index.html');
 const SHOTS = join(ROOT, 'screenshots');
 const READY_TIMEOUT_MS = 60_000;
 const PLAYER_MODE = { frames: 30, viewport: { width: 640, height: 360 } }; // errors only, so small
+const BENCH_SECONDS = 0.25; // per view: enough to prove the benchmark works
 const SHEET_ORIGIN = 'http://contact-sheet.local';
 
 const HARDWARE_ARGS = {
@@ -45,7 +46,7 @@ const BACKENDS = {
 };
 const SOFTWARE_GL = /swiftshader|llvmpipe|softpipe|software|basic render/i;
 
-const OPTIONS = new Set(['views', 'label', 'size', 't', 'time', 'seed', 'quality', 'tonemap', 'fixture', 'gl']);
+const OPTIONS = new Set(['views', 'label', 'size', 't', 'time', 'seed', 'quality', 'tonemap', 'exposure', 'fixture', 'gl']);
 
 // ---------------------------------------------------------------- capture
 
@@ -59,7 +60,7 @@ async function capture(args) {
   mkdirSync(outDir, { recursive: true });
 
   const query = { capture: '1' };
-  for (const key of ['t', 'time', 'seed', 'quality', 'tonemap', 'fixture']) {
+  for (const key of ['t', 'time', 'seed', 'quality', 'tonemap', 'exposure', 'fixture']) {
     if (args[key] !== undefined) query[key] = args[key];
   }
   for (const key of ['t', 'time']) {
@@ -75,6 +76,7 @@ async function capture(args) {
   const results = [];
   const outputs = [];
   let player = null;
+  let bench = null;
 
   let toolChecks = [];
   try {
@@ -97,6 +99,8 @@ async function capture(args) {
 
     player = await checkPlayerMode(context, fileUrl, query, views[0]);
     report('player mode', player.ms, `${views[0].name}, real-time loop without ?capture`, player.problems, player.consoleWarnings);
+    bench = await checkBenchmark(context, fileUrl, query, outDir);
+    report('benchmark', bench.ms, bench.detail, bench.problems, bench.consoleWarnings);
 
     const meta = {
       label,
@@ -109,6 +113,7 @@ async function capture(args) {
       results,
       toolChecks,
       playerMode: { view: views[0].name, problems: player.problems },
+      benchmark: { problems: bench.problems },
     };
     writeFileSync(join(outDir, 'info.json'), JSON.stringify(meta, null, 2));
     outputs.push(join(outDir, 'info.json'));
@@ -123,6 +128,7 @@ async function capture(args) {
   const failed = results.filter((r) => r.problems.length).map((r) => r.view);
   failed.push(...toolChecks.filter((c) => c.problems.length).map((c) => `check ${c.name}`));
   if (player?.problems.length) failed.push('player mode');
+  if (bench?.problems.length) failed.push('benchmark');
   printOutputs(outputs);
   if (failed.length) {
     console.log(`screenshot: FAILED (${failed.join(', ')})`);
@@ -266,29 +272,104 @@ async function checkTools(context, fileUrl, query, view, outDir) {
     }),
     // What the frame promises (post/frame.js): edges stay anti-aliased against a
     // bright sky after tonemapping, and depth holds from a hilltop to the horizon.
-    // The bars' edges are about 1% of the frame: 0.01% shimmers as built, 0.4%
-    // with a plain linear MSAA resolve, so this check gets a tighter limit.
-    await checkClean(context, fileUrl, { ...params, fixture: 'silhouette' }, dir, 'thin dark bars against a bright sky', 0.1),
-    // 0.14% as built (where the planes end at the horizon), 43% without reversed depth.
+    // The bars are counted among edge pixels: about 2% of them shimmer as built,
+    // 20% with a plain linear MSAA resolve.
+    await checkClean(context, fileUrl, { ...params, fixture: 'silhouette' }, dir, 'thin dark bars against a bright sky', {
+      edges: true,
+      limit: config.capture.shimmer.edgeLimitPercent,
+    }),
+    // 0.13% of the frame as built (SwiftShader lets a few far pixels of the lower
+    // plane through; hardware GL shows none), 42% without reversed depth.
     await checkClean(context, fileUrl, { ...params, fixture: 'depth' }, dir, 'two planes 5 cm apart, from a hilltop'),
+    // Slow gradients must come out dithered, without bands.
+    await checkFixture(context, fileUrl, { ...params, fixture: 'gradient' }, async (page, info, problems) => {
+      const image = decodeDataUrl(await page.evaluate(() => window.__CAPTURE__.image()));
+      writeFileSync(join(dir, 'gradient.png'), encodePng(bandingView(image, config.capture.banding)));
+      const banded = bandedShare(image);
+      const limit = config.capture.banding.limitPercent;
+      const detail = `slow gradients: ${banded.toFixed(2)}% in bands (limit ${limit}%)`;
+      if (banded > limit) problems.push({ kind: 'tool check', text: `gradient fixture: ${detail}` });
+      return detail;
+    }),
+    // Teardown: what a quality change rebuilds must go away completely and come back the same.
+    await checkFixture(context, fileUrl, { ...params, name: 'teardown' }, async (page, info, problems) => {
+      const { leaks, samePicture, trip } = await qualityRoundTrip(page, query);
+      if (leaks.length) problems.push({ kind: 'tool check', text: `teardown: ${trip} leaks ${leaks.join(', ')}` });
+      if (!samePicture) problems.push({ kind: 'tool check', text: `teardown: the picture changed after ${trip}` });
+      return `${trip}: ${leaks.length ? `leaks ${leaks.join(', ')}` : 'nothing leaked'}, ${samePicture ? 'same picture' : 'picture changed'}`;
+    }),
+    await checkFixture(context, fileUrl, { ...params, fixture: 'leaky' }, async (page, info, problems) => {
+      const { leaks, trip } = await qualityRoundTrip(page, query);
+      // It forgets a texture, a render target (a framebuffer), a mesh in the scene and the scene's fog.
+      const expected = ['Texture', 'Framebuffer', 'left in the scene', 'scene.fog'];
+      if (!expected.every((what) => leaks.some((leak) => leak.includes(what)))) {
+        problems.push({ kind: 'tool check', text: `leaky fixture: ${trip} reports only ${leaks.join(', ') || 'nothing'}` });
+      }
+      return `caught ${leaks.join(', ')}`;
+    }),
   ];
 }
 
-// A fixture the frame must render without shimmer.
-function checkClean(context, fileUrl, params, dir, what, limitPercent = config.capture.shimmer.limitPercent) {
+// Rebuilds the world with another preset and back, as a quality change in the
+// game would, with a window resize on the way, then tears it down for good.
+// Returns what grew on the GPU or was left in the scene, and whether the
+// picture came back the same.
+async function qualityRoundTrip(page, query) {
+  const home = query.quality ?? config.quality.default;
+  const away = home === 'low' ? 'high' : 'low';
+  const size = page.viewportSize();
+  const before = await page.evaluate(() => window.__CAPTURE__.resources());
+  const picture = await page.evaluate(() => window.__CAPTURE__.image());
+  await page.evaluate((preset) => window.__CAPTURE__.rebuild(preset), away);
+  // Resize, render at the new size, and come back: targets get reallocated twice.
+  for (const viewport of [{ width: Math.round(size.width * 0.6), height: Math.round(size.height * 0.6) }, size]) {
+    await page.setViewportSize(viewport);
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve))); // the resize event
+    await page.evaluate(() => window.__CAPTURE__.render());
+  }
+  await page.evaluate((preset) => window.__CAPTURE__.rebuild(preset), home);
+  const after = await page.evaluate(() => window.__CAPTURE__.resources());
+  const samePicture = (await page.evaluate(() => window.__CAPTURE__.image())) === picture;
+  const left = await page.evaluate(() => window.__CAPTURE__.teardown());
+  const leaks = resourceLeaks(before, after);
+  if (left.sceneObjects) leaks.push(`${left.sceneObjects} object(s) left in the scene`);
+  for (const setting of left.sceneSettings) leaks.push(`scene.${setting} left set`);
+  return { leaks, samePicture, trip: `${home} → ${away} (and a resize) → ${home}` };
+}
+
+// What grew between two __CAPTURE__.resources() snapshots: live WebGL objects
+// by kind and memory, as short phrases ("+2 Texture", "+0.2 MB textures").
+export function resourceLeaks(before, after) {
+  const leaks = [];
+  for (const [kind, n] of Object.entries(after.objects)) {
+    const grown = n - (before.objects[kind] ?? 0);
+    if (grown > 0) leaks.push(`+${grown} ${kind}`);
+  }
+  for (const [key, label] of [['textureBytes', 'textures'], ['renderTargetBytes', 'render targets'], ['bufferBytes', 'buffers']]) {
+    const grown = after[key] - before[key];
+    if (grown > 0) leaks.push(`+${grown < 1024 * 1024 ? `${Math.ceil(grown / 1024)} KB` : `${(grown / (1024 * 1024)).toFixed(1)} MB`} ${label}`);
+  }
+  return leaks;
+}
+
+// A fixture the frame must render without shimmer: under `limit` percent of
+// the frame, or of its edge pixels with `edges`.
+function checkClean(context, fileUrl, params, dir, what, { edges = false, limit = config.capture.shimmer.limitPercent } = {}) {
   return checkFixture(context, fileUrl, params, async (page, info, problems) => {
     const { threshold } = config.capture.shimmer;
     const start = decodeDataUrl(await page.evaluate(() => window.__CAPTURE__.image()));
-    const { percent, heat } = await measureShimmer(page, info, start);
-    writeFileSync(join(dir, `${params.fixture}.png`), encodePng(heatImage(start, heat, threshold)));
-    const detail = `${what}: ${percent.toFixed(2)}% shimmers (limit ${limitPercent}%)`;
-    if (percent > limitPercent) problems.push({ kind: 'tool check', text: `${params.fixture} fixture: ${detail}` });
+    const result = await measureShimmer(page, info, start);
+    writeFileSync(join(dir, `${params.fixture}.png`), encodePng(heatImage(start, result.heat, threshold)));
+    const percent = edges ? result.edgePercent : result.percent;
+    const detail = `${what}: ${percent.toFixed(2)}% of ${edges ? 'edge pixels' : 'the frame'} shimmers (limit ${limit}%)`;
+    if (percent > limit) problems.push({ kind: 'tool check', text: `${params.fixture} fixture: ${detail}` });
     return detail;
   });
 }
 
-// Opens a fixture and runs `check(page, info, problems)`, which returns a one-line detail.
-async function checkFixture(context, fileUrl, params, check) {
+// Opens a capture page (a fixture, or the island when params.name names the
+// check instead) and runs `check(page, info, problems)`, which returns a one-line detail.
+async function checkFixture(context, fileUrl, { name, ...params }, check) {
   const started = Date.now();
   const { page, info, problems, consoleWarnings } = await openCapture(context, fileUrl, params);
   let detail = 'not measured';
@@ -300,7 +381,7 @@ async function checkFixture(context, fileUrl, params, check) {
     }
   }
   await page.close();
-  return { name: params.fixture, detail, problems, consoleWarnings, ms: Date.now() - started };
+  return { name: name ?? params.fixture, detail, problems, consoleWarnings, ms: Date.now() - started };
 }
 
 // Percentage of the pixels in columns where inColumn(x) holds whose heat reaches threshold.
@@ -351,7 +432,7 @@ async function checkPlayerMode(context, fileUrl, query, view) {
   const page = await context.newPage();
   await page.setViewportSize(PLAYER_MODE.viewport);
   const { problems, consoleWarnings } = watchPage(page, fileUrl);
-  const params = new URLSearchParams({ ...query, view: view.name });
+  const params = new URLSearchParams({ ...query, view: view.name, stats: '1' }); // with the frame readout
   params.delete('capture');
   const started = Date.now();
   try {
@@ -365,11 +446,63 @@ async function checkPlayerMode(context, fileUrl, query, view) {
     if (!(await page.evaluate(() => document.getElementById('start').checkVisibility()))) {
       problems.push({ kind: 'player mode', text: 'the start screen is not showing' });
     }
+    // The readout refreshes every config.readout.refreshSeconds; its key hides it.
+    await page
+      .waitForFunction(() => /\d+ draws/.test(document.getElementById('readout').textContent), null, { timeout: 10_000 })
+      .catch(() => problems.push({ kind: 'player mode', text: 'the frame readout shows no numbers' }));
+    await page.keyboard.press(config.readout.key); // a synthetic key event in the page, not the OS keyboard
+    if (await page.evaluate(() => document.getElementById('readout').checkVisibility())) {
+      problems.push({ kind: 'player mode', text: `${config.readout.key} does not hide the frame readout` });
+    }
   } catch (err) {
     problems.push({ kind: 'player mode', text: err.message.split('\n')[0] });
   }
   await page.close();
   return { problems, consoleWarnings, ms: Date.now() - started };
+}
+
+// The benchmark (?bench=1), shortened: it must visit every view and end with a
+// complete summary, saved to <label>/benchmark.txt. SwiftShader's numbers say
+// nothing about real hardware; this only proves the benchmark works.
+async function checkBenchmark(context, fileUrl, query, outDir) {
+  const page = await context.newPage();
+  await page.setViewportSize(PLAYER_MODE.viewport);
+  const { problems, consoleWarnings } = watchPage(page, fileUrl);
+  const params = new URLSearchParams({ ...query, bench: '1', benchSeconds: String(BENCH_SECONDS) });
+  params.delete('capture');
+  const started = Date.now();
+  let detail = 'did not finish';
+  try {
+    await page.goto(`${fileUrl}?${params}`);
+    const handle = await page.waitForFunction(() => window.__BENCH__?.done && window.__BENCH__, null, { timeout: READY_TIMEOUT_MS, polling: 100 });
+    const { summary, results } = await handle.jsonValue();
+    writeFileSync(join(outDir, 'benchmark.txt'), `${summary}\n`);
+    problems.push(...benchmarkProblems(summary, results, allViews.map((v) => v.name)));
+    if (await page.evaluate(() => document.getElementById('start').checkVisibility())) {
+      problems.push({ kind: 'benchmark', text: 'the start screen shows during the benchmark' });
+    }
+    detail = `${results.length} views, ${results.reduce((n, r) => n + r.frameMs.length, 0)} frames measured -> ${rel(join(outDir, 'benchmark.txt'))}`;
+  } catch (err) {
+    problems.push({ kind: 'benchmark', text: err.message.split('\n')[0] });
+  }
+  await page.close();
+  return { problems, consoleWarnings, detail, ms: Date.now() - started };
+}
+
+// What is wrong with a benchmark result, if anything: every view measured, and
+// a summary that says where it ran.
+export function benchmarkProblems(summary, results, viewNames) {
+  const problems = [];
+  const measured = results.map((r) => r.view);
+  if (String(measured) !== String(viewNames)) problems.push(`measured views ${measured.join(', ') || 'none'}, expected ${viewNames.join(', ')}`);
+  for (const r of results) {
+    if (!r.frameMs.length || !r.frameMs.every((ms) => Number.isFinite(ms) && ms > 0)) problems.push(`no valid frame times for ${r.view}`);
+    if (!r.counts?.drawCalls) problems.push(`no GPU counts for ${r.view}`);
+  }
+  for (const line of ['build', 'gpu', 'browser', 'screen', 'preset']) {
+    if (!new RegExp(`^${line} +\\S`, 'm').test(summary)) problems.push(`the summary has no "${line}" line`);
+  }
+  return problems.map((text) => ({ kind: 'benchmark', text }));
 }
 
 // Turns console errors, page errors and requests for anything but the built file into problems.
@@ -618,7 +751,7 @@ function compareSheetHtml(sides, rows) {
       <figure>${img(r.a)}<figcaption>A · ${esc(a.label)}</figcaption></figure>
       <figure>${img(r.b)}<figcaption>B · ${esc(b.label)}</figcaption></figure>
       <figure>${r.a && r.b ? `<canvas data-a="${esc(r.a)}" data-b="${esc(r.b)}" data-view="${esc(r.name)}"></canvas>` : `<div class="missing">no diff</div>`}
-        <figcaption>diff (changed pixels in magenta over B)</figcaption></figure>
+        <figcaption>diff over B: magenta, brighter = larger change; faint = 1-2 levels (dither)</figcaption></figure>
     </div>`);
   return htmlDocument(`
     <h1>${esc(a.label)} <span style="color:#9aa0a8">vs</span> ${esc(b.label)}</h1>
@@ -640,21 +773,21 @@ function compareSheetHtml(sides, rows) {
         }
         const w = ia.naturalWidth, h = ia.naturalHeight, pa = pixels(ia), pb = pixels(ib);
         const out = new ImageData(w, h);
-        let changed = 0, max = 0;
+        let changed = 0, large = 0, max = 0;
         for (let i = 0; i < pa.length; i += 4) {
           const d = Math.max(Math.abs(pa[i] - pb[i]), Math.abs(pa[i + 1] - pb[i + 1]), Math.abs(pa[i + 2] - pb[i + 2]));
           const grey = 0.25 * (0.2126 * pb[i] + 0.7152 * pb[i + 1] + 0.0722 * pb[i + 2]);
-          const k = d ? Math.min(1, 0.35 + d / 24) : 0;
+          const k = d === 0 ? 0 : d <= 2 ? 0.15 : Math.min(1, 0.3 + d / 48);
           out.data[i] = grey + (255 - grey) * k;
           out.data[i + 1] = grey + (40 - grey) * k;
           out.data[i + 2] = grey + (200 - grey) * k;
           out.data[i + 3] = 255;
-          if (d) { changed++; if (d > max) max = d; }
+          if (d) { changed++; if (d > 2) large++; if (d > max) max = d; }
         }
         canvas.width = w; canvas.height = h;
         canvas.getContext('2d').putImageData(out, 0, 0);
         const pct = (100 * changed) / (w * h);
-        const summary = changed ? pct.toFixed(pct < 0.01 ? 4 : 2) + '% of pixels differ (max channel delta ' + max + ')' : 'identical';
+        const summary = changed ? pct.toFixed(pct < 0.01 ? 4 : 2) + '% of pixels differ, ' + ((100 * large) / (w * h)).toFixed(2) + '% by more than 2 levels (max channel delta ' + max + ')' : 'identical';
         return { name: canvas.dataset.view, summary, changed, maxDelta: max };
       }
       Promise.all([...document.images].map((i) => i.decode().catch(() => {})))

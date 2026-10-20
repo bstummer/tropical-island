@@ -4,7 +4,8 @@
 // (blue) one, and the speckles change with every sub-pixel turn, so
 // tools/screenshot.js requires that this scene does not shimmer. (Seen from
 // eye height the planes meet the horizon too fast for precision to matter.)
-// Not part of the island.
+// Black fog hides where the planes end, a sliver at the horizon that would
+// shimmer whatever the depth does. Not part of the island.
 import * as THREE from 'three';
 import { withSceneOutput } from '../post/scene-output.js';
 
@@ -12,9 +13,11 @@ const SIZE = 60000; // m
 const SEGMENTS = 128; // keeps triangles small enough to clip the same way on every GPU
 const BELOW_CAMERA = 100; // m
 const GAP = 0.05; // m
+const FOG = [5000, 20000]; // m, where it starts and where it is complete
 
 export function create(ctx) {
   const { scene, camera, frame } = ctx;
+  scene.fog = new THREE.Fog(0x000000, ...FOG);
   const geometry = new THREE.PlaneGeometry(SIZE, SIZE, SEGMENTS, SEGMENTS).rotateX(-Math.PI / 2);
   // The lower plane draws last: the depth test passes on equal depth, so it wins
   // wherever precision runs out instead of hiding the problem.
@@ -33,6 +36,7 @@ export function create(ctx) {
   return {
     update() {},
     dispose() {
+      scene.fog = null;
       for (const plane of planes) {
         scene.remove(plane);
         plane.material.dispose();

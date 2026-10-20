@@ -27,9 +27,22 @@ export const camera = {
 // The output pass (post/output.frag). `tonemap` picks one of `tonemaps`
 // (?tonemap=<name> overrides it); the numbers are the shader's TONEMAP define.
 export const post = {
-  exposure: 1, // the scene materials' pre-exposure (chunks/scene-output.glsl)
-  tonemap: 'agx-punchy',
+  exposure: 1, // the scene materials' pre-exposure (chunks/scene-output.glsl); ?exposure= overrides it
+  // The user's pick (PLAN.md, Decisions): keeps authored colours. agx-punchy's extra
+  // saturation pushed strong cyans out of gamut (red clipped to 0, visible contours).
+  tonemap: 'neutral',
   tonemaps: { neutral: 1, agx: 2, 'agx-punchy': 3, aces: 4 },
+};
+
+// The frame readout (core/readout.js) and the benchmark (core/benchmark.js, ?bench=1).
+export const readout = {
+  key: 'F3',
+  refreshSeconds: 0.5, // how often the numbers change: readable, and averaged over that time
+};
+export const bench = {
+  warmupSeconds: 1, // per view, not measured: shaders compile, the frame rate settles
+  warmupFrames: 10, // and at least this many frames, so one long hitch can't end the warmup
+  seconds: 5, // measured per view
 };
 
 export const movement = {
@@ -52,7 +65,7 @@ export const defaults = {
 export const capture = {
   // Frames rendered at the frozen time before the app signals ready, and again
   // for every extra frame the tool asks for. Raise it only for an effect that
-  // builds up over frames: each frame costs ~0.1 s on SwiftShader.
+  // builds up over frames: each frame costs ~0.4 s on SwiftShader.
   warmupFrames: 1,
   // tools/screenshot.js warns when one view's capture, measurements included,
   // takes longer. Captures must stay quick on SwiftShader, the one renderer
@@ -61,9 +74,13 @@ export const capture = {
   // What the screenshot tool measures per view (tools/measure.js).
   motion: { frames: 6, stepSeconds: 0.5, threshold: 4 }, // strip at t, t + 0.5 s, ...; threshold in 8-bit levels
   // Frames panned by stepPixels at the centre; see shimmer() in tools/image.js.
-  shimmer: { frames: 5, stepPixels: 0.25, threshold: 24, ratio: 0.5, fullRatio: 0.7, limitPercent: 0.5 },
-  crop: { width: 400, height: 225, zoom: 2 }, // source pixels, shown at zoom x
-  banding: { radius: 6, gain: 32 },
+  // edge: local contrast (levels) that makes a pixel an edge pixel; edgeLimitPercent: the
+  // share of edge pixels the silhouette fixture may have shimmering.
+  shimmer: { frames: 5, stepPixels: 0.25, threshold: 24, ratio: 0.5, fullRatio: 0.7, edge: 48, limitPercent: 0.5, edgeLimitPercent: 5 },
+  crop: { width: 300, height: 168, zoom: 4 }, // source pixels, shown at zoom x
+  // edge: levels off the local mean that count as a real edge (drawn flat grey);
+  // limitPercent: the gradient fixture's share in bands (tools/image.js bandedShare).
+  banding: { radius: 6, gain: 32, edge: 6, limitPercent: 1 },
 };
 
 // Frame cost limits per quality preset. tools/screenshot.js measures every view
@@ -85,4 +102,4 @@ export const build = {
   sizeBudgetBytes: 3 * 1024 * 1024, // raw size of dist/index.html; warn above, fail above 2x
 };
 
-export const config = { quality, camera, post, movement, defaults, capture, budget, build };
+export const config = { quality, camera, post, readout, bench, movement, defaults, capture, budget, build };

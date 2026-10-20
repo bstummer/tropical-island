@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { parseParams } from '../src/core/params.js';
 
 test('parses every supported param', () => {
-  assert.deepEqual(parseParams('?view=beach&time=17.5&t=12.5&seed=abc&capture=1&quality=low&fixture=shimmer&tonemap=aces'), {
+  const search = '?view=beach&time=17.5&t=12.5&seed=abc&capture=1&quality=low&fixture=shimmer&tonemap=aces&exposure=1.5&stats=1&bench=1&benchSeconds=0.5';
+  assert.deepEqual(parseParams(search), {
     view: 'beach',
     time: 17.5,
     t: 12.5,
@@ -12,12 +13,22 @@ test('parses every supported param', () => {
     quality: 'low',
     fixture: 'shimmer',
     tonemap: 'aces',
+    exposure: 1.5,
+    stats: true,
+    bench: true,
+    benchSeconds: 0.5,
   });
 });
 
-test('missing params are null and capture is off', () => {
-  const none = { view: null, time: null, t: null, seed: null, capture: false, quality: null, fixture: null, tonemap: null };
-  assert.deepEqual(parseParams(''), none);
+test('missing params are null and the switches are off', () => {
+  const none = { view: null, time: null, t: null, seed: null, capture: false, quality: null, fixture: null, tonemap: null, exposure: null };
+  assert.deepEqual(parseParams(''), { ...none, stats: false, bench: false, benchSeconds: null });
+});
+
+test('benchSeconds must be a sensible duration', () => {
+  for (const bad of ['0', '-1', 'long', '601']) {
+    assert.throws(() => parseParams(`?benchSeconds=${bad}`), /benchSeconds=.* must be a number/, `benchSeconds=${bad}`);
+  }
 });
 
 test('the leading ? is optional', () => {

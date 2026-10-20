@@ -20,8 +20,14 @@ Click to start, then:
 | Space / Shift | Up / down |
 | Mouse wheel | Change speed |
 | Esc | Release the mouse |
+| F3 | Show or hide frame time and GPU stats |
 
 URL parameters, such as `?view=overview&time=17.5`, jump to a named viewpoint or time of day.
+
+**Benchmark:** add `?bench=1` to the address (for example
+https://bstummer.github.io/tropical-island/?bench=1). It shows each viewpoint in turn for about 25 seconds
+in all, then a summary of frame times and the GPU, browser and resolution it ran on. Copy it into an issue or
+a development session.
 
 ## Develop
 

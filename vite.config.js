@@ -1,9 +1,21 @@
+import { execFileSync } from 'node:child_process';
 import { defineConfig } from 'vite';
 import glsl from 'vite-plugin-glsl';
 import { viteSingleFile } from 'vite-plugin-singlefile';
 import { checkOutputFiles } from './tools/check-build.js';
 
 const SHADER_ID = /\.(glsl|vert|frag)(\?.*)?$/;
+
+// The commit the game is built from, shown in the benchmark summary
+// (src/core/benchmark.js) so numbers from other machines name their build.
+function buildId() {
+  const git = (...args) => execFileSync('git', args, { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
+  try {
+    return `${git('rev-parse', '--short', 'HEAD')}${git('status', '--porcelain') ? '-dirty' : ''}`;
+  } catch {
+    return 'unknown';
+  }
+}
 
 // Lets any shader write `#include "chunks/noise.glsl"` no matter which folder it
 // lives in: the include is rewritten to a root import, which vite-plugin-glsl
@@ -83,6 +95,7 @@ function singleFileOutput() {
 export default defineConfig({
   base: './',
   publicDir: false, // dist/ holds index.html only
+  define: { __BUILD__: JSON.stringify(buildId()) },
   plugins: [
     shaderChunkPaths(),
     // Chunks share helpers (two chunks may both include hash.glsl), and GLSL

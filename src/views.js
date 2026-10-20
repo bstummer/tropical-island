@@ -22,8 +22,8 @@ export const views = [
     timeOfDay: 11,
     crops: { shoreline: [0.5, 0.75], horizon: [0.5, 0.41] },
   },
-  { name: 'shoreline', position: [80, 9, 80], yaw: 110, pitch: -14, timeOfDay: 14.5 },
-  { name: 'jungle-edge', position: [-14, 5.1, 70], yaw: -15, pitch: 4, timeOfDay: 9.5 },
+  { name: 'shoreline', position: [80, 9, 80], yaw: 110, pitch: -14, timeOfDay: 14.5, crops: { 'spit-tip': [0.81, 0.33] } },
+  { name: 'jungle-edge', position: [-14, 5.1, 70], yaw: -15, pitch: 4, timeOfDay: 9.5, crops: { ridge: [0.54, 0.3] } },
   { name: 'overview', position: [-250, 135, 210], yaw: -50, pitch: -24, fov: 55, timeOfDay: 17, crops: { shoreline: [0.36, 0.49] } },
 ];
 

@@ -1,10 +1,13 @@
 // Capture only: how many fragments each pixel of the main view shades. Renders
 // the scene once more with every mesh's material swapped for one that adds 1
-// per fragment, keeping its sides, depth test and depth writes, so the count
-// matches the real draw order. ShaderMaterials keep their own vertex shader
-// (waves and wind move geometry); other materials use the plain transform.
-// Fragments a shader would discard still count: they cost the work anyway.
-// Points, lines and sprites are not counted.
+// per fragment. The draw order and the depth test match the real frame: three.js
+// sorts opaque draws by material id, so counting materials are created in the
+// originals' id order; they keep each original's sides, depth test, depth
+// writes, depth function and polygon offset; and depth is 32-bit float like the
+// frame's. ShaderMaterials keep their own vertex shader (waves and wind move
+// geometry); other materials use the plain transform. Fragments a shader would
+// discard still count: they cost the work anyway. Points, lines and sprites are
+// not counted.
 import * as THREE from 'three';
 import vertexShader from './overdraw.vert';
 import fragmentShader from './overdraw.frag';
@@ -13,37 +16,40 @@ import fragmentShader from './overdraw.frag';
 // at 255), rows from the top.
 export function measureOverdraw(renderer, scene, camera) {
   const size = renderer.getDrawingBufferSize(new THREE.Vector2());
-  const target = new THREE.WebGLRenderTarget(size.x, size.y); // 8-bit: each fragment adds exactly 1/255
-  const counting = new Map();
-  const countingFor = (material) => {
-    if (!counting.has(material)) {
-      const shader = material.isShaderMaterial && !material.isRawShaderMaterial;
-      counting.set(
-        material,
-        new THREE.ShaderMaterial({
-          vertexShader: shader ? material.vertexShader : vertexShader,
-          fragmentShader,
-          uniforms: shader ? material.uniforms : {},
-          defines: shader ? material.defines : {},
-          side: material.side,
-          depthTest: material.depthTest,
-          depthWrite: material.depthWrite,
-          transparent: material.transparent, // keeps three's sort order
-          blending: THREE.CustomBlending,
-          blendSrc: THREE.OneFactor,
-          blendDst: THREE.OneFactor,
-        }),
-      );
-    }
-    return counting.get(material);
-  };
+  // 8-bit colour: each fragment adds exactly 1/255.
+  const target = new THREE.WebGLRenderTarget(size.x, size.y, { depthTexture: new THREE.DepthTexture(size.x, size.y, THREE.FloatType) });
 
-  const swapped = [];
-  scene.traverse((object) => {
-    if (!object.isMesh) return;
-    swapped.push([object, object.material]);
-    object.material = Array.isArray(object.material) ? object.material.map(countingFor) : countingFor(object.material);
-  });
+  const meshes = [];
+  scene.traverse((object) => object.isMesh && meshes.push(object));
+  const originals = [...new Set(meshes.flatMap((mesh) => [].concat(mesh.material)))].sort((a, b) => a.id - b.id);
+  const counting = new Map(
+    originals.map((material) => {
+      const shader = material.isShaderMaterial && !material.isRawShaderMaterial;
+      const copy = new THREE.ShaderMaterial({
+        vertexShader: shader ? material.vertexShader : vertexShader,
+        fragmentShader,
+        uniforms: shader ? material.uniforms : {},
+        defines: shader ? material.defines : {},
+        side: material.side,
+        depthTest: material.depthTest,
+        depthWrite: material.depthWrite,
+        depthFunc: material.depthFunc,
+        polygonOffset: material.polygonOffset,
+        polygonOffsetFactor: material.polygonOffsetFactor,
+        polygonOffsetUnits: material.polygonOffsetUnits,
+        transparent: material.transparent, // transparent draws are sorted apart
+        blending: THREE.CustomBlending,
+        blendSrc: THREE.OneFactor,
+        blendDst: THREE.OneFactor,
+      });
+      return [material, copy];
+    }),
+  );
+
+  const swapped = meshes.map((mesh) => [mesh, mesh.material]);
+  for (const mesh of meshes) {
+    mesh.material = Array.isArray(mesh.material) ? mesh.material.map((m) => counting.get(m)) : counting.get(mesh.material);
+  }
   const clearColor = renderer.getClearColor(new THREE.Color());
   const clearAlpha = renderer.getClearAlpha();
   const previous = renderer.getRenderTarget();
@@ -60,6 +66,7 @@ export function measureOverdraw(renderer, scene, camera) {
     renderer.setRenderTarget(previous);
     renderer.setClearColor(clearColor, clearAlpha);
     for (const material of counting.values()) material.dispose();
+    target.depthTexture.dispose();
     target.dispose();
   }
 

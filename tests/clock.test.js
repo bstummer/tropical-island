@@ -59,14 +59,25 @@ test('normal mode: first tick has dt 0, then follows real time from start', (t) 
   assert.equal(clock.frame, 3);
 });
 
-test('normal mode: a long stall is clamped to 0.1 s', (t) => {
+test('normal mode: a long stall is clamped to 0.1 s, but the interval tells the truth', (t) => {
   const time = fakeTime(t);
   const clock = createClock();
   clock.tick();
+  assert.equal(clock.interval, 0);
   time.now += 5000;
   clock.tick();
   assert.equal(clock.dt, 0.1);
   assert.equal(clock.elapsed, 0.1);
+  assert.equal(clock.interval, 5);
+});
+
+test('frozen clocks have no interval', (t) => {
+  const time = fakeTime(t);
+  const clock = createClock({ frozen: true });
+  clock.tick();
+  time.now += 100;
+  clock.tick();
+  assert.equal(clock.interval, 0);
 });
 
 test('seek jumps a frozen clock and keeps it frozen there', (t) => {

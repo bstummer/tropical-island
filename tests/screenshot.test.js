@@ -1,6 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { checkLimits, describeWarning, explainLaunchError, isSameFile, metricChanges, mismatchWarnings, parseArgs } from '../tools/screenshot.js';
+import {
+  benchmarkProblems,
+  checkLimits,
+  describeWarning,
+  explainLaunchError,
+  isSameFile,
+  metricChanges,
+  mismatchWarnings,
+  parseArgs,
+  resourceLeaks,
+} from '../tools/screenshot.js';
 
 // ---------------------------------------------------------------- own-page requests
 
@@ -38,6 +48,27 @@ test('compare lists the numbers that changed, as shown', () => {
   assert.deepEqual(metricChanges(before, after), ['draw calls 3 → 5']); // the rest round the same, or is missing on one side
   assert.deepEqual(metricChanges({ textureMB: 10 }, { textureMB: 300 }), ['texture memory 10 MB → 300 MB']);
   assert.deepEqual(metricChanges(undefined, after), []);
+});
+
+test('resource leaks list what grew, and nothing for what shrank or stayed', () => {
+  const MB = 1024 * 1024;
+  const before = { objects: { Texture: 5, Buffer: 9, Framebuffer: 2 }, textureBytes: 10 * MB, renderTargetBytes: 50 * MB, bufferBytes: 2 * MB };
+  assert.deepEqual(resourceLeaks(before, before), []);
+  const after = { objects: { Texture: 7, Buffer: 8, Framebuffer: 2, Query: 1 }, textureBytes: 10.5 * MB, renderTargetBytes: 50 * MB, bufferBytes: 1 * MB };
+  assert.deepEqual(resourceLeaks(before, after), ['+2 Texture', '+1 Query', '+512 KB textures']);
+  assert.deepEqual(resourceLeaks(before, { ...before, renderTargetBytes: 66.5 * MB }), ['+16.5 MB render targets']);
+});
+
+test('a benchmark result must cover every view and say where it ran', () => {
+  const summary = ['build      abc', 'gpu        Test GPU', 'browser    Test', 'screen     640×360', 'preset     high (MSAA 4)'].join('\n');
+  const result = (view) => ({ view, frameMs: [16.7, 16.6], counts: { drawCalls: 4 } });
+  assert.deepEqual(benchmarkProblems(summary, [result('beach'), result('overview')], ['beach', 'overview']), []);
+
+  const texts = (problems) => problems.map((p) => p.text).join('\n');
+  assert.match(texts(benchmarkProblems(summary, [result('beach')], ['beach', 'overview'])), /measured views beach, expected beach, overview/);
+  assert.match(texts(benchmarkProblems(summary, [{ ...result('beach'), frameMs: [] }], ['beach'])), /no valid frame times for beach/);
+  assert.match(texts(benchmarkProblems(summary, [{ ...result('beach'), counts: null }], ['beach'])), /no GPU counts for beach/);
+  assert.match(texts(benchmarkProblems(summary.replace('gpu        Test GPU', 'gpu'), [result('beach')], ['beach'])), /no "gpu" line/);
 });
 
 test('warnings read as sentences with units', () => {

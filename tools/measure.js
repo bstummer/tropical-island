@@ -6,8 +6,9 @@
 //   crop-<name>.png      zoomed regions (views.js `crops`, else the centre)
 //   shimmer.png          where the image shimmers under a sub-pixel pan, in magenta
 //   motion.png           frames at t, t + step, ... left to right, top to bottom, at half size
+//   motion-map.png       where anything changed over those frames, in magenta
 //   overdraw.png         fragments shaded per pixel: black 0, blue 1, teal 2, green 3,
-//                        yellow 4, orange 5, red 6, magenta 7-9, white 10+
+//                        yellow 4, orange 5, red 6, magenta 7-9, pink 10-15, white 16+
 //
 // Settings live in config.capture; the analysis is in tools/image.js.
 import { mkdirSync, writeFileSync } from 'node:fs';
@@ -20,7 +21,7 @@ const MB = 1024 * 1024;
 
 const settings = config.capture;
 
-// Renders a frame ({ t, offset, turn }) in the capture page; returns the canvas as a PNG data URL.
+// Renders a frame ({ t, turn }) in the capture page; returns the canvas as a PNG data URL.
 export function renderFrame(page, options = {}) {
   return page.evaluate((o) => {
     window.__CAPTURE__.render(o);
@@ -78,9 +79,11 @@ export async function measureView(page, { info, crops, first, dir, gpuTime }) {
   const urls = await motionUrls;
   const frames = [start, ...urls.map(decodeDataUrl)];
   save('motion.png', tile(frames.map((f) => shrink(f, 2)), { columns: 3, gap: 8 }));
+  const moved = motion(frames, settings.motion);
+  save('motion-map.png', heatImage(start, moved.heat, settings.motion.threshold));
 
   return {
-    measurements: { shimmerPercent: panned.percent, motionPercent: motion(frames, settings.motion), motionTimes: times, ...cost },
+    measurements: { shimmerPercent: panned.percent, motionPercent: moved.percent, motionTimes: times, ...cost },
     files,
     lastFrame: urls.at(-1),
   };

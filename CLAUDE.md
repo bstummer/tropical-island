@@ -44,18 +44,20 @@ When choosing between approaches, pick the one that looks better in the screensh
 | `npm test` | Unit and invariant tests: `node --test` over `tests/*.test.js` (Node's built-in runner, no test deps). |
 | `npm run build` | Production build to `dist/index.html` (single file, no sourcemaps). The build fails if it would emit anything other than `index.html`. |
 | `npm run check` | `tools/check-build.js`: exactly one file in dist, no `<script src>`/`<link href>`, no URLs except XML namespaces, no network APIs or `import()`, size vs budget (warn > 3 MB raw, fail > 6 MB), plus the src/ determinism lint. |
-| `npm run shot -- [args]` | Builds, then `tools/screenshot.js`: one PNG per view + `contact-sheet.png` + `info.json` in `screenshots/<label>/`, plus each view's measurements (banding view, zoomed crops, shimmer, motion strip, overdraw) in `screenshots/<label>/<view>/`, with the numbers and over-limit warnings in `info.json`. It checks that each measurement still catches a test scene built to fail it, and that the frame keeps its promises (smooth dark edges against a bright sky, depth precision from a hilltop). Then it runs the game for 30 frames in player mode (no `?capture`: real-time loop, input, start screen), which captures never exercise. |
+| `npm run shot -- [args]` | Builds, then `tools/screenshot.js`: one PNG per view + `contact-sheet.png` + `info.json` in `screenshots/<label>/`, plus each view's measurements (banding view, zoomed crops, shimmer, motion strip, overdraw) in `screenshots/<label>/<view>/`, with the numbers and over-limit warnings in `info.json`. It checks that the shimmer and cost measurements still catch test scenes built to fail them, that the frame keeps its promises (smooth dark edges against a bright sky, depth precision from a hilltop, dithered gradients without bands), and that a quality change (default preset to low and back) leaks no GPU resources and brings back the same picture. Then it runs the game for 30 frames in player mode (no `?capture`: real-time loop, input, start screen, frame readout), which captures never exercise, and a short benchmark run (`screenshots/<label>/benchmark.txt`). |
 | `npm run verify` | test + build + check + shot. **The definition-of-done command.** |
 | `node tools/screenshot.js --compare A B` | Before/after sheet `screenshots/compare/A_vs_B.png`: A, B and a diff column per view, with the % of changed pixels. No build needed. |
 
 Screenshot args: `--views beach,shoreline` (default all), `--label before` (default `<git hash>[-dirty]-<timestamp>`),
 `--size 1600x900`, `--t 12.5` (sim seconds), `--time 17.5` (hours, overrides each view's time),
-`--seed 1`, `--quality high`, `--tonemap agx`, `--fixture tonecard`, `--gl auto|hardware|swiftshader` (default
+`--seed 1`, `--quality high`, `--tonemap agx`, `--exposure 1.5`, `--fixture tonecard`, `--gl auto|hardware|swiftshader` (default
 auto: hardware GL, falling back to SwiftShader).
 
 URL params (dev server or `dist/index.html`): `?view=beach&time=17.5&t=12.5&seed=1&quality=low&capture=1`,
-`tonemap=<name>` (a curve from `config.post.tonemaps`, to compare looks) and `fixture=<name>` (a test scene
-from `src/fixtures/` instead of the island; `tonecard` is an HDR test card for judging the look).
+`tonemap=<name>` and `exposure=<x>` (a curve from `config.post.tonemaps` and the scene exposure, to compare looks), and `fixture=<name>` (a test scene
+from `src/fixtures/` instead of the island; `tonecard` is an HDR test card for judging the look). In the game,
+`stats=1` shows the frame readout (F3 toggles it) and `bench=1` runs the benchmark: it visits every view and ends
+with a summary of frame and GPU times to paste into a session (`benchSeconds=<s>` sets the time per view).
 
 Dev-only key: **P** logs the camera as a ready-to-paste `views.js` entry and copies it to the clipboard.
 
@@ -154,8 +156,9 @@ How tests are written:
 ## 6. Architecture
 
 ```
-index.html            source template: canvas + start overlay + error overlay; loads src/main.js
-vite.config.js        single-file build to dist/; glsl includes; dev shader hot-swap; strips URLs from three's GLSL comments
+index.html            source template: canvas, start and error overlays, readout and benchmark panels; loads src/main.js
+vite.config.js        single-file build to dist/; glsl includes; dev shader hot-swap; strips URLs from three's GLSL comments;
+                      stamps the commit into the build (__BUILD__)
 README.md             for players and visitors: play/download links, controls, dev quickstart
 PLAN.md               staged build plan, status and session log; update it at the end of every session
 .github/workflows/    deploy.yml: verify, then GitHub Pages + rolling "latest" release on every push to main
@@ -164,7 +167,8 @@ src/
   config.js           ALL tunables (quality presets, camera, post, movement, defaults, capture, frame-cost budget, size budget). No browser APIs.
   views.js            named viewpoints. No browser APIs (Node imports it).
   core/               params.js, clock.js, random.js, renderer.js, camera.js, input.js (free-fly + pointer lock),
-                      capture.js (the capture contract), gl-stats.js (GPU call counts and memory), overdraw.js (capture only)
+                      capture.js (the capture contract), gl-stats.js (GPU call counts, memory, GPU time), overdraw.js
+                      (capture only), readout.js (F3), benchmark.js (?bench=1), timing.js (their statistics and text)
   post/               frame.js (HDR target, passes, output pass: tonemap, sRGB, dither), scene-output.js; later
                       bloom and colour grading. The only place tonemapping happens.
   fixtures/           test scenes for the screenshot tool's checks and the tonecard (?fixture=); not part of the island
@@ -197,7 +201,7 @@ optionally `ready` (a Promise, awaited before a capture starts, for async setup)
 
 `ctx` holds: `renderer`, `scene`, `camera`, `config`, `quality` (the active preset object), `params`
 (parsed URL params), `view` (the starting view), `timeOfDay` (hours), `clock` (`elapsed`, `dt`, `frame`,
-`frozen`), `rng` (`rng('name')` returns a stream with `next/range/int/chance/pick/normal`), and `frame`
+`frozen`, `interval`), `stats` (GPU counts, memory and GPU time from `core/gl-stats.js`), `rng` (`rng('name')` returns a stream with `next/range/int/chance/pick/normal`), and `frame`
 (`post/frame.js`: `size` and `onResize(fn)` for the drawing buffer, `uniforms` every scene material shares,
 `beforeScene(fn)` for passes of a system's own such as shadow maps, and `sceneTarget`).
 
@@ -209,7 +213,10 @@ optionally `ready` (a Promise, awaited before a capture starts, for async setup)
   An exception in `update()` stops the loop and shows the error overlay (in capture mode it fails the capture).
 - Each system uses its own rng stream name (`rng('palms')`, `rng('palms/fronds')`). `rng(name)` always
   restarts the same sequence, and new names never shift existing systems.
-- `dispose()` removes everything the system added and disposes GPU resources.
+- `dispose()` removes everything the system added and disposes GPU resources. A quality change disposes the
+  frame and every world system and creates them again (`setQuality` in `main.js`), so a system can't assume it
+  lives forever, and reads `ctx.frame` and `ctx.quality` afresh in `create()`. The screenshot tool's teardown
+  check fails on anything left behind.
 - UI must stay hidden when `ctx.params.capture` is true.
 
 **Capture contract** (`?capture=1`, used by tools/screenshot.js): no UI or pointer lock. The camera goes to
@@ -231,8 +238,11 @@ tool checks this. Don't break this. If a new system does async work, put it behi
   (`chunks/scene-output.glsl`): it applies the exposure and compresses the colour so MSAA averages edges
   close to how they look after tonemapping. Spread `ctx.frame.uniforms` into the material's uniforms.
   Built-in three.js materials go through `withSceneOutput()` (`post/scene-output.js`). Scene materials
-  never include `<colorspace_fragment>` or dithering. Blending happens in the compressed space, so
-  alpha blending is fine but additive blending of bright values is not.
+  never include `<colorspace_fragment>` or dithering. `scene.background` and the clear colour skip
+  `sceneOutput()`, so the sky is a scene material. Blending happens in the compressed space: right where
+  alpha means coverage (edges, foam masks) or both colours are well below 1, wrong for translucent layers
+  over bright ones (a cloud card darkens the sky behind it by stops) and for adding bright light. Such
+  effects need their own approach, such as a pass that reads the HDR target with `sceneRadiance()`.
 - **Anti-aliasing is MSAA** (`quality.msaa`), which shades once per pixel. Cut-out edges (leaves) use
   alpha-to-coverage. Shading that can sparkle or crawl (glints, fine procedural detail) is filtered in the
   shader by its pixel footprint (`fwidth`). Geometry thinner than about two pixels crawls even with MSAA,

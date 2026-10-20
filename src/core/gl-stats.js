@@ -96,22 +96,46 @@ export function createGpuTimer(gl) {
   };
 }
 
+// WebGL object kinds whose live count teardown checks compare: created and not yet deleted.
+const OBJECTS = ['Texture', 'Buffer', 'Framebuffer', 'Renderbuffer', 'Program', 'Shader', 'VertexArray', 'Query', 'Sampler'];
+
 export function instrument(gl) {
   let frame;
+  let last;
   let passTarget;
   let drawTarget = null;
   const programs = new Set(); // linked and not deleted
   const textures = new Map(); // texture -> { levels: Map<key, bytes>, renderTarget }
   const renderbuffers = new Map(); // renderbuffer -> bytes
   const buffers = new Map(); // buffer -> bytes
+  const live = Object.fromEntries(OBJECTS.map((kind) => [kind, new Set()]));
 
   // Measured once while the default framebuffer is bound: the canvas's MSAA samples.
   const attributes = gl.getContextAttributes();
   const canvasSamples = attributes.antialias ? Math.max(1, gl.getParameter(SAMPLES)) : 1;
 
+  // Per-frame GPU time, measured only while someone listens (onGpuTime).
+  const timer = createGpuTimer(gl);
+  const gpuListeners = new Set();
+  let timing = false;
+
   function beginFrame() {
+    if (frame) {
+      const { programs: used, ...counts } = frame;
+      last = { ...counts, programsUsed: used.size };
+    }
     frame = { drawCalls: 0, triangles: 0, passes: 0, blits: 0, programs: new Set() };
     passTarget = undefined;
+    timing = Boolean(timer && gpuListeners.size);
+    if (timing) timer.begin();
+  }
+
+  function endFrame() {
+    if (timing) timer.end();
+    timing = false;
+    if (timer?.pending) {
+      for (const ms of timer.poll()) for (const fn of gpuListeners) fn(ms);
+    }
   }
 
   function draw(mode, count, instances) {
@@ -144,6 +168,17 @@ export function instrument(gl) {
       return original.apply(object, args);
     };
   };
+
+  for (const kind of OBJECTS) {
+    const create = gl[`create${kind}`];
+    if (typeof create !== 'function') continue;
+    gl[`create${kind}`] = function (...args) {
+      const object = create.apply(gl, args);
+      if (object) live[kind].add(object);
+      return object;
+    };
+    wrap(gl, `delete${kind}`, (object) => live[kind].delete(object));
+  }
 
   wrap(gl, 'drawArrays', (mode, first, count) => draw(mode, count, 1));
   wrap(gl, 'drawElements', (mode, count) => draw(mode, count, 1));
@@ -190,8 +225,11 @@ export function instrument(gl) {
   });
   wrap(gl, 'generateMipmap', (target) => {
     const entry = texture(target);
-    const base = entry?.levels.get(`${target}:0`);
-    if (base && !entry.levels.has('storage')) entry.levels.set('mipmaps', base / 3); // the rest of the chain
+    if (!entry || entry.levels.has('storage')) return;
+    // Level 0 of every face (a cube map's six are stored under their own targets).
+    let base = 0;
+    for (const [key, bytes] of entry.levels) if (key.endsWith(':0')) base += bytes;
+    if (base) entry.levels.set('mipmaps', base / 3); // the rest of the chain
   });
   wrap(gl, 'deleteTexture', (tex) => textures.delete(tex));
   const markTarget = (tex) => {
@@ -247,12 +285,28 @@ export function instrument(gl) {
   beginFrame();
 
   return {
-    // Call at the start of every frame.
+    // Call at the start and the end of every frame.
     beginFrame,
+    endFrame,
     // Counts since the last beginFrame().
     frame() {
       const { programs: used, ...counts } = frame;
       return { ...counts, programsUsed: used.size };
+    },
+    // Counts of the last finished frame (for anything that reads them mid-frame).
+    lastFrame() {
+      return last ?? this.frame();
+    },
+    // fn(ms) with each frame's GPU time, a few frames late, while it listens.
+    // Returns a remover, or null when the browser has no timer queries.
+    onGpuTime(fn) {
+      if (!timer) return null;
+      gpuListeners.add(fn);
+      return () => gpuListeners.delete(fn);
+    },
+    // Live WebGL objects by kind: { Texture: n, Buffer: n, ... }.
+    objects() {
+      return Object.fromEntries(OBJECTS.map((kind) => [kind, live[kind].size]));
     },
     memory() {
       let textureBytes = 0;

@@ -69,7 +69,7 @@ when a choice is about taste or scope rather than engineering (see Open question
 
 | # | Stage | Milestone | Status |
 |---|---|---|---|
-| 1 | HDR frame and measurement | The cove | in progress |
+| 1 | HDR frame and measurement | The cove | done |
 | 2 | Sky, sun and atmosphere | The cove | todo |
 | 3 | Island shape | The cove | todo |
 | 4 | Ground surfaces and rocks | The cove | todo |
@@ -132,11 +132,12 @@ Measurement in the game:
 
 Measurement in `tools/screenshot.js` (pure parts get tests):
 
-- **Motion:** a strip of frames at stepped `t` values, and frames at a frozen `t` with small camera
-  offsets (sub-pixel up to a few centimetres) that expose shimmer and aliasing. A per-view shimmer score
-  from the offset frames goes in `info.json`, so flicker shows up as a number, and the tool warns above a
-  limit in `config.js`.
-- **Detail:** zoomed crops of chosen regions at 100–200 %, and a contrast-boosted copy of each view that
+- **Motion:** a strip of frames at stepped `t` values, and frames at a frozen `t` with sub-pixel camera
+  turns that expose shimmer and aliasing. (Moving the camera by centimetres shifts near things by many
+  pixels, which a score can't tell apart from aliasing.) A per-view shimmer score from the
+  turned frames goes in `info.json`, so flicker shows up as a number, and the tool warns above a limit in
+  `config.js`.
+- **Detail:** zoomed crops of chosen regions, and a contrast-boosted copy of each view that
   makes banding and dithering visible.
 - **Cost:** per view in `info.json`: draw calls, triangles, shader programs, render passes, a measure of
   fragment work (such as overdraw), and texture and render-target memory. These numbers are the same on
@@ -159,7 +160,7 @@ made untrue in CLAUDE.md. The tools come first, so the pipeline change in 1.4 is
 
 - [x] **1.1 Capture groundwork.** The tool works from any working directory (on Windows it failed every
   capture when the shell's drive letter was lowercase, `c:\`, flagging its own page as a network
-  request). One page load can render extra frames (other `t` values, small camera offsets) without
+  request). One page load can render extra frames (other `t` values, sub-pixel camera turns) without
   reloading, so the measurements below stay fast. `info.json` records each capture's time, with a warning
   above a budget in `config.js`. Check: the game's pixels are identical to `stage1-before`.
 - [x] **1.2 Detail and motion.** Crops, banding views, motion strips and shimmer scores, each proven on a
@@ -171,8 +172,8 @@ made untrue in CLAUDE.md. The tools come first, so the pipeline change in 1.4 is
   The look of the tonemapping is a matter of taste, so show the user candidates side by side and let them
   pick. Check: the banding views show no bands, no shimmer score went up, and the compare sheet shows no
   new flaw.
-- [ ] **1.5 Teardown.** The teardown check, proven on a system that leaks on purpose.
-- [ ] **1.6 Readout and benchmark.** Both work in the built game, and the screenshot tool's player-mode
+- [x] **1.5 Teardown.** The teardown check, proven on a system that leaks on purpose.
+- [x] **1.6 Readout and benchmark.** Both work in the built game, and the screenshot tool's player-mode
   run exercises them, so breaking either fails `verify`. Then the user runs the benchmark on the machines
   they have, for the first real numbers.
 
@@ -419,6 +420,9 @@ Made with the user. Don't reopen them unless the user does.
   the game only uses one, and the views and art direction are tuned on it. (2026-10-20)
 - **The user directs the work and reviews most stages.** A finished stage goes to `review`; only the user
   marks it `done`. (2026-10-20)
+- **The look starts from the neutral tonemapping curve** (Khronos PBR Neutral): authored colours stay as
+  they are, so the travel-poster palette is set in the materials and the grade, not by the curve.
+  (2026-10-20)
 
 ## Open questions
 
@@ -432,57 +436,12 @@ Not part of the plan. Build one only if the user asks for it: a passing rain sho
 
 ## Log
 
-Newest first. One entry per session: the date, the stage, what changed, what got worse or is still open,
-and the next step.
+Newest first. One short entry per session, only a few lines: date, stage, what changed, what is still
+open, next step. Details belong in code comments.
 
-- **2026-10-20, Stage 1, sub-step 1.4 (HDR frame).** The scene renders into `post/frame.js`'s HDR target
-  (half float, 4x MSAA on high and medium, 2x on low; reversed 32-bit float depth, near 2 cm, far 100 km).
-  The output pass decodes, tonemaps, converts to sRGB and dithers. Every scene material ends with
-  `sceneOutput()`, which applies exposure and compresses colour so MSAA averages dark edges against a
-  bright sky in roughly display space. Systems get `ctx.frame` (size, shared uniforms, passes before the
-  scene). New checks on every run: thin dark bars against a sunset sky (0.01% shimmer; 0.42% with a plain
-  linear resolve) and two planes 5 cm apart seen from 100 m up (0.14%; 43% without reversed depth). The
-  shimmer score now counts only what 4x MSAA can't explain (mismatches above half the local contrast):
-  before, it flagged every MSAA edge at sunset contrast. Results: the water and sand no longer band;
-  the waterline shimmer (0.03–0.07%) is gone; each view costs 4 draws, 2 passes, 4 programs and 88 MB of
-  render targets. Works on hardware GL too. Tonemapping candidates (neutral, agx, agx-punchy, aces) are
-  in `screenshots/tonemaps/comparison.png` (not in git); agx-punchy is the default until the user picks.
-  Still open:
-  - At exposure 1, agx-punchy makes the placeholder's display-authored colours darker: a grey-blue sky,
-    brown sand. Stage 2 sets the exposure for a real sky.
-  - Geometry thinner than about two pixels crawls even with 4x MSAA; the plants' level of detail must
-    keep it out (Stage 8).
-  - Without EXT_clip_control the near plane falls back to 0.5 m, and shallow water seen from a hilltop
-    z-fights (8% in the depth fixture). Check which browsers lack it in Stage 18.
-  - Saturated primaries show kinks where the tonemapper clamps (tonecard ramps); natural colours don't.
-  - Captures got slower: a 4x MSAA frame costs ~0.4 s on SwiftShader, so ~8 s per view and ~52 s for
-    `verify` here. Within budget; watch it as scenes grow.
-  Next: 1.5.
-- **2026-10-20, Stage 1, sub-steps 1.1–1.3 (the tools).** Every capture now also writes, per view, a
-  banding view, zoomed crops (`crops` in views.js), a shimmer map and score, a motion strip and share,
-  an overdraw map, and the frame cost (draw calls, triangles, passes, programs, overdraw, texture and
-  render-target memory; GPU time on hardware GL only) with warnings above `config.budget`. Two fixtures
-  (`?fixture=shimmer`, `?fixture=heavy`) must be caught on every run, or `verify` fails; the in-browser
-  checks were each broken on purpose once and failed. `--compare` now also lists the numbers that changed.
-  The game's pixels stayed identical to `stage1-before` throughout. Cost of the placeholder at `high`:
-  3 draws, 162 k triangles, 1 pass, 3 programs, overdraw 1.6–2.3, 49 MB of render targets (the canvas).
-  `verify` takes ~30 s on SwiftShader here (~5 s per view); warmup frames dropped from 8 to 1, since
-  nothing builds up over frames yet. Still open:
-  - The placeholder's water and sand band (banding views); 1.4 must fix it. Banding has no numeric score:
-    once post dithers every pixel, a score built on flat 8-bit runs would always read zero.
-  - The beach and overview waterlines shimmer slightly (0.03–0.07%, under the limit), probably depth
-    precision where the mound meets the water. Recheck after 1.4's depth choice.
-  - The shimmer score uses sub-pixel camera turns only: moving the camera shifts near things by many
-    pixels, which the score can't tell from aliasing. It is tuned on synthetic edges and one fixture, not
-    yet on real foliage (Stage 8 may need to retune it).
-  - GPU time in headless hardware captures is noisy (0.8–5.5 ms for near-identical views); it has no limit.
-  - All limits are guesses until Stage 11. Overdraw ignores points, lines and sprites.
-  - The fixtures ship in the build (a few KB, reachable only through `?fixture=`).
-  Next: 1.4.
-- **2026-10-20, Stage 1 planning.** Split Stage 1 into sub-steps 1.1–1.6. Baseline capture
-  `stage1-before` (SwiftShader): in a contrast-boosted copy the sky is cleanly dithered, but the water and
-  the sand show contour bands. Found that `tools/screenshot.js` fails every capture when the working
-  directory's drive letter is lowercase (fix in 1.1). SwiftShader supports reversed depth, MSAA on
-  half-float targets and timer queries, so captures can exercise all three. Next: 1.1.
-- **2026-10-20, plan.** Wrote this plan. The tooling (build, check, screenshots, CI deploy) and the
-  placeholder world exist. Next: Stage 1.
+- **2026-10-20, Stage 1 done.** HDR frame in `post/` (neutral tonemap, 4x MSAA, reversed float depth),
+  capture measurements and tool checks, teardown check, F3 readout, `?bench=1`. First benchmark (one
+  discrete GPU): 2.8–4.7 ms GPU per frame. Open: no bloom, guessed limits, high-DPI `high` over the
+  render-target limit (Stage 11); thin geometry crawls, no alpha-to-coverage fixture (Stage 8); placeholder
+  sky draws first (Stage 2); z-fighting without EXT_clip_control (Stage 18). Next: Stage 2.
+- **2026-10-20, plan.** Wrote this plan. Next: Stage 1.

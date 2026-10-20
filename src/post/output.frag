@@ -1,6 +1,7 @@
 // The output pass: the HDR scene to the screen. Undoes the scene's compression
 // (chunks/scene-output.glsl), tonemaps, converts to sRGB and dithers.
 
+#include "chunks/scene-output.glsl"
 #include "tonemap.glsl"
 
 uniform sampler2D uScene;
@@ -15,10 +16,7 @@ vec3 hash32(vec2 p) {
 }
 
 void main() {
-  vec3 s = texture2D(uScene, vUv).rgb;
-  vec3 hdr = s / max(1.0 - max(s.r, max(s.g, s.b)), 1.0 / 2048.0);
-
-  gl_FragColor = vec4(tonemap(hdr), 1.0);
+  gl_FragColor = vec4(tonemap(sceneRadiance(texture2D(uScene, vUv).rgb)), 1.0);
   #include <colorspace_fragment>
 
   // Triangular noise of +-1 step in the 8-bit output hides banding in smooth
