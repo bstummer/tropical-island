@@ -2,25 +2,26 @@
 // instead of silently rendering the wrong thing.
 //
 //   view     name from views.js
-//   time     time of day in hours, 0–24
+//   time     time of day: hours of daylight or a named time (sky/sun.js), read as hours
 //   t        fixed simulation time in seconds
 //   seed     world seed (any string)
 //   capture  1 = screenshot mode
 //   quality  preset name from config.quality.presets
 //   fixture  a test scene from src/fixtures/ instead of the island (for tools/screenshot.js)
 //   tonemap  tonemapping curve from config.post.tonemaps, to compare looks
-//   exposure scene exposure, instead of config.post.exposure, to compare looks
+//   exposure a factor on the exposure, instead of config.post.exposure, to compare looks
 //   stats    1 = show the frame readout from the start (F3 toggles it)
 //   bench    1 = run the benchmark (core/benchmark.js) instead of the game
 //   benchSeconds  seconds measured per view, instead of config.bench.seconds
 //   depth    fallback = the depth set-up of browsers without EXT_clip_control (Firefox),
 //            to test that path on browsers that have it
+import { sunPath } from '../sky/sun.js';
 
 export function parseParams(search) {
   const q = new URLSearchParams(search);
   return {
     view: text(q, 'view'),
-    time: number(q, 'time', 0, 24),
+    time: timeOfDay(q, 'time'),
     t: number(q, 't', 0, Infinity),
     seed: text(q, 'seed'),
     capture: q.get('capture') === '1',
@@ -44,6 +45,16 @@ function choice(q, key, values) {
   const value = text(q, key);
   if (value !== null && !values.includes(value)) throw new Error(`URL param ${key}=${value} must be one of: ${values.join(', ')}`);
   return value;
+}
+
+function timeOfDay(q, key) {
+  const raw = text(q, key);
+  if (raw === null) return null;
+  try {
+    return sunPath.toHours(/^[a-z-]+$/.test(raw) ? raw : Number(raw));
+  } catch {
+    throw new Error(`URL param ${key}=${raw} must be a time of day in daylight, ${sunPath.describe()}`);
+  }
 }
 
 function number(q, key, min, max) {

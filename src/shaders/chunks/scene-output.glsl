@@ -10,12 +10,21 @@
 // Materials get uExposure from ctx.frame.uniforms; built-in three.js materials
 // use post/scene-output.js. Passes that read the HDR target undo the
 // compression with sceneRadiance().
+//
+// Translucent materials (frame.translucent(), which defines SCENE_TRANSLUCENT)
+// draw into a layer of their own that blends in linear light: there sceneOutput
+// returns exposed radiance premultiplied by alpha, the share of the pixel the
+// material covers.
 
 uniform float uExposure;
 
 vec4 sceneOutput(vec3 radiance, float alpha) {
   vec3 c = max(radiance * uExposure, 0.0);
+#ifdef SCENE_TRANSLUCENT
+  return vec4(c * alpha, alpha);
+#else
   return vec4(c / (1.0 + max(c.r, max(c.g, c.b))), alpha);
+#endif
 }
 
 // Exposed linear radiance from a value stored by sceneOutput(). Half floats

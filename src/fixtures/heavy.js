@@ -55,10 +55,10 @@ export function create(ctx) {
   textures.forEach((map, i) => {
     const layer = new THREE.Mesh(
       new THREE.PlaneGeometry(20, 12),
-      withSceneOutput(new THREE.MeshBasicMaterial({ map, transparent: true, opacity: 0.05, depthWrite: false }), frame),
+      withSceneOutput(new THREE.MeshBasicMaterial({ map, opacity: 0.05 }), frame),
     );
     layer.position.z = -2 - 0.1 * i;
-    group.add(layer);
+    group.add(frame.translucent(layer));
   });
 
   const targets = Array.from({ length: targetCount }, () => {

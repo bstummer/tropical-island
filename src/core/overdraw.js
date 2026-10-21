@@ -1,7 +1,8 @@
 // Capture only: how many fragments each pixel of the main view shades. Renders
 // the scene once more with every mesh's material swapped for one that adds 1
-// per fragment. The draw order and the depth test match the real frame: three.js
-// sorts opaque draws by material id, so counting materials are created in the
+// per fragment. The draw order and the depth test match the real frame: the
+// frame's passes draw in order (`layers`, post/frame.js), three.js sorts opaque
+// draws by material id, so counting materials are created in the
 // originals' id order; they keep each original's sides, depth test, depth
 // writes, depth function and polygon offset; and depth is 32-bit float like the
 // frame's. ShaderMaterials keep their own vertex shader (waves and wind move
@@ -14,7 +15,7 @@ import fragmentShader from './overdraw.frag';
 
 // Returns { width, height, counts } with counts as one byte per pixel (capped
 // at 255), rows from the top.
-export function measureOverdraw(renderer, scene, camera) {
+export function measureOverdraw(renderer, scene, camera, layers) {
   const size = renderer.getDrawingBufferSize(new THREE.Vector2());
   // 8-bit colour: each fragment adds exactly 1/255.
   const target = new THREE.WebGLRenderTarget(size.x, size.y, { depthTexture: new THREE.DepthTexture(size.x, size.y, THREE.FloatType) });
@@ -53,18 +54,26 @@ export function measureOverdraw(renderer, scene, camera) {
   const clearColor = renderer.getClearColor(new THREE.Color());
   const clearAlpha = renderer.getClearAlpha();
   const previous = renderer.getRenderTarget();
+  const autoClear = renderer.autoClear;
+  const mask = camera.layers.mask;
 
   const pixels = new Uint8Array(size.x * size.y * 4);
   try {
     renderer.setRenderTarget(target);
     renderer.setClearColor(0x000000, 0);
     renderer.clear();
-    renderer.render(scene, camera);
+    renderer.autoClear = false;
+    for (const layer of layers) {
+      camera.layers.set(layer);
+      renderer.render(scene, camera);
+    }
     renderer.readRenderTargetPixels(target, 0, 0, size.x, size.y, pixels);
   } finally {
     for (const [object, material] of swapped) object.material = material;
     renderer.setRenderTarget(previous);
     renderer.setClearColor(clearColor, clearAlpha);
+    renderer.autoClear = autoClear;
+    camera.layers.mask = mask;
     for (const material of counting.values()) material.dispose();
     target.depthTexture.dispose();
     target.dispose();

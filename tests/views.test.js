@@ -4,6 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { views, findView } from '../src/views.js';
 import { config } from '../src/config.js';
+import { sunPath } from '../src/sky/sun.js';
 
 const SEA_LEVEL = 0;
 
@@ -20,8 +21,8 @@ for (const view of views) {
     assert.ok(view.position[1] > SEA_LEVEL, `y = ${view.position[1]} is not above sea level`);
     assert.ok(Number.isFinite(view.yaw));
     assert.ok(Math.abs(view.pitch) <= config.movement.maxPitch);
-    assert.ok(view.timeOfDay >= 0 && view.timeOfDay <= 24);
-    if (view.fov !== undefined) assert.ok(view.fov >= 10 && view.fov <= 120);
+    assert.doesNotThrow(() => sunPath.toHours(view.timeOfDay), 'timeOfDay is daylight hours or a named time');
+    if (view.fov !== undefined) assert.ok(view.fov >= 2 && view.fov <= 120, `fov = ${view.fov}: 2 (a long telephoto) to 120`);
     if (view.brief !== undefined) assert.ok(typeof view.brief === 'string' && view.brief.trim(), 'brief must be a non-empty line');
     for (const [name, centre] of Object.entries(view.crops ?? {})) {
       assert.match(name, /^[a-z0-9]+(-[a-z0-9]+)*$/, `crop name "${name}"`);
@@ -40,12 +41,20 @@ test('findView returns the view or throws with the known names', () => {
 test('config defaults point at things that exist', () => {
   assert.doesNotThrow(() => findView(config.defaults.view));
   assert.ok(config.quality.presets[config.quality.default]);
-  assert.ok(config.defaults.timeOfDay >= 0 && config.defaults.timeOfDay <= 24);
+  assert.doesNotThrow(() => sunPath.toHours(config.defaults.timeOfDay), 'the default time of day is in daylight');
   assert.ok(Number.isInteger(config.capture.warmupFrames) && config.capture.warmupFrames >= 1);
   assert.ok(config.build.sizeBudgetBytes > 0);
   assert.ok(config.post.tonemaps[config.post.tonemap], 'the default tonemap exists');
   assert.equal(new Set(Object.values(config.post.tonemaps)).size, Object.keys(config.post.tonemaps).length, 'tonemap defines are distinct');
   assert.ok(config.post.exposure > 0);
+});
+
+test('the haze reaches past the horizon from every view', () => {
+  const { groundRadius } = config.sky.atmosphere;
+  for (const view of views) {
+    const horizon = Math.sqrt(2 * groundRadius * (view.position[1] / 1000)); // km
+    assert.ok(config.sky.aerialRange > horizon, `${view.name}: horizon ${horizon.toFixed(1)} km, aerial range ${config.sky.aerialRange} km`);
+  }
 });
 
 test('the depth range covers a leaf at the lens and the horizon from a hilltop', () => {
@@ -60,7 +69,7 @@ test('quality presets are complete and sane', () => {
   for (const [name, preset] of Object.entries(config.quality.presets)) {
     assert.ok(preset.renderScale > 0 && preset.renderScale <= 1, `${name}.renderScale`);
     assert.ok(preset.maxPixelRatio >= 1, `${name}.maxPixelRatio`);
-    assert.ok([0, 2, 4, 8].includes(preset.msaa), `${name}.msaa`);
+    assert.ok([2, 4, 8].includes(preset.msaa), `${name}.msaa`);
   }
 });
 

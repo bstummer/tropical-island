@@ -1,10 +1,12 @@
-// The output pass: the HDR scene to the screen. Undoes the scene's compression
-// (chunks/scene-output.glsl), tonemaps, converts to sRGB and dithers.
+// The output pass: the HDR scene to the screen. Reads the HDR target, whose
+// compression it undoes (chunks/scene-output.glsl), or the linear result of
+// the composite and post chain (frame.js); tonemaps, converts to sRGB and dithers.
 
 #include "chunks/scene-output.glsl"
 #include "tonemap.glsl"
 
 uniform sampler2D uScene;
+uniform bool uCompressed;
 
 varying vec2 vUv;
 
@@ -16,7 +18,8 @@ vec3 hash32(vec2 p) {
 }
 
 void main() {
-  gl_FragColor = vec4(tonemap(sceneRadiance(texture2D(uScene, vUv).rgb)), 1.0);
+  vec3 stored = texture2D(uScene, vUv).rgb;
+  gl_FragColor = vec4(tonemap(uCompressed ? sceneRadiance(stored) : stored), 1.0);
   #include <colorspace_fragment>
 
   // Triangular noise of +-1 step in the 8-bit output hides banding in smooth

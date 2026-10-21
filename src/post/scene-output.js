@@ -3,7 +3,7 @@
 // Custom ShaderMaterials call sceneOutput() themselves instead. An
 // onBeforeCompile the material already has (wind, say) still runs first, so set
 // it before wrapping: one set afterwards replaces the hook, and capture mode
-// fails on a material without it (missingSceneOutput below).
+// fails on a material without it (missingSceneOutput in scene-check.js).
 import { Material } from 'three';
 import sceneOutput from '../shaders/chunks/scene-output.glsl';
 
@@ -25,21 +25,6 @@ export function withSceneOutput(material, frame) {
   material.customProgramCacheKey = () =>
     `${previousKey === Material.prototype.customProgramCacheKey ? previous.toString() : previousKey.call(material)}|sceneOutput`;
   return material;
-}
-
-// The scene's materials that don't end with sceneOutput(): ShaderMaterials
-// whose fragment shader never assigns it, and built-in materials not wrapped by
-// withSceneOutput (or whose hook was replaced since). As "name (type)".
-export function missingSceneOutput(scene) {
-  const missing = new Set();
-  scene.traverse((object) => {
-    if (!(object.isMesh || object.isPoints || object.isLine || object.isSprite)) return;
-    for (const material of [].concat(object.material ?? [])) {
-      const ok = material.isShaderMaterial ? /=\s*sceneOutput\s*\(/.test(material.fragmentShader) : material.onBeforeCompile.sceneOutput === true;
-      if (!ok) missing.add(describe(material));
-    }
-  });
-  return [...missing];
 }
 
 function describe(material) {

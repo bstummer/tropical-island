@@ -13,6 +13,9 @@ import { createFrame } from './post/frame.js';
 import * as input from './core/input.js';
 import * as readout from './core/readout.js';
 import * as benchmark from './core/benchmark.js';
+import { defineTimeOfDay } from './sky/sun.js';
+import * as timeControl from './sky/time-control.js';
+import * as sky from './sky/sky.js';
 import * as placeholder from './world/placeholder.js';
 import * as shimmerFixture from './fixtures/shimmer.js';
 import * as heavyFixture from './fixtures/heavy.js';
@@ -22,14 +25,18 @@ import * as tonecardFixture from './fixtures/tonecard.js';
 import * as leakyFixture from './fixtures/leaky.js';
 import * as gradientFixture from './fixtures/gradient.js';
 import * as brokenFixture from './fixtures/broken.js';
+import * as staleTimeFixture from './fixtures/stale-time.js';
+import * as blendFixture from './fixtures/blend.js';
+import * as lightFixture from './fixtures/light.js';
+import * as mathsFixture from './fixtures/maths.js';
 
 // Updated in this order every frame. Each module exports create(ctx) -> { update(dt, t), dispose(), ready? }
 // where the optional `ready` promise is awaited before a capture starts.
-const WORLD_SYSTEMS = [placeholder];
+const WORLD_SYSTEMS = [sky, placeholder];
 
 // Test scenes that replace the world with ?fixture=<name>: tools/screenshot.js
 // uses them to prove its measurements and the frame's guarantees, the tonecard
-// shows the tonemapping.
+// shows the tonemapping, and light the lighting.
 const FIXTURES = {
   shimmer: [shimmerFixture],
   heavy: [heavyFixture],
@@ -39,6 +46,10 @@ const FIXTURES = {
   leaky: [leakyFixture],
   gradient: [gradientFixture],
   broken: [brokenFixture],
+  'stale-time': [staleTimeFixture],
+  blend: [blendFixture],
+  light: [sky, lightFixture],
+  maths: [mathsFixture],
 };
 
 let captureMode = false;
@@ -86,11 +97,12 @@ function boot() {
     quality,
     params,
     view,
-    timeOfDay: params.time ?? view.timeOfDay ?? config.defaults.timeOfDay,
     clock: createClock({ frozen: params.capture, start: params.t ?? config.defaults.t }),
     rng: createRandom(params.seed ?? config.defaults.seed),
     stats: display.stats,
   };
+  // Hours of daylight; setting it to anything else throws (sky/sun.js).
+  defineTimeOfDay(ctx, params.time ?? view.timeOfDay ?? config.defaults.timeOfDay);
 
   // Everything that depends on the quality preset: the frame and the world.
   // Changing the preset tears it all down and builds it again.
@@ -124,6 +136,7 @@ function boot() {
     if (params.bench) tools.push(benchmark.create(ctx));
     else tools.push(input.create(ctx));
     tools.push(readout.create(ctx));
+    if (import.meta.env.DEV) tools.push(timeControl.create(ctx));
   }
 
   function frame() {

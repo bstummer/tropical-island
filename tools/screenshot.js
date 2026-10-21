@@ -1,7 +1,7 @@
 // Headless screenshots of the built dist/index.html, plus contact sheets.
 //
 //   node tools/screenshot.js [--views beach,shoreline] [--label before] [--size 1600x900]
-//                            [--t 12.5] [--time 17.5] [--seed 1] [--quality high]
+//                            [--t 12.5] [--time 17.5|sunset] [--seed 1] [--quality high]
 //                            [--tonemap agx] [--exposure 1.5] [--fixture tonecard]
 //                            [--gl auto|hardware|swiftshader] [--checks]
 //   node tools/screenshot.js --compare <labelA> <labelB>
@@ -13,8 +13,9 @@
 // With --checks (npm run verify does it) the tool also tests itself and the
 // game: each measurement must catch a scene built to fail it (src/fixtures/,
 // images in <label>/tool-check/), errors that leave nothing wrong on screen must
-// fail a capture, captures must be reproducible, and the game runs for a few
-// frames in player mode (no ?capture) and as the benchmark.
+// fail a capture, captures must be reproducible (also after the time of day
+// changed in the page), and the game runs for a few frames in player mode (no
+// ?capture) and as the benchmark.
 // Compare writes screenshots/compare/<A>_vs_<B>.png: A | B | diff for every view.
 // Exits non-zero on console errors, page errors, shader and WebGL errors, a lost
 // context, network requests, capture errors, timeouts or a failed check, in
@@ -27,9 +28,13 @@ import { dirname, join, relative } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { views as allViews } from '../src/views.js';
 import { config } from '../src/config.js';
+import { sunPath } from '../src/sky/sun.js';
 import { measureCost, measureShimmer, measureView, renderFrame, stopAnalysis } from './measure.js';
 import { decodeDataUrl, encodePng } from './png.js';
-import { bandedShare, bandingView, overdrawImage } from './image.js';
+import { bandedShare, bandingView, brightestNear, meanColor, overdrawImage } from './image.js';
+import { blendLayout, cardSpan } from '../src/fixtures/blend-layout.js';
+import { coefficients, directions, texels } from '../src/fixtures/maths-cases.js';
+import { shBasis, shIrradiance } from '../src/sky/light.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const BUILT_HTML = join(ROOT, 'dist', 'index.html');
@@ -73,8 +78,13 @@ async function capture(args) {
   for (const key of ['t', 'time', 'seed', 'quality', 'tonemap', 'exposure', 'fixture']) {
     if (args[key] !== undefined) query[key] = args[key];
   }
-  for (const key of ['t', 'time']) {
-    if (query[key] !== undefined && !Number.isFinite(Number(query[key]))) throw new Error(`--${key} must be a number`);
+  if (query.t !== undefined && !Number.isFinite(Number(query.t))) throw new Error('--t must be a number');
+  if (query.time !== undefined) {
+    try {
+      sunPath.toHours(/^[a-z-]+$/.test(query.time) ? query.time : Number(query.time));
+    } catch {
+      throw new Error(`--time must be a time of day in daylight, ${sunPath.describe()}`);
+    }
   }
 
   const { browser, kind, gl } = await launch(args.gl ?? 'auto');
@@ -196,6 +206,11 @@ async function captureView(context, fileUrl, query, view, outDir, { contractChec
           problems.push({ kind: 'capture', text: `loading at t=${t} renders differently from seeking there: some state depends on more than t` });
         }
         await fresh.page.close();
+        const changed = await changeTime(context, fileUrl, { ...query, view: view.name }, page, info.timeOfDay);
+        problems.push(...changed.problems);
+        if (changed.same === false) {
+          problems.push({ kind: 'capture', text: `the time of day changed to ${changed.time} in the page renders differently from loading at ${changed.time}` });
+        }
       }
     }
   } catch (err) {
@@ -375,13 +390,55 @@ function toolCheckTasks(context, fileUrl, query, view, outDir) {
       if (banded > limit) problems.push({ kind: 'tool check', text: `gradient fixture: ${detail}` });
       return detail;
     }),
-    // Teardown: what a quality change rebuilds must go away completely and come back the same.
-    () => checkFixture(context, fileUrl, { ...params, name: 'teardown' }, async (page, info, problems) => {
-      const { leaks, samePicture, trip } = await qualityRoundTrip(page, query);
-      if (leaks.length) problems.push({ kind: 'tool check', text: `teardown: ${trip} leaks ${leaks.join(', ')}` });
-      if (!samePicture) problems.push({ kind: 'tool check', text: `teardown: the picture changed after ${trip}` });
-      return `${trip}: ${leaks.length ? `leaks ${leaks.join(', ')}` : 'nothing leaked'}, ${samePicture ? 'same picture' : 'picture changed'}`;
+    // Translucent layers blend in linear light (post/frame.js), through the post chain.
+    () => checkFixture(context, fileUrl, { ...params, fixture: 'blend' }, async (page, info, problems) => {
+      const dataUrl = await page.evaluate(() => window.__CAPTURE__.image());
+      writeFileSync(join(dir, 'blend.png'), Buffer.from(dataUrl.slice(dataUrl.indexOf(',') + 1), 'base64'));
+      const { worst, contrast } = blendMismatch(decodeDataUrl(dataUrl), { bands: blendLayout.bands, spans: blendLayout.cards.map((_, i) => cardSpan(i)) });
+      const { limitLevels: limit, minContrastLevels } = config.capture.blend;
+      const detail = `translucent cards off their linear-light mix by ${worst.toFixed(1)} levels at most (limit ${limit}), ${Math.round(contrast)} levels off the light behind`;
+      if (worst > limit) problems.push({ kind: 'tool check', text: `blend fixture: ${detail}` });
+      if (contrast < minContrastLevels) problems.push({ kind: 'tool check', text: `blend fixture: ${detail}; the cards don't show, so this measures nothing` });
+      return detail;
     }),
+    // The shared lighting's colour, on a white sphere with the sun behind the camera:
+    // neutral at midday, warm at golden hour (PLAN.md Stage 2).
+    ...[
+      ['midday', (c) => Math.max(...c) - Math.min(...c) <= config.capture.light.neutralLevels, 'neutral'],
+      ['golden-hour', (c) => c[0] - c[2] >= config.capture.light.warmLevels, 'warm'],
+    ].map(([time, ok, want]) => () =>
+      checkFixture(context, fileUrl, { ...params, fixture: 'light', view: 'jungle-edge', time, name: `light ${time}` }, async (page, info, problems) => {
+        const { white, radius } = await page.evaluate(() => window.__LIGHT__);
+        const image = decodeDataUrl(await page.evaluate(() => window.__CAPTURE__.image()));
+        writeFileSync(join(dir, `light-${time}.png`), encodePng(image));
+        const colour = brightestNear(image, white, radius).map(Math.round);
+        const detail = `a white sphere's lit side at ${time}: ${colour.join(', ')} (should read ${want})`;
+        if (!ok(colour)) problems.push({ kind: 'tool check', text: `light fixture: ${detail}` });
+        return detail;
+      }),
+    ),
+    // What the GPU and JS both compute agrees, and the sky's table mappings invert (CLAUDE.md §5).
+    () => checkFixture(context, fileUrl, { ...params, fixture: 'maths' }, async (page, info, problems) => {
+      const m = mathsMismatch(await page.evaluate(() => window.__MATHS__));
+      const { valueTolerance, texelTolerance } = config.capture.maths;
+      const detail =
+        `GPU SH vs sky/light.js off by ${m.basis.toExponential(1)} (basis) and ${m.irradiance.toExponential(1)} (irradiance), ` +
+        `table mappings invert to ${m.skyView.toFixed(4)} and ${m.aerial.toFixed(4)} texels`;
+      if (!(m.basis <= valueTolerance && m.irradiance <= valueTolerance)) problems.push({ kind: 'tool check', text: `maths fixture: ${detail}` });
+      if (!(m.skyView <= texelTolerance && m.aerial <= texelTolerance)) problems.push({ kind: 'tool check', text: `maths fixture: ${detail}` });
+      return detail;
+    }),
+    // Teardown: what a quality change rebuilds must go away completely and come
+    // back the same. Also with the blend fixture, which makes the frame create
+    // the targets of its translucent pass and post chain.
+    ...[{ name: 'teardown' }, { name: 'teardown blend', fixture: 'blend' }].map((check) => () =>
+      checkFixture(context, fileUrl, { ...params, ...check }, async (page, info, problems) => {
+        const { leaks, samePicture, trip } = await qualityRoundTrip(page, query);
+        if (leaks.length) problems.push({ kind: 'tool check', text: `${check.name}: ${trip} leaks ${leaks.join(', ')}` });
+        if (!samePicture) problems.push({ kind: 'tool check', text: `${check.name}: the picture changed after ${trip}` });
+        return `${trip}: ${leaks.length ? `leaks ${leaks.join(', ')}` : 'nothing leaked'}, ${samePicture ? 'same picture' : 'picture changed'}`;
+      }),
+    ),
     () => checkFixture(context, fileUrl, { ...params, fixture: 'leaky' }, async (page, info, problems) => {
       const { leaks, trip } = await qualityRoundTrip(page, query);
       // It forgets a texture, a render target (a framebuffer), a mesh in the scene and the scene's fog.
@@ -391,12 +448,34 @@ function toolCheckTasks(context, fileUrl, query, view, outDir) {
       }
       return `caught ${leaks.join(', ')}`;
     }),
+    // The time-of-day check of the first view must catch a system that reads the time only at boot.
+    () => checkFixture(context, fileUrl, { ...params, fixture: 'stale-time' }, async (page, info, problems) => {
+      const changed = await changeTime(context, fileUrl, { ...params, fixture: 'stale-time' }, page, info.timeOfDay);
+      problems.push(...changed.problems);
+      if (changed.same !== false) problems.push({ kind: 'tool check', text: `stale-time fixture: changing the time to ${changed.time} in the page went unnoticed` });
+      return `a time read only at boot: ${changed.same === false ? 'caught' : 'missed'}`;
+    }),
   ];
+}
+
+// Sets another time of day in a loaded capture page, as the game's time
+// control does, and loads that time fresh: the two frames must match, or
+// something that depends on the time doesn't follow it. Returns { time, same,
+// problems }, with same null when the fresh page failed.
+async function changeTime(context, fileUrl, params, page, from) {
+  const time = Math.abs(from - sunPath.times['golden-hour']) > 0.5 ? 'golden-hour' : 'midday';
+  await page.evaluate((time) => window.__CAPTURE__.render({ time }), time);
+  const changed = await page.evaluate(() => window.__CAPTURE__.image());
+  const fresh = await openCapture(context, fileUrl, { ...params, time });
+  const same = fresh.info ? (await fresh.page.evaluate(() => window.__CAPTURE__.image())) === changed : null;
+  await fresh.page.close();
+  return { time, same, problems: fresh.problems };
 }
 
 // Errors that leave nothing wrong on screen, or only blank and stale frames
 // that would pass every measurement, must still fail a capture: a shader that
-// doesn't compile and a material without sceneOutput(), both out of sight
+// doesn't compile, a material without sceneOutput() and one that blends outside
+// the translucent pass, all out of sight
 // (src/fixtures/broken.js), then a bad WebGL call and a lost context. Those
 // problems are expected here; anything else on the page still fails the check.
 async function checkErrors(context, fileUrl, params) {
@@ -405,6 +484,7 @@ async function checkErrors(context, fileUrl, params) {
   const expected = [
     ['a hidden shader that fails to compile', (p) => p.kind === 'shader error' && /fixture-broken/.test(p.text)],
     ['a material without sceneOutput()', (p) => /without sceneOutput\(\): fixture-unwrapped/.test(p.text)],
+    ['a material that blends outside the translucent pass', (p) => /blend outside the translucent pass.*: fixture-blended/.test(p.text)],
     ['a bad WebGL call', (p) => p.kind === 'webgl error' && /INVALID_ENUM/.test(p.text)],
     ['a lost context', (p) => p.kind === 'context lost'],
   ];
@@ -460,6 +540,52 @@ async function qualityRoundTrip(page, query) {
   if (left.sceneObjects) leaks.push(`${left.sceneObjects} object(s) left in the scene`);
   for (const setting of left.sceneSettings) leaks.push(`scene.${setting} left set`);
   return { leaks, samePicture, trip: `${home} → ${away} (and a resize) → ${home}` };
+}
+
+// The blend fixture (src/fixtures/blend.js) band by band: each translucent card
+// against its reference half a frame to the right, and against the light just
+// left of it, as mean colours over their insides (dither averages out). Returns
+// the largest differences in 8-bit levels, { worst } between card and
+// reference and { contrast } between card and light, which shows the cards are there.
+export function blendMismatch(image, { bands, spans }) {
+  const { width, height } = image;
+  const inset = 3;
+  let worst = 0;
+  let contrast = 0;
+  const diff = (a, b) => Math.max(...a.map((v, c) => Math.abs(v - b[c])));
+  for (let k = 0; k < bands; k++) {
+    const top = Math.ceil(height - ((k + 1) * height) / bands) + inset; // band k counts from the bottom
+    const rows = Math.floor(height - (k * height) / bands) - inset - top;
+    for (const [left, right] of spans) {
+      const x = Math.ceil(left * width) + inset;
+      const w = Math.floor(right * width) - inset - x;
+      const card = meanColor(image, x, top, w, rows);
+      const reference = meanColor(image, x + Math.round(width / 2), top, w, rows);
+      const light = meanColor(image, Math.max(0, Math.round((left - 0.02) * width)), top, Math.round(0.015 * width), rows);
+      worst = Math.max(worst, diff(card, reference));
+      contrast = Math.max(contrast, diff(card, light));
+    }
+  }
+  return { worst, contrast };
+}
+
+// The maths fixture's answers (src/fixtures/maths.js, RGBA per texel) against
+// sky/light.js: the largest differences of the SH basis and irradiance, relative
+// to the largest value, and the mappings' worst round trips in texels.
+export function mathsMismatch(values) {
+  const texel = (i) => values.slice(4 * i, 4 * i + 3);
+  const unit = (d) => d.map((v) => v / Math.hypot(...d));
+  let basis = 0;
+  let irradiance = 0;
+  directions.forEach((d, j) => {
+    const expected = shBasis(unit(d));
+    expected.forEach((e, k) => (basis = Math.max(basis, Math.abs(texel(texels.basis + 9 * j + k)[0] - e))));
+    const want = shIrradiance(coefficients, unit(d));
+    const got = texel(texels.irradiance + j);
+    const scale = Math.max(...want.map(Math.abs), 1e-6);
+    want.forEach((w, c) => (irradiance = Math.max(irradiance, Math.abs(got[c] - w) / scale)));
+  });
+  return { basis, irradiance, skyView: texel(texels.skyView)[0], aerial: texel(texels.aerial)[0] };
 }
 
 // What grew between two __CAPTURE__.resources() snapshots: live WebGL objects

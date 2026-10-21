@@ -3,10 +3,12 @@
 // through window.__CAPTURE_READY__ (with __CAPTURE_INFO__) or window.__CAPTURE_ERROR__.
 //
 // Once ready, window.__CAPTURE__ lets the tool take many frames per page load:
-//   render({ t, turn })          renders the view again at another time and/or
-//                                with the camera turned (see camera.js). Every call
-//                                starts from the view, so a frame never depends on
-//                                the calls before it.
+//   render({ t, turn, time })    renders the view again at another time t, with the
+//                                camera turned (see camera.js) and/or at another time
+//                                of day (hours or a name, as the game's time control
+//                                sets it). Every call starts from the view and its
+//                                time of day, so a frame never depends on the calls
+//                                before it.
 //   image()                      the canvas as a PNG data URL. Faster than a page
 //                                screenshot, and exactly the rendered pixels.
 //   stats()                      the last frame's GPU counts and live memory (gl-stats.js)
@@ -19,12 +21,13 @@
 //   teardown()                   tears it all down for good and returns resources()
 import { applyView } from './camera.js';
 import { measureOverdraw } from './overdraw.js';
-import { missingSceneOutput } from '../post/scene-output.js';
+import { missingSceneOutput, misplacedBlending } from '../post/scene-check.js';
 
 // `app` is main.js's handle on the systems: { systems, setQuality(name), teardown() }.
 export async function runCapture(ctx, display, app, frame) {
   const { renderer, scene, camera, config } = ctx;
   const start = ctx.clock.elapsed;
+  const startTime = ctx.timeOfDay;
   await Promise.all(app.systems.map((s) => s.ready)); // optional async setup per system
   ctx.frame.compile();
   checkShaders(ctx);
@@ -49,8 +52,9 @@ export async function runCapture(ctx, display, app, frame) {
   window.__CAPTURE__ = {
     // Back to back, without waiting for the display: the clock is frozen, so
     // pacing changes nothing, and image() reads the buffer directly.
-    render({ t = start, turn } = {}) {
+    render({ t = start, turn, time = startTime } = {}) {
       ctx.clock.seek(t);
+      ctx.timeOfDay = time;
       applyView(camera, ctx.view, { turn });
       for (let i = 0; i < config.capture.warmupFrames; i++) frame();
     },
@@ -74,7 +78,7 @@ export async function runCapture(ctx, display, app, frame) {
       return times.length ? times[Math.floor(times.length / 2)] : null;
     },
     overdraw() {
-      const { width, height, counts } = measureOverdraw(renderer, scene, camera);
+      const { width, height, counts } = measureOverdraw(renderer, scene, camera, ctx.frame.passLayers);
       let binary = '';
       for (let i = 0; i < counts.length; i += 0x8000) binary += String.fromCharCode(...counts.subarray(i, i + 0x8000));
       return { width, height, counts: btoa(binary) };
@@ -98,14 +102,15 @@ export async function runCapture(ctx, display, app, frame) {
   window.__CAPTURE_READY__ = true;
 }
 
-// Every scene material ends with sceneOutput() (CLAUDE.md §8), and every
-// shader program compiled. three.js checks a program only when something first
+// Every scene material ends with sceneOutput() (CLAUDE.md §8), blends only in
+// the translucent pass, and every shader program compiled. three.js checks a program only when something first
 // draws with it, so a broken shader on something out of sight would pass:
 // getUniforms() runs that check now, for every program compile() built.
-function checkShaders({ renderer, scene }) {
+function checkShaders({ renderer, scene, frame }) {
   const problems = [];
   const missing = missingSceneOutput(scene);
   if (missing.length) problems.push(`scene materials without sceneOutput(): ${missing.join(', ')}`);
+  problems.push(...misplacedBlending(scene, frame.layers));
   const programs = renderer.info.programs ?? [];
   for (const program of programs) program.getUniforms();
   const broken = programs.filter((p) => p.diagnostics && !p.diagnostics.runnable);

@@ -26,6 +26,35 @@ export function crop(image, x, y, w, h) {
   return out;
 }
 
+// The brightest 3 x 3 patch centred within `radius` of [x, y], as its mean
+// [r, g, b] in 8-bit levels: the lit side of a sphere, say, steady under dither.
+export function brightestNear(image, [x, y], radius) {
+  let best = null;
+  for (let row = Math.max(1, Math.floor(y - radius)); row <= Math.min(image.height - 2, Math.ceil(y + radius)); row++) {
+    for (let col = Math.max(1, Math.floor(x - radius)); col <= Math.min(image.width - 2, Math.ceil(x + radius)); col++) {
+      if ((col - x) ** 2 + (row - y) ** 2 > radius * radius) continue;
+      const patch = meanColor(image, col - 1, row - 1, 3, 3);
+      const sum = patch[0] + patch[1] + patch[2];
+      if (!best || sum > best.sum) best = { sum, patch };
+    }
+  }
+  return best?.patch ?? null;
+}
+
+// Mean colour of the w x h region at (x, y), as [r, g, b] in 8-bit levels.
+export function meanColor({ width, data }, x, y, w, h) {
+  const sum = [0, 0, 0];
+  for (let row = y; row < y + h; row++) {
+    for (let col = x; col < x + w; col++) {
+      const i = (row * width + col) * 4;
+      sum[0] += data[i];
+      sum[1] += data[i + 1];
+      sum[2] += data[i + 2];
+    }
+  }
+  return sum.map((v) => v / (w * h));
+}
+
 // Integer upscale with hard pixel edges, so single pixels stay visible.
 export function zoom(image, factor) {
   const out = createImage(image.width * factor, image.height * factor);

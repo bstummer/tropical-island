@@ -4,9 +4,11 @@ import * as THREE from 'three';
 import {
   bandedShare,
   bandingView,
+  brightestNear,
   createImage,
   crop,
   heatImage,
+  meanColor,
   motion,
   overdrawImage,
   overdrawStats,
@@ -43,6 +45,21 @@ test('crop takes the region and clamps it to the image', () => {
   assert.deepEqual(at(part, 3, 1), at(image, 5, 4));
   const edge = crop(image, 8, 7, 5, 5);
   assert.deepEqual([edge.width, edge.height], [2, 1]);
+});
+
+test('brightestNear finds the brightest spot within the radius, and not beyond it', () => {
+  const image = createImage(40, 40, [10, 10, 10]);
+  const paint = (x, y, c) => image.data.set(c, (y * 40 + x) * 4);
+  for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) paint(12 + dx, 14 + dy, [200, 150, 100]);
+  for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) paint(30 + dx, 30 + dy, [250, 250, 250]); // brighter, but too far
+  assert.deepEqual(brightestNear(image, [10, 10], 6), [200, 150, 100]);
+});
+
+test('meanColor averages a region and nothing outside it', () => {
+  const image = createImage(4, 2, [10, 20, 30]);
+  image.data.set([50, 60, 70], (1 * 4 + 2) * 4); // (2, 1)
+  assert.deepEqual(meanColor(image, 2, 0, 2, 2), [20, 30, 40]);
+  assert.deepEqual(meanColor(image, 0, 0, 2, 2), [10, 20, 30]);
 });
 
 test('zoom repeats pixels and shrink averages them back', () => {

@@ -70,7 +70,7 @@ when a choice is about taste or scope rather than engineering (see Open question
 | # | Stage | Milestone | Status |
 |---|---|---|---|
 | 1 | HDR frame and measurement | The cove | done |
-| 2 | Sky, sun and atmosphere | The cove | todo |
+| 2 | Sky, sun and atmosphere | The cove | done |
 | 3 | Island shape | The cove | todo |
 | 4 | Ground surfaces and rocks | The cove | todo |
 | 5 | Shadows | The cove | todo |
@@ -201,6 +201,42 @@ made untrue in CLAUDE.md. The tools come first, so the pipeline change in 1.4 is
 - **Done when** sunrise, midday, golden hour and sunset captures all look believable, the horizon dissolves
   into haze, the time can't be set to night, the runtime check passes, and the placeholder sky is gone.
 
+Sub-steps, in order. Each one ends with `npm run verify` green and `main` shippable, and fixes whatever it
+made untrue in CLAUDE.md. The groundwork comes first, so the sky and the light are built once, in their
+final place, and judged by the runtime check from the start.
+
+- [x] **2.1 Time of day.** `sky/` takes over the time. The daylight range and the named times (sunrise,
+  midday, golden hour, sunset) are defined in one place, and views and captures can ask for a time by
+  name. The sun's path follows from them, setting in a fixed direction that Stage 3 turns the beach
+  towards. Nothing can set a time outside daylight: not the URL, a view or the dev control, which changes
+  the time while the game runs. The runtime check joins `verify`, proven on a system that reads the time
+  only at boot. Check: tests cover the range and the named times, and the compare sheet shows nothing but
+  the sun's new path.
+- [x] **2.2 Frame structure.** What comes after the sky gets its place in the frame now: the opaque scene's
+  colour and depth for whatever draws after it, translucent layers that blend as they would in linear
+  light (also over bright ones), and a chain of post effects before the output. None of it costs anything
+  in a frame that doesn't use it. The sky draws after the opaque scene, so sky hidden behind land costs
+  nothing (Stage 1 left it drawing first). A fixture proves the blending: translucent layers over
+  backgrounds from dark to as bright as the sun come out as the same mix done in linear light. Check: the
+  island's pictures stay the same, teardown stays clean, and the Log records what the new passes cost.
+- [x] **2.3 Sky.** A physically motivated sky with a sun disk replaces the placeholder sky, for every hour
+  of daylight. Sunrise, midday, golden hour and sunset each look believable and distinct. The sun disk
+  has a clean edge and a soft glow, and the sky shows no bands, also in the deep blue overhead and the
+  sunset gradients. Exposure follows the light, so sunrise isn't murky and midday isn't blown out. Add a
+  telephoto view towards the sun over the sea at sunset as the stage's close-up. How high the midday sun
+  stands and how deep the blue goes are a matter of taste: show the user candidates side by side. Check:
+  captures at the four named times, with clean banding views and no shimmer at the sun's edge, and
+  captures still quick on SwiftShader.
+- [x] **2.4 Light and haze.** The shared lighting model: sunlight, sky ambient and aerial perspective, all
+  fed by the sky, so light, sky and haze agree at every hour. The light state lives in one place that
+  every material reads, survives a quality change and follows a time change. Stage 5's shadows and
+  Stage 10's cloud shadows have a defined place to plug in. The placeholder land and water use the model
+  until Stages 3 and 6 replace them, so captures show it. Distant land and sea dissolve into the horizon
+  haze, with no seam where the sea meets the sky. A test scene shows the light without the island:
+  neutral and coloured objects from arm's length out to the far haze. Check: at every named time the
+  telephoto view shows no seam at the horizon, neutral objects read neutral at midday and warm at golden
+  hour, and the runtime check still passes.
+
 ### 3. Island shape
 
 - `world/island.js` holds the height function: pure, Node-importable, tested. The layout is art-directed
@@ -307,7 +343,8 @@ made untrue in CLAUDE.md. The tools come first, so the pipeline change in 1.4 is
 - Art-direction pass: colour grade, bloom, haze, exposure and palette. Review every view at several times
   of day and fix everything on CLAUDE.md's list of things that break the spell. Known from Stage 1:
   saturated primaries show kinks where the tonemapping clamps (the tonecard's ramps); natural colours
-  don't.
+  don't. Known from Stage 2: the sky beside a low sun clips red in the sunset telephoto, so the disk can't
+  show as an orange orb; bloom needs the sun's energy, which the sky holds under a ceiling today.
 - Performance pass on the `high` preset. Record what the cove costs per frame: Stage 1's counts, plus the
   benchmark on the machines the user can try, ideally including a mid-range laptop. That decides how much
   more island fits in the budget. Calibrate the limits in `config.js` against it, and tune `medium` and
@@ -443,6 +480,10 @@ Made with the user. Don't reopen them unless the user does.
 - **The look starts from the neutral tonemapping curve** (Khronos PBR Neutral): authored colours stay as
   they are, so the travel-poster palette is set in the materials and the grade, not by the curve.
   (2026-10-20)
+- **The air has haze.** A humid haze near the sea gives distant land depth and sunsets their red, at the
+  cost of a slightly paler midday sky; a world without it was the alternative. (2026-10-21)
+- **The noon sun stands 63° high**, to the right of a viewer facing the sunset, so midday keeps direction
+  and shadows; a near-overhead tropical noon was the alternative. (2026-10-21)
 
 ## Open questions
 
@@ -459,6 +500,29 @@ Not part of the plan. Build one only if the user asks for it: a passing rain sho
 Newest first. One short entry per session, only a few lines: date, stage, what changed, what is still
 open, next step. Details belong in code comments.
 
+- **2026-10-21, Stage 2 hardened** after an outside code review. Fixed: the blending check missed additive
+  blending; a seam at the sunset horizon (the sea now bends with the planet, the sky table covers the sky
+  only); `translucent()` on groups; `addPost` removers; time text ("5:60"). New checks prove the after-opaque
+  pass, the translucent depth test, the GPU's sky maths against the JS (found the table mappings a quarter
+  row off at the horizon) and the light's colour. Time keys are now `,` and `.`. Translucent and post
+  passes, when used, cost 3 passes and 38 MB at 1600x900. Verify green on hardware and SwiftShader.
+- **2026-10-21, Stage 2 done.** The user approved it and kept the defaults: haze, its level, and a 63° noon
+  sun (Decisions). Next: Stage 3.
+- **2026-10-21, Stage 2 built (review).** `sky/` owns the time (named times, no night, dev keys `[` `]`) and a
+  sky after Hillaire 2020 with a thin marine haze; one lighting model (sun, SH sky light, aerial perspective) and
+  an exposure that follows the light; frame passes for after-opaque, linear translucent layers (blend fixture)
+  and a post chain; `horizon` view, `light` fixture. Cost: island frames keep 4 draws and 2 passes, overdraw
+  -30-40% (sky drawn last), 10 programs; the tables re-render only when the time or the camera's height
+  changes (~35 draws). SwiftShader ~0.6 s/frame (was ~0.45). After the user's first look: the grey horizon
+  band came mostly from the mirror-flat placeholder sea, which now reflects through small waves; the haze
+  scatters more evenly; the sun got its aureole. Open: the sunset telephoto clips red beside the sun (exposure
+  and grade, Stage 11); sunrise reads as warm as sunset; the sea shows no sun or glitter path, so it looks flat
+  under a low sun (Stage 6); translucent layers have no MSAA. The user kept the haze (Decisions); midday sun
+  height and haze level are still open (`cand-*`). Next: the user's review, then Stage 3.
+- **2026-10-21, Stage 2 planned:** sub-steps 2.1–2.4 (time of day, frame structure, sky, light and haze).
+  Before captures `stage2-before` (also `-sunrise` and `-sunset` at 6.5 h and 18 h): a two-colour sky with
+  no visible sun, land unlit and black at sunrise and sunset, no haze (sea and sky meet in a hard line, and
+  the overview shows the water plane's far edge). Next: 2.1.
 - **2026-10-21, Stage 1 hardened** after an outside review. Captures are about twice as fast, and
   `npm run shot` skips the checks (`verify` runs them). Captures now fail on hidden shader errors,
   materials without `sceneOutput()`, WebGL errors and a lost context. Banding is scored per view. CI runs

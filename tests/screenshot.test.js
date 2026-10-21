@@ -1,11 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createImage } from '../tools/image.js';
+import { shBasis, shIrradiance } from '../src/sky/light.js';
+import { coefficients, directions, texelCount, texels } from '../src/fixtures/maths-cases.js';
 import {
   benchmarkProblems,
+  blendMismatch,
   checkLimits,
   describeWarning,
   explainLaunchError,
   isSameFile,
+  mathsMismatch,
   metricChanges,
   mismatchWarnings,
   parseArgs,
@@ -169,4 +174,70 @@ test('unknown options, missing values and stray arguments fail', () => {
   assert.throws(() => parseArgs(['--label']), /--label needs a value/);
   assert.throws(() => parseArgs(['--label', '--views', 'beach']), /--label needs a value/);
   assert.throws(() => parseArgs(['beach']), /unexpected argument "beach"/);
+});
+
+// ---------------------------------------------------------------- blend fixture
+
+// A frame drawn as the blend fixture lays out: two bands, one card with its
+// reference, each card colour given per band.
+function blendFrame(card, reference, light = [[20, 20, 20], [200, 200, 200]]) {
+  const image = createImage(200, 100);
+  const set = (x0, x1, y0, y1, c) => {
+    for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) image.data.set(c, (y * 200 + x) * 4);
+  };
+  for (const [k, top] of [[0, 50], [1, 0]]) {
+    set(0, 200, top, top + 50, light[k]);
+    set(40, 80, top, top + 50, card[k]);
+    set(140, 180, top, top + 50, reference[k]);
+  }
+  return image;
+}
+const LAYOUT = { bands: 2, spans: [[0.2, 0.4]] };
+
+test('blend mismatch: a card equal to its reference passes, and shows against the light', () => {
+  const card = [[10, 10, 10], [120, 100, 90]];
+  const { worst, contrast } = blendMismatch(blendFrame(card, card), LAYOUT);
+  assert.equal(worst, 0);
+  assert.equal(contrast, 110);
+});
+
+test('blend mismatch: the largest difference of any band and channel counts', () => {
+  const { worst } = blendMismatch(blendFrame([[10, 10, 10], [120, 100, 90]], [[10, 10, 10], [120, 100, 160]]), LAYOUT);
+  assert.equal(worst, 70);
+});
+
+test('blend mismatch: a missing card shows no contrast', () => {
+  const light = [[20, 20, 20], [200, 200, 200]];
+  assert.equal(blendMismatch(blendFrame(light, light, light), LAYOUT).contrast, 0);
+});
+
+// ---------------------------------------------------------------- maths fixture
+
+// What the maths fixture would read back from a GPU that agrees with sky/light.js.
+function mathsAnswers({ skyView = 0.001, aerial = 0.002 } = {}) {
+  const values = new Array(4 * texelCount).fill(0);
+  const unit = (d) => d.map((v) => v / Math.hypot(...d));
+  directions.forEach((d, j) => {
+    shBasis(unit(d)).forEach((b, k) => (values[4 * (texels.basis + 9 * j + k)] = b));
+    values.splice(4 * (texels.irradiance + j), 3, ...shIrradiance(coefficients, unit(d)));
+  });
+  values[4 * texels.skyView] = skyView;
+  values[4 * texels.aerial] = aerial;
+  return values;
+}
+
+test('maths mismatch: answers that agree with sky/light.js come out near zero', () => {
+  const m = mathsMismatch(mathsAnswers());
+  assert.ok(m.basis < 1e-12 && m.irradiance < 1e-12, JSON.stringify(m));
+  assert.equal(m.skyView, 0.001);
+  assert.equal(m.aerial, 0.002);
+});
+
+test('maths mismatch: a wrong basis value or irradiance shows', () => {
+  const values = mathsAnswers();
+  values[4 * (texels.basis + 2)] += 0.3;
+  values[4 * texels.irradiance + 1] *= 1.01;
+  const m = mathsMismatch(values);
+  assert.ok(Math.abs(m.basis - 0.3) < 1e-9);
+  assert.ok(m.irradiance > 0.005, `irradiance ${m.irradiance}`);
 });

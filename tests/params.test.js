@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parseParams } from '../src/core/params.js';
+import { sunPath } from '../src/sky/sun.js';
 
 test('parses every supported param', () => {
   const search = '?view=beach&time=17.5&t=12.5&seed=abc&capture=1&quality=low&fixture=shimmer&tonemap=aces&exposure=1.5&stats=1&bench=1&benchSeconds=0.5&depth=fallback';
@@ -58,11 +59,17 @@ test('seed stays a string', () => {
   assert.equal(parseParams('?seed=007').seed, '007');
 });
 
-test('time accepts 0 to 24 inclusive', () => {
-  assert.equal(parseParams('?time=0').time, 0);
-  assert.equal(parseParams('?time=24').time, 24);
-  for (const bad of ['24.01', '-0.5', 'noon', 'Infinity', 'NaN']) {
-    assert.throws(() => parseParams(`?time=${bad}`), /time=.* must be a number in \[0, 24\]/, `time=${bad}`);
+test('time accepts daylight hours and named times, as hours', () => {
+  const { start, end } = sunPath.daylight;
+  assert.equal(parseParams(`?time=${start}`).time, start);
+  assert.equal(parseParams(`?time=${end}`).time, end);
+  assert.equal(parseParams('?time=13.5').time, 13.5);
+  for (const [name, hours] of Object.entries(sunPath.times)) assert.equal(parseParams(`?time=${name}`).time, hours, name);
+});
+
+test('time refuses night and anything that is not a time', () => {
+  for (const bad of ['0', '24', '3', '22.5', '-0.5', 'noon', 'Sunset', 'Infinity', 'NaN', '1e9']) {
+    assert.throws(() => parseParams(`?time=${bad}`), /time=.* must be a time of day in daylight, .*golden-hour/, `time=${bad}`);
   }
 });
 

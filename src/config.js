@@ -5,7 +5,8 @@
 // from ctx.quality, so a new system adds its per-preset knobs here.
 export const quality = {
   default: 'high',
-  // msaa: samples per pixel in the HDR target (post/frame.js); 0 turns it off.
+  // msaa: samples per pixel in the HDR target (post/frame.js), at least 2: the
+  // after-opaque pass reads the resolved target while it draws into the samples.
   presets: {
     low: { renderScale: 0.67, maxPixelRatio: 1, msaa: 2 },
     medium: { renderScale: 0.85, maxPixelRatio: 1.5, msaa: 4 },
@@ -27,11 +28,79 @@ export const camera = {
 // The output pass (post/output.frag). `tonemap` picks one of `tonemaps`
 // (?tonemap=<name> overrides it); the numbers are the shader's TONEMAP define.
 export const post = {
-  exposure: 1, // the scene materials' pre-exposure (chunks/scene-output.glsl); ?exposure= overrides it
+  exposure: 1, // a factor on the exposure, which follows the light (sky/light.js); ?exposure= overrides it
   // The user's pick (PLAN.md, Decisions): keeps authored colours. agx-punchy's extra
   // saturation pushed strong cyans out of gamut (red clipped to 0, visible contours).
   tonemap: 'neutral',
   tonemaps: { neutral: 1, agx: 2, 'agx-punchy': 3, aces: 4 },
+};
+
+// The sky (sky/). The sun's path is solar geometry at an art-directed latitude
+// and season (sky/sun.js): the noon sun stands 90 - |latitude - declination|
+// degrees up, towards the north for a southern latitude, which is to the right
+// of a viewer facing the sunset.
+export const sky = {
+  sun: {
+    latitude: -27, // degrees: 63° at noon, high enough for a tropical noon, low enough to model shapes
+    declination: 0, // degrees: equinox, so daylight runs from 6:00 to 18:00
+    sunsetYaw: 165, // the view yaw (views.js) that looks into the setting sun: the beach faces it
+  },
+  goldenHourElevation: 5, // degrees, the sun's height at the named time golden-hour
+  // The haze thins as the sun sinks (sky/light.js hazeAmount): its share with the
+  // sun on the horizon, and the sun's height (degrees) from which it is all there.
+  haze: { low: 0.3, fullAbove: 25 },
+  // The sun's disk once exposed is held softly under this (sky/sky.frag), so a
+  // low sun keeps its colour instead of clipping to white.
+  sunCeiling: 8,
+  limbDarkening: 0.6, // the disk's edge at 40% of its centre's brightness
+  // The aureole around the sun (sky/sky.frag): the sharp forward peak of the haze's
+  // scattering, which makes the sun glow a few degrees wide, as the eye sees it.
+  aureole: { g: 0.98, strength: 0.012 },
+  stepMinutes: 10, // the dev time control (sky/time-control.js): , and . step the time by this much
+  // The atmosphere (sky/atmosphere.glsl). Lengths in km, scattering and
+  // absorption per km at sea level; Earth's values after Hillaire 2020, plus a
+  // humid marine haze layer that softens the horizon and warms the low sun.
+  atmosphere: {
+    groundRadius: 6360,
+    topRadius: 6460,
+    rayleighScattering: [5.802e-3, 13.558e-3, 33.1e-3],
+    rayleighHeight: 8,
+    mieScattering: 3.996e-3,
+    mieAbsorption: 0.444e-3,
+    mieHeight: 1.2,
+    // Haze: dense near the sea and thin above, so it softens the horizon and
+    // reddens the low sun without greying the sky overhead.
+    hazeScattering: 0.2, // and absorption: at 550 nm
+    hazeAbsorption: 0.002,
+    hazeAngstrom: 1, // how much more it scatters blue than red: the horizon pale blue, not grey
+    hazeHeight: 0.15,
+    mieG: 0.8,
+    hazeG: 0.2, // scatters more evenly than the aerosols above, so seen side-on it reads bright, not grey
+    ozoneAbsorption: [0.65e-3, 1.881e-3, 0.085e-3],
+    groundAlbedo: [0.08, 0.1, 0.12], // mostly sea, seen from the sky
+    sunIlluminance: [1, 1, 1], // linear sRGB, above the atmosphere; the unit of all light
+    sunRadius: 0.2678, // degrees, the disk's angular radius
+    wavelengths: [680, 550, 440], // nm: the red, green and blue the scattering above is given for
+  },
+  // Lookup table sizes (sky/atmosphere.js).
+  tables: { transmittance: [256, 64], multiscatter: [32, 32], skyView: [192, 108], aerial: [32, 32, 32] },
+  // Ray-march steps and sample counts of the tables (sky/*.frag). They run only
+  // when the time or the camera's height changes, never per frame.
+  samples: {
+    transmittance: 40,
+    multiscatter: { directions: 8, steps: 20 }, // directions per side of a grid over the sphere
+    skyView: 30,
+    aerial: 16,
+    probe: { azimuths: 32, rings: 16, steps: 16 },
+  },
+  aerialRange: 64, // km: the aerial-perspective table reaches past the horizon from any view
+  // The camera height the sky is drawn for moves in these steps (metres): the sky
+  // follows the camera's height, but no faster than this.
+  heightStep: 1,
+  // Exposure follows the light: key / E^compensation, where E is the illuminance
+  // (sky/light.js) in units of the sun above the atmosphere. 1 would make every
+  // hour as bright as noon, 0 leave sunset dark.
+  exposure: { key: 4.1, compensation: 0.5 },
 };
 
 // The frame readout (core/readout.js) and the benchmark (core/benchmark.js, ?bench=1).
@@ -58,7 +127,7 @@ export const movement = {
 export const defaults = {
   view: 'beach',
   seed: '1',
-  timeOfDay: 10, // hours, 0–24
+  timeOfDay: 10, // hours of daylight, or a named time (sky/sun.js)
   t: 0, // simulation start time, seconds
 };
 
@@ -81,6 +150,21 @@ export const capture = {
   // edge: levels off the local mean that count as a real edge (drawn flat grey);
   // limitPercent: the share of a view, or of the gradient fixture, in bands (tools/image.js bandedShare).
   banding: { radius: 6, gain: 32, edge: 6, limitPercent: 1 },
+  // The blend fixture, in 8-bit levels: how far a translucent card may land from its
+  // reference mixed in linear light (post/frame.js; blending in the compressed HDR
+  // target misses by 68, linear blending by 0.2), and how far the cards must differ
+  // from the light behind them for the check to measure anything.
+  blend: { limitLevels: 2, minContrastLevels: 20 },
+  // The maths fixture (src/fixtures/maths.js): how far the GPU's SH values may land
+  // from sky/light.js's (relative), and the tables' mappings from inverting (texels).
+  // A wrong formula misses by whole texels; the GPUs' approximate sin and asin cost
+  // up to 0.08 near the zenith on SwiftShader, and cost 0.28 at the horizon before
+  // the mappings measured angles from it (chunks/angles.glsl).
+  maths: { valueTolerance: 1e-4, texelTolerance: 0.1 },
+  // The light fixture (src/fixtures/light.js), in 8-bit levels on a white sphere's
+  // lit side: how far its channels may spread at midday (neutral), and how much
+  // redder than blue it must be at golden hour (warm).
+  light: { neutralLevels: 10, warmLevels: 80 },
 };
 
 // Frame cost limits per quality preset. tools/screenshot.js measures every view
@@ -102,4 +186,4 @@ export const build = {
   sizeBudgetBytes: 3 * 1024 * 1024, // raw size of dist/index.html; warn above, fail above 2x
 };
 
-export const config = { quality, camera, post, readout, bench, movement, defaults, capture, budget, build };
+export const config = { quality, camera, post, sky, readout, bench, movement, defaults, capture, budget, build };
