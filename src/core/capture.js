@@ -1,6 +1,6 @@
-// Capture mode (?capture=1), driven by tools/screenshot.js. Renders a fixed
-// number of frames at a frozen time, then signals the tool through
-// window.__CAPTURE_READY__ (with __CAPTURE_INFO__) or window.__CAPTURE_ERROR__.
+// Capture mode (?capture=1), driven by tools/screenshot.js. Checks the shaders,
+// renders a fixed number of frames at a frozen time, then signals the tool
+// through window.__CAPTURE_READY__ (with __CAPTURE_INFO__) or window.__CAPTURE_ERROR__.
 //
 // Once ready, window.__CAPTURE__ lets the tool take many frames per page load:
 //   render({ t, turn })          renders the view again at another time and/or
@@ -19,6 +19,7 @@
 //   teardown()                   tears it all down for good and returns resources()
 import { applyView } from './camera.js';
 import { measureOverdraw } from './overdraw.js';
+import { missingSceneOutput } from '../post/scene-output.js';
 
 // `app` is main.js's handle on the systems: { systems, setQuality(name), teardown() }.
 export async function runCapture(ctx, display, app, frame) {
@@ -26,11 +27,8 @@ export async function runCapture(ctx, display, app, frame) {
   const start = ctx.clock.elapsed;
   await Promise.all(app.systems.map((s) => s.ready)); // optional async setup per system
   ctx.frame.compile();
+  checkShaders(ctx);
   await warmUp(frame, config.capture.warmupFrames);
-  const broken = (renderer.info.programs ?? []).filter((p) => p.diagnostics && !p.diagnostics.runnable);
-  if (broken.length) {
-    throw new Error(`Shader compile failed: ${broken.map((p) => p.name).join(', ')}`);
-  }
   await nextFrame(); // let the final frame reach the screen
 
   const gl = renderer.getContext();
@@ -85,6 +83,7 @@ export async function runCapture(ctx, display, app, frame) {
       app.setQuality(quality);
       await Promise.all(app.systems.map((s) => s.ready));
       ctx.frame.compile();
+      checkShaders(ctx);
       window.__CAPTURE__.render();
     },
     resources() {
@@ -97,6 +96,21 @@ export async function runCapture(ctx, display, app, frame) {
     },
   };
   window.__CAPTURE_READY__ = true;
+}
+
+// Every scene material ends with sceneOutput() (CLAUDE.md §8), and every
+// shader program compiled. three.js checks a program only when something first
+// draws with it, so a broken shader on something out of sight would pass:
+// getUniforms() runs that check now, for every program compile() built.
+function checkShaders({ renderer, scene }) {
+  const problems = [];
+  const missing = missingSceneOutput(scene);
+  if (missing.length) problems.push(`scene materials without sceneOutput(): ${missing.join(', ')}`);
+  const programs = renderer.info.programs ?? [];
+  for (const program of programs) program.getUniforms();
+  const broken = programs.filter((p) => p.diagnostics && !p.diagnostics.runnable);
+  if (broken.length) problems.push(`shader compile failed: ${broken.map((p) => p.name).join(', ')}`);
+  if (problems.length) throw new Error(problems.join('; '));
 }
 
 async function warmUp(frame, count) {

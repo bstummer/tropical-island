@@ -67,10 +67,10 @@ export const capture = {
   // for every extra frame the tool asks for. Raise it only for an effect that
   // builds up over frames: each frame costs ~0.4 s on SwiftShader.
   warmupFrames: 1,
-  // tools/screenshot.js warns when one view's capture, measurements included,
-  // takes longer. Captures must stay quick on SwiftShader, the one renderer
-  // every machine has.
-  timeBudgetMs: 15000,
+  // tools/screenshot.js warns when an extra frame of a view (rendering and
+  // reading it back) takes longer. Captures must stay quick on SwiftShader, the
+  // one renderer every machine has, and each view renders about ten frames.
+  frameBudgetMs: 1000,
   // What the screenshot tool measures per view (tools/measure.js).
   motion: { frames: 6, stepSeconds: 0.5, threshold: 4 }, // strip at t, t + 0.5 s, ...; threshold in 8-bit levels
   // Frames panned by stepPixels at the centre; see shimmer() in tools/image.js.
@@ -79,7 +79,7 @@ export const capture = {
   shimmer: { frames: 5, stepPixels: 0.25, threshold: 24, ratio: 0.5, fullRatio: 0.7, edge: 48, limitPercent: 0.5, edgeLimitPercent: 5 },
   crop: { width: 300, height: 168, zoom: 4 }, // source pixels, shown at zoom x
   // edge: levels off the local mean that count as a real edge (drawn flat grey);
-  // limitPercent: the gradient fixture's share in bands (tools/image.js bandedShare).
+  // limitPercent: the share of a view, or of the gradient fixture, in bands (tools/image.js bandedShare).
   banding: { radius: 6, gain: 32, edge: 6, limitPercent: 1 },
 };
 

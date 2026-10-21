@@ -101,30 +101,37 @@ export function bandingView(image, { radius = 6, gain = 32, edge = 6 } = {}) {
 }
 
 // Share of the image (percent) in visible bands: runs of at least `minRun`
-// identical pixels along a row whose neighbouring run differs by 1 to
-// `maxStep` levels, the staircase of an undithered gradient. Dither breaks such
-// runs up; flat areas and real edges have no stepped neighbour.
+// identical pixels along a row or a column whose neighbouring run differs by 1
+// to `maxStep` levels, the staircase of an undithered gradient (a sky's runs
+// down the columns). Dither breaks such runs up; flat areas and real edges have
+// no stepped neighbour.
 export function bandedShare({ width, height, data }, { minRun = 16, maxStep = 3 } = {}) {
-  let banded = 0;
-  for (let y = 0; y < height; y++) {
-    const runs = [];
-    const row = y * width * 4;
-    for (let x = 0, start = 0; x <= width; x++) {
-      const i = row + 4 * x;
-      const j = row + 4 * start;
-      if (x < width && data[i] === data[j] && data[i + 1] === data[j + 1] && data[i + 2] === data[j + 2]) continue;
-      runs.push({ length: x - start, at: j });
-      start = x;
+  const banded = new Uint8Array(width * height);
+  // Marks the banded runs along `lines` lines of `length` pixels; pixel(line, k) is the pixel index.
+  const scan = (lines, length, pixel) => {
+    for (let line = 0; line < lines; line++) {
+      const runs = [];
+      for (let k = 0, start = 0; k <= length; k++) {
+        const i = 4 * pixel(line, k);
+        const j = 4 * pixel(line, start);
+        if (k < length && data[i] === data[j] && data[i + 1] === data[j + 1] && data[i + 2] === data[j + 2]) continue;
+        runs.push({ start, length: k - start, at: j });
+        start = k;
+      }
+      const stepped = (a, b) => {
+        if (!b || a.length < minRun || b.length < minRun) return false;
+        const d = Math.max(...[0, 1, 2].map((c) => Math.abs(data[a.at + c] - data[b.at + c])));
+        return d >= 1 && d <= maxStep;
+      };
+      runs.forEach((run, n) => {
+        if (!stepped(run, runs[n - 1]) && !stepped(run, runs[n + 1])) return;
+        for (let k = run.start; k < run.start + run.length; k++) banded[pixel(line, k)] = 1;
+      });
     }
-    const stepped = (a, b) => {
-      const d = Math.max(...[0, 1, 2].map((c) => Math.abs(data[a.at + c] - data[b.at + c])));
-      return a.length >= minRun && b.length >= minRun && d >= 1 && d <= maxStep;
-    };
-    runs.forEach((run, k) => {
-      if ((k > 0 && stepped(run, runs[k - 1])) || (k + 1 < runs.length && stepped(run, runs[k + 1]))) banded += run.length;
-    });
-  }
-  return (100 * banded) / (width * height);
+  };
+  scan(height, width, (y, x) => y * width + x);
+  scan(width, height, (x, y) => y * width + x);
+  return (100 * banded.reduce((sum, b) => sum + b, 0)) / (width * height);
 }
 
 // How a still scene's image moves when the camera turns by `step` pixels'

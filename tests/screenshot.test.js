@@ -33,13 +33,13 @@ test('other files are still requests', () => {
 // ---------------------------------------------------------------- limits
 
 test('only values above their limit are reported', () => {
-  const warnings = checkLimits({ captureMs: 15001, drawCalls: 10, triangles: 5 }, { captureMs: 15000, drawCalls: 10 });
-  assert.deepEqual(warnings, [{ metric: 'captureMs', value: 15001, limit: 15000 }]);
+  const warnings = checkLimits({ frameMs: 1001, drawCalls: 10, triangles: 5 }, { frameMs: 1000, drawCalls: 10 });
+  assert.deepEqual(warnings, [{ metric: 'frameMs', value: 1001, limit: 1000 }]);
 });
 
 test('missing or non-numeric values and limits never warn', () => {
-  assert.deepEqual(checkLimits({ captureMs: null, gpuMs: NaN }, { captureMs: 1, gpuMs: 1 }), []);
-  assert.deepEqual(checkLimits({ captureMs: 99 }, {}), []);
+  assert.deepEqual(checkLimits({ frameMs: null, gpuMs: NaN }, { frameMs: 1, gpuMs: 1 }), []);
+  assert.deepEqual(checkLimits({ frameMs: 99 }, {}), []);
 });
 
 test('compare lists the numbers that changed, as shown', () => {
@@ -72,7 +72,8 @@ test('a benchmark result must cover every view and say where it ran', () => {
 });
 
 test('warnings read as sentences with units', () => {
-  assert.equal(describeWarning({ metric: 'captureMs', value: 16240, limit: 15000 }), 'capture time 16.2 s is over the limit of 15.0 s');
+  assert.equal(describeWarning({ metric: 'frameMs', value: 1240.4, limit: 1000 }), 'capture time per frame 1240 ms is over the limit of 1000 ms');
+  assert.equal(describeWarning({ metric: 'bandingPercent', value: 2.5, limit: 1 }), 'banding 2.50% is over the limit of 1.00%');
   assert.equal(describeWarning({ metric: 'unknown', value: 3, limit: 2 }), 'unknown 3 is over the limit of 2');
 });
 
@@ -150,6 +151,11 @@ test('options parse in both --key value and --key=value form', () => {
     label: 'before',
     gl: 'swiftshader',
   });
+});
+
+test('--checks is a flag without a value', () => {
+  assert.deepEqual(parseArgs(['--checks', '--gl', 'swiftshader']), { checks: true, gl: 'swiftshader' });
+  assert.throws(() => parseArgs(['--checks=yes']), /--checks takes no value/);
 });
 
 test('--compare takes two labels', () => {

@@ -21,6 +21,7 @@ import * as depthFixture from './fixtures/depth.js';
 import * as tonecardFixture from './fixtures/tonecard.js';
 import * as leakyFixture from './fixtures/leaky.js';
 import * as gradientFixture from './fixtures/gradient.js';
+import * as brokenFixture from './fixtures/broken.js';
 
 // Updated in this order every frame. Each module exports create(ctx) -> { update(dt, t), dispose(), ready? }
 // where the optional `ready` promise is awaited before a capture starts.
@@ -37,6 +38,7 @@ const FIXTURES = {
   tonecard: [tonecardFixture],
   leaky: [leakyFixture],
   gradient: [gradientFixture],
+  broken: [brokenFixture],
 };
 
 let captureMode = false;
@@ -58,8 +60,14 @@ function boot() {
   const view = findView(params.view ?? config.defaults.view);
 
   const canvas = document.getElementById('view');
-  const display = createRenderer({ canvas, quality, capture: params.capture });
+  const display = createRenderer({ canvas, quality, capture: params.capture, fallbackDepth: params.depth === 'fallback' });
   const { renderer } = display;
+  // Restoring a lost context comes later (PLAN.md Stage 18). Until then, stop
+  // and say so: a capture must not pass on the blank frames that follow.
+  canvas.addEventListener('webglcontextlost', () => {
+    renderer.setAnimationLoop(null);
+    fail(new Error('The WebGL context was lost (the GPU was reset or ran out of memory).'), 'Stopped.');
+  });
 
   const scene = new THREE.Scene();
   const near = renderer.capabilities.reversedDepthBuffer ? config.camera.near : config.camera.nearFallback;

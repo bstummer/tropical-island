@@ -34,7 +34,7 @@ export function create(ctx) {
     applyView(camera, view);
     camera.fov = view.fov ?? config.camera.fov;
     camera.updateProjectionMatrix();
-    ctx.timeOfDay = view.timeOfDay ?? config.defaults.timeOfDay;
+    ctx.timeOfDay = params.time ?? view.timeOfDay ?? config.defaults.timeOfDay;
     current = { view: view.name, frameMs: [], gpuMs: [], counts: null };
     measuring = false;
     elapsed = frames = 0;

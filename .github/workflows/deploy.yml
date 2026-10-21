@@ -2,28 +2,34 @@
 #   - deploy dist/index.html to GitHub Pages, and
 #   - update the rolling "latest" release, whose asset is always the newest build:
 #     https://github.com/bstummer/tropical-island/releases/latest/download/tropical-island.html
+# On a push to any other branch (a session's, say), only verify.
 #
 # One-time setup: Settings -> Pages -> Build and deployment -> Source: "GitHub Actions".
 # The deploy job fails until it is set (see its first step).
 #
 # Only the build job installs npm packages, and it gets a read-only token. The
 # jobs that publish (Pages, release) run no third-party code from node_modules.
-# They run for main only: "Run workflow" on another branch just verifies it.
+# They run for main only: on another branch, a push or "Run workflow" just verifies it.
 name: Build and deploy
 
 on:
   push:
-    branches: [main]
+    branches: ['**']
   workflow_dispatch:
 
-# One deploy at a time. A newer push waits rather than cancelling one halfway through.
+# One run per branch at a time. On main a newer push waits rather than cancelling
+# a deploy halfway through; elsewhere it replaces the run that is no longer needed.
 concurrency:
-  group: deploy
-  cancel-in-progress: false
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    # Pinned, not ubuntu-latest: Playwright installs system packages by Ubuntu release, so a new
+    # runner image could break verify, and with it publishing, unannounced. Move up on purpose.
+    # (The browser doesn't depend on it: every release gets the same Chromium build.)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     permissions:
       contents: read
     steps:
@@ -66,6 +72,7 @@ jobs:
     needs: build
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       pages: write
       id-token: write
@@ -95,6 +102,7 @@ jobs:
     needs: build
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: write
     steps:

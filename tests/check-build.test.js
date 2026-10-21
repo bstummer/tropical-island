@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSyn
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { checkBuild, checkHtml, checkOutputFiles, checkSize, checkSources, HTML_RULES } from '../tools/check-build.js';
+import { blankComments, checkBuild, checkHtml, checkOutputFiles, checkSize, checkSources, HTML_RULES } from '../tools/check-build.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const fixtures = join(here, 'fixtures', 'check-build');
@@ -136,6 +136,24 @@ test('source lint ignores comments and non-JS files', (t) => {
     'shader.glsl': 'float r = Math.random();',
   });
   assert.deepEqual(checkSources(dir), []);
+});
+
+test('source lint sees code after comment markers inside strings and regexes', (t) => {
+  // A naive stripper reads each marker as the start of a comment: up to the next `*/`, or the line's end.
+  const dir = tempDir(t, {
+    'glob.js': "const plants = import.meta.glob('./plants/*.js');\nexport const a = Math.random();\n/* the end */\n",
+    'url.js': 'const link = "see //example"; export const b = Date.now();\n',
+    'regex.js': 'const slashes = /a\\/*b/;\nexport const c = performance.now(); // */\n',
+    'template.js': 'const path = `src/*`;\nexport const d = new THREE.Clock();\n/* the end */\n',
+  });
+  assert.deepEqual(ids(checkSources(dir)), ['date', 'math-random', 'performance-now', 'three-clock']);
+});
+
+test('blankComments keeps offsets and leaves divisions alone', () => {
+  const code = 'const a = b / 2; // half\nconst c = (d) / e /* ratio */ + 1;\n';
+  const blanked = blankComments(code);
+  assert.equal(blanked.length, code.length);
+  assert.equal(blanked, 'const a = b / 2;        \nconst c = (d) / e             + 1;\n');
 });
 
 test('the real src/ passes the source lint', () => {

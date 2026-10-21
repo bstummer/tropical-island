@@ -44,18 +44,19 @@ When choosing between approaches, pick the one that looks better in the screensh
 | `npm test` | Unit and invariant tests: `node --test` over `tests/*.test.js` (Node's built-in runner, no test deps). |
 | `npm run build` | Production build to `dist/index.html` (single file, no sourcemaps). The build fails if it would emit anything other than `index.html`. |
 | `npm run check` | `tools/check-build.js`: exactly one file in dist, no `<script src>`/`<link href>`, no URLs except XML namespaces, no network APIs or `import()`, size vs budget (warn > 3 MB raw, fail > 6 MB), plus the src/ determinism lint. |
-| `npm run shot -- [args]` | Builds, then `tools/screenshot.js`: one PNG per view + `contact-sheet.png` + `info.json` in `screenshots/<label>/`, plus each view's measurements (banding view, zoomed crops, shimmer, motion strip, overdraw) in `screenshots/<label>/<view>/`, with the numbers and over-limit warnings in `info.json`. It checks that the shimmer and cost measurements still catch test scenes built to fail them, that the frame keeps its promises (smooth dark edges against a bright sky, depth precision from a hilltop, dithered gradients without bands), and that a quality change (default preset to low and back) leaks no GPU resources and brings back the same picture. Then it runs the game for 30 frames in player mode (no `?capture`: real-time loop, input, start screen, frame readout), which captures never exercise, and a short benchmark run (`screenshots/<label>/benchmark.txt`). |
-| `npm run verify` | test + build + check + shot. **The definition-of-done command.** |
+| `npm run shot -- [args]` | Builds, then `tools/screenshot.js`: one PNG per view + `contact-sheet.png` + `info.json` in `screenshots/<label>/`, plus each view's measurements (banding view, zoomed crops, shimmer, motion strip, overdraw) in `screenshots/<label>/<view>/`, with the numbers and over-limit warnings in `info.json`. A reused label replaces the old capture. With `--checks` (`verify` passes it) the tool also checks itself and the game: that the shimmer and cost measurements still catch test scenes built to fail them, that the frame keeps its promises (smooth dark edges against a bright sky, depth precision from a hilltop, dithered gradients without bands), that errors nothing shows on screen (a broken shader out of sight, a bad WebGL call, a lost context) fail a capture, that captures are reproducible, and that a quality change (default preset to low and back) leaks no GPU resources and brings back the same picture. Then it runs the game for 30 frames in player mode (no `?capture`: real-time loop, input, start screen, frame readout), which captures never exercise, and a short benchmark run (`screenshots/<label>/benchmark.txt`). |
+| `npm run verify` | test + build + check + shot with `--checks`. **The definition-of-done command.** |
 | `node tools/screenshot.js --compare A B` | Before/after sheet `screenshots/compare/A_vs_B.png`: A, B and a diff column per view, with the % of changed pixels. No build needed. |
 
 Screenshot args: `--views beach,shoreline` (default all), `--label before` (default `<git hash>[-dirty]-<timestamp>`),
 `--size 1600x900`, `--t 12.5` (sim seconds), `--time 17.5` (hours, overrides each view's time),
 `--seed 1`, `--quality high`, `--tonemap agx`, `--exposure 1.5`, `--fixture tonecard`, `--gl auto|hardware|swiftshader` (default
-auto: hardware GL, falling back to SwiftShader).
+auto: hardware GL, falling back to SwiftShader), `--checks`.
 
 URL params (dev server or `dist/index.html`): `?view=beach&time=17.5&t=12.5&seed=1&quality=low&capture=1`,
 `tonemap=<name>` and `exposure=<x>` (a curve from `config.post.tonemaps` and the scene exposure, to compare looks), and `fixture=<name>` (a test scene
-from `src/fixtures/` instead of the island; `tonecard` is an HDR test card for judging the look). In the game,
+from `src/fixtures/` instead of the island; `tonecard` is an HDR test card for judging the look), and `depth=fallback` (the depth set-up of
+browsers without EXT_clip_control, see section 8). In the game,
 `stats=1` shows the frame readout (F3 toggles it) and `bench=1` runs the benchmark: it visits every view and ends
 with a summary of frame and GPU times to paste into a session (`benchSeconds=<s>` sets the time per view).
 
@@ -67,13 +68,14 @@ Cloud sessions run in a Linux container with no GPU and no display, so screensho
 
 - Run `npm ci`, then once per machine `npx playwright install-deps chromium` (apt, needs root). Without the
   system libraries, the screenshot tool fails with "missing system library ..." and prints that command.
-- `--gl auto` finds no GPU and falls back to SwiftShader (about 8 s per view at 1600×900 today, measurements included).
+- `--gl auto` finds no GPU and falls back to SwiftShader (a few seconds per view at 1600×900, measurements included; the tool
+  warns when a frame gets slow).
 - SwiftShader captures from here compare directly with CI and local `--gl swiftshader` captures (see section 4).
 
 ### Deploying
 
-`.github/workflows/deploy.yml` runs on every push to `main` (and manually via "Run workflow", which on
-any other branch runs only the build job):
+`.github/workflows/deploy.yml` runs on every push. On `main` it runs all three jobs; on any other branch (and for a
+manual "Run workflow" there) it runs only the build job:
 
 1. **build** (read-only token): `npm ci`, then `npm run verify -- --gl swiftshader` (runners have no GPU).
    It uploads the screenshots as a workflow artifact for review, even when the run fails.
@@ -142,7 +144,8 @@ How tests are written:
 
 - `node:test` and `node:assert/strict` only. No test dependencies; ask before adding one.
 - Files are `tests/<module>.test.js`. `npm test` runs `node --test` with Node's default discovery
-  (`node --test tests/` breaks on newer Node versions), so don't name non-test files `*.test.js` or `test-*.js`.
+  (`node --test tests/` breaks on newer Node versions), so nothing outside `tests/` may have a name it runs as a test
+  (`*.test.js`, `*-test.js`, `*_test.js`, `test-*.js`, `test.js`, or any file in a `test/` folder). `tests/layout.test.js` checks this.
 - Tests import from `src/` directly. Keep logic **pure and Node-importable** so they can: no shader
   imports, no DOM access at import time. Put the maths in its own module (e.g. `world/island.js`) and keep
   the three.js and shader wiring in the system that uses it.
@@ -174,7 +177,8 @@ src/
   fixtures/           test scenes for the screenshot tool's checks and the tonecard (?fixture=); not part of the island
   world/placeholder*  TEMPORARY stand-in world (sky dome, sand mound, flat water). Delete once replaced.
   shaders/chunks/     shared GLSL: noise.glsl, scene-output.glsl (how every scene material ends); wind and lighting later
-tools/                screenshot.js, measure.js, image.js, png.js, check-build.js (Node only; pure helpers exported for tests)
+tools/                screenshot.js, measure.js, analyse.js (its worker thread), image.js, png.js, check-build.js (Node only; pure
+                      helpers exported for tests)
 tests/                node:test suites + fixtures/check-build/{pass,fail}/*.html
 ```
 
@@ -216,16 +220,17 @@ optionally `ready` (a Promise, awaited before a capture starts, for async setup)
 - `dispose()` removes everything the system added and disposes GPU resources. A quality change disposes the
   frame and every world system and creates them again (`setQuality` in `main.js`), so a system can't assume it
   lives forever, and reads `ctx.frame` and `ctx.quality` afresh in `create()`. The screenshot tool's teardown
-  check fails on anything left behind.
+  check fails on GPU objects left behind, and on scene objects, fog, background or environment left in the scene.
 - UI must stay hidden when `ctx.params.capture` is true.
 
 **Capture contract** (`?capture=1`, used by tools/screenshot.js): no UI or pointer lock. The camera goes to
-the requested view and the clock is frozen at `t`. `core/capture.js` awaits `ready`, compiles, renders
-`config.capture.warmupFrames` frames, checks every shader program compiled, then sets
+the requested view and the clock is frozen at `t`. `core/capture.js` awaits `ready`, compiles, checks that every
+shader program compiled (also those nothing draws yet) and that every scene material ends with `sceneOutput()`,
+renders `config.capture.warmupFrames` frames, then sets
 `window.__CAPTURE_READY__ = true` (and `__CAPTURE_INFO__`). Any failure sets `window.__CAPTURE_ERROR__`.
 Once ready, `window.__CAPTURE__` renders more frames in the same page (another `t`, the camera nudged) and
 reports GPU counts and overdraw. A frame rendered at another `t` must match a fresh load at that `t`; the
-tool checks this. Don't break this. If a new system does async work, put it behind `ready`.
+tool checks this (with `--checks`). Don't break this. If a new system does async work, put it behind `ready`.
 
 ## 8. Rendering conventions
 
@@ -237,7 +242,8 @@ tool checks this. Don't break this. If a new system does async work, put it behi
 - **Every scene material ends with `gl_FragColor = sceneOutput(radiance, alpha);`**
   (`chunks/scene-output.glsl`): it applies the exposure and compresses the colour so MSAA averages edges
   close to how they look after tonemapping. Spread `ctx.frame.uniforms` into the material's uniforms.
-  Built-in three.js materials go through `withSceneOutput()` (`post/scene-output.js`). Scene materials
+  Built-in three.js materials go through `withSceneOutput()` (`post/scene-output.js`), once, after any
+  `onBeforeCompile` of their own; capture mode fails on a scene material without `sceneOutput()`. Scene materials
   never include `<colorspace_fragment>` or dithering. `scene.background` and the clear colour skip
   `sceneOutput()`, so the sky is a scene material. Blending happens in the compressed space: right where
   alpha means coverage (edges, foam masks) or both colours are well below 1, wrong for translucent layers
@@ -248,8 +254,9 @@ tool checks this. Don't break this. If a new system does async work, put it behi
   shader by its pixel footprint (`fwidth`). Geometry thinner than about two pixels crawls even with MSAA,
   so each system's level of detail keeps it out.
 - **Depth is reversed 32-bit float** (EXT_clip_control), so precision is about the same fraction of the
-  distance everywhere: `camera.near` is 2 cm and `far` 100 km (`config.camera`). Without the extension,
-  near moves out to 0.5 m and distant shallow water can z-fight.
+  distance everywhere: `camera.near` is 2 cm and `far` 100 km (`config.camera`). Without the extension
+  (Firefox), near moves out to 0.5 m and distant shallow water can z-fight; `?depth=fallback` renders that way
+  in any browser, and `verify` runs the depth fixture so.
 - Avoid huge triangles. Tessellate large planes (water, ground skirts): rasterizers clip and interpolate
   giant triangles differently, which moved the shoreline by metres between GPUs.
 
@@ -278,7 +285,7 @@ water detail, post effects) reads its knobs from `ctx.quality`.
 ## 11. Definition of done
 
 - `npm run verify` passes: tests, build, check, and screenshots plus the player-mode run with zero
-  console, page or shader errors.
+  console, page, shader or WebGL errors.
 - New or changed pure logic has tests, and new world logic has invariant tests (section 5).
 - The before/after `--compare` contact sheet has been opened and reviewed, and you can say what changed.
 - New areas have views in `views.js`.

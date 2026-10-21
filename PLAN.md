@@ -183,7 +183,12 @@ made untrue in CLAUDE.md. The tools come first, so the pipeline change in 1.4 is
   haze on distant land and sea.
 - One shared lighting model used by every material: sunlight, sky ambient, and aerial perspective (fog).
   Later materials plug into it rather than inventing their own. The light state lives in one place that
-  every material reads, and this stage decides how Stage 5's shadows will plug in.
+  every material reads and that survives a quality change, and this stage decides how Stage 5's shadows
+  will plug in.
+- Settle the frame's structure for what comes after the sky, while little depends on it yet. Water, foam
+  and spray need the opaque scene's colour and depth behind them; translucent layers over bright ones
+  must blend as they would in linear light (today they don't, CLAUDE.md §8); bloom and god rays need a
+  chain of post effects before the output. Prove the blending with a fixture.
 - The sun's path is art-directed. It sets over the sea straight ahead of the beach, which Stage 3 lays out
   to match (see Decisions), and midday has to look good too.
 - `sky/` owns time of day. It doesn't pass on its own and covers daylight only (see Decisions). This stage
@@ -236,8 +241,12 @@ made untrue in CLAUDE.md. The tools come first, so the pipeline change in 1.4 is
 - Shadow quality scales with the quality presets.
 - Plant shadows come with the plants in Stage 8. Build the shadow system so leaves can later cast
   leaf-shaped shadows.
+- Known pitfalls in three r186: its PCF shadows add the bias without flipping it for reversed depth, so
+  the usual negative bias causes acne; shadow passes ignore `onBeforeCompile`, so anything the vertex
+  shader moves (leaves, waves) needs its own depth material; the SunLight addon has only 2 cascades.
 - **Done when** low-sun captures show long, soft shadows from the rocks and terrain, with no acne, no
-  detached shadows and no hard edges, and the camera-offset captures show no shimmer.
+  detached shadows and no hard edges, and the camera-offset captures show no shimmer (the tool turns the
+  camera but can't move it yet).
 
 ### 6. Ocean
 
@@ -255,7 +264,8 @@ made untrue in CLAUDE.md. The tools come first, so the pipeline change in 1.4 is
   break.
 - Expect several sessions. Split this stage into sub-steps.
 - **Done when** the low beach view is a wallpaper, its motion strip shows waves running up and draining
-  back naturally, and the user finds the motion natural in the running game.
+  back naturally (the strip spans 2.5 s today, less than one wave), and the user finds the motion natural
+  in the running game.
 
 ### 8. Foliage foundation and coconut palms
 
@@ -268,7 +278,9 @@ made untrue in CLAUDE.md. The tools come first, so the pipeline change in 1.4 is
   - placement by zone, density per quality preset, and many plants drawn cheaply.
 - First species: leaning coconut palms along the cove, with coconuts.
 - Judge flicker with Stage 1's motion captures and shimmer score, near and far. Extend the tool if they
-  miss something.
+  miss something. Known gaps: the shimmer pan only moves diagonally, so a thin line along that diagonal
+  scores nothing; a per-view percentage hides flicker on a single palm; overdraw misses what cut-out
+  leaves hide behind their holes, and counts points, lines and sprites wrongly.
 - **Done when** palms glow when backlit at golden hour, fronds sway and flutter, their shade sits soft on
   the sand, close-ups hold up, and nothing flickers: the shimmer score stays low and the user sees none in
   the running game.
@@ -293,7 +305,9 @@ made untrue in CLAUDE.md. The tools come first, so the pipeline change in 1.4 is
 ### 11. Cove polish (milestone gate)
 
 - Art-direction pass: colour grade, bloom, haze, exposure and palette. Review every view at several times
-  of day and fix everything on CLAUDE.md's list of things that break the spell.
+  of day and fix everything on CLAUDE.md's list of things that break the spell. Known from Stage 1:
+  saturated primaries show kinks where the tonemapping clamps (the tonecard's ramps); natural colours
+  don't.
 - Performance pass on the `high` preset. Record what the cove costs per frame: Stage 1's counts, plus the
   benchmark on the machines the user can try, ideally including a mid-range laptop. That decides how much
   more island fits in the budget. Calibrate the limits in `config.js` against it, and tune `medium` and
@@ -344,6 +358,8 @@ made untrue in CLAUDE.md. The tools come first, so the pipeline change in 1.4 is
 - `audio/`: procedural surf tied to the wave sets and to the distance from shore; wind in the leaves tied
   to the gusts; birds and insects that change with the time of day; footsteps that depend on the surface.
 - It starts only after a user gesture, has a mute control and stays silent in capture mode.
+- Scheduling sound needs the audio clock (`AudioContext.currentTime`), an exception to the rule that all
+  time goes through `clock.js`. Decide how, and write it into CLAUDE.md.
 - The AI can't hear, so it checks what can be measured: render a few seconds of each soundscape offline in
   the browser and check levels and peaks (no clipping, no silent layer, no runaway gain).
 - **Done when** those checks pass, capture mode and the start screen are silent, and the user has listened
@@ -386,6 +402,10 @@ made untrue in CLAUDE.md. The tools come first, so the pipeline change in 1.4 is
   so ask the user to run the benchmark on real machines. Also cover: choosing quality automatically or
   picking a safe default, boot time, memory, WebGL context loss, Chrome, Edge and Firefox, high-DPI
   screens, and the size budget.
+- Firefox lacks EXT_clip_control, so it renders with the fallback depth set-up: a near plane at 0.5 m that
+  clips close leaves, and z-fighting far away (`verify` reports its share on the depth fixture). Decide
+  here whether it needs more, such as logarithmic depth, which costs early depth testing and MSAA where
+  surfaces intersect.
 - The tools install only Chromium's headless shell. Automated Firefox runs need Playwright's Firefox
   build, a browser download rather than a new npm package; ask the user before adding it. Playwright can
   drive an installed Edge too.
@@ -439,6 +459,10 @@ Not part of the plan. Build one only if the user asks for it: a passing rain sho
 Newest first. One short entry per session, only a few lines: date, stage, what changed, what is still
 open, next step. Details belong in code comments.
 
+- **2026-10-21, Stage 1 hardened** after an outside review. Captures are about twice as fast, and
+  `npm run shot` skips the checks (`verify` runs them). Captures now fail on hidden shader errors,
+  materials without `sceneOutput()`, WebGL errors and a lost context. Banding is scored per view. CI runs
+  on every branch. Open items went to Stages 2, 5, 7, 8, 11, 15 and 18. Next: Stage 2.
 - **2026-10-20, Stage 1 done.** HDR frame in `post/` (neutral tonemap, 4x MSAA, reversed float depth),
   capture measurements and tool checks, teardown check, F3 readout, `?bench=1`. First benchmark (one
   discrete GPU): 2.8–4.7 ms GPU per frame. Open: no bloom, guessed limits, high-DPI `high` over the

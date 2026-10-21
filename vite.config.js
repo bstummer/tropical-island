@@ -118,5 +118,7 @@ export default defineConfig({
     // tools/check-build.js reports raw and gzip size against the budget instead.
     reportCompressedSize: false,
     chunkSizeWarningLimit: 8192,
+    // Keep license comments (three.js's MIT notice), which minifying would drop.
+    rolldownOptions: { output: { comments: { legal: true } } },
   },
 });

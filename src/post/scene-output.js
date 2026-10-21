@@ -1,20 +1,47 @@
 // Makes a built-in three.js material (Lambert, Standard, Basic...) end the way
 // every scene material must: with sceneOutput() from chunks/scene-output.glsl.
 // Custom ShaderMaterials call sceneOutput() themselves instead. An
-// onBeforeCompile the material already has (wind, say) still runs first.
+// onBeforeCompile the material already has (wind, say) still runs first, so set
+// it before wrapping: one set afterwards replaces the hook, and capture mode
+// fails on a material without it (missingSceneOutput below).
+import { Material } from 'three';
 import sceneOutput from '../shaders/chunks/scene-output.glsl';
 
 export function withSceneOutput(material, frame) {
+  if (material.onBeforeCompile.sceneOutput) throw new Error(`withSceneOutput: ${describe(material)} is already wrapped`);
   const previous = material.onBeforeCompile;
-  const previousKey = material.customProgramCacheKey();
-  material.onBeforeCompile = (shader, renderer) => {
+  const previousKey = material.customProgramCacheKey;
+  const hook = (shader, renderer) => {
     previous.call(material, shader, renderer);
     shader.uniforms.uExposure = frame.uniforms.uExposure;
     const main = shader.fragmentShader.replace(/\}\s*$/, '\tgl_FragColor = sceneOutput( gl_FragColor.rgb, gl_FragColor.a );\n}\n');
     shader.fragmentShader = `${sceneOutput}\n${main}`;
   };
+  hook.sceneOutput = true;
+  material.onBeforeCompile = hook;
   // three.js keys programs by onBeforeCompile's source, the same for every
-  // material wrapped here: keep the previous hook in the key.
-  material.customProgramCacheKey = () => `${previousKey}|sceneOutput`;
+  // material wrapped here: key by the previous hook instead, or by the
+  // material's own key function. Asked at compile time, so it stays current.
+  material.customProgramCacheKey = () =>
+    `${previousKey === Material.prototype.customProgramCacheKey ? previous.toString() : previousKey.call(material)}|sceneOutput`;
   return material;
+}
+
+// The scene's materials that don't end with sceneOutput(): ShaderMaterials
+// whose fragment shader never assigns it, and built-in materials not wrapped by
+// withSceneOutput (or whose hook was replaced since). As "name (type)".
+export function missingSceneOutput(scene) {
+  const missing = new Set();
+  scene.traverse((object) => {
+    if (!(object.isMesh || object.isPoints || object.isLine || object.isSprite)) return;
+    for (const material of [].concat(object.material ?? [])) {
+      const ok = material.isShaderMaterial ? /=\s*sceneOutput\s*\(/.test(material.fragmentShader) : material.onBeforeCompile.sceneOutput === true;
+      if (!ok) missing.add(describe(material));
+    }
+  });
+  return [...missing];
+}
+
+function describe(material) {
+  return material.name ? `${material.name} (${material.type})` : material.type;
 }

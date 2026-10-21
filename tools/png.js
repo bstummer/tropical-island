@@ -50,10 +50,16 @@ export function decodePng(buffer) {
   return { width, height, data };
 }
 
+// A PNG data URL (as canvas.toDataURL() makes them), decoded.
+export function decodeDataUrl(url) {
+  return decodePng(Buffer.from(url.slice(url.indexOf(',') + 1), 'base64'));
+}
+
 // Writes an opaque RGB PNG (alpha is dropped). Every row uses one filter type:
 // Sub by default, which on these images beats choosing per row in both speed
-// and size; tests pick others to cover the decoder.
-export function encodePng({ width, height, data }, { filter = 1 } = {}) {
+// and size; tests pick others to cover the decoder. Deflate level 1: about ten
+// times faster than the default on a full-size frame, for somewhat larger files.
+export function encodePng({ width, height, data }, { filter = 1, level = 1 } = {}) {
   const stride = width * 3;
   const rgb = new Uint8Array(stride * height);
   for (let i = 0; i < width * height; i++) {
@@ -71,7 +77,7 @@ export function encodePng({ width, height, data }, { filter = 1 } = {}) {
   ihdr.writeUInt32BE(height, 4);
   ihdr[8] = 8; // bit depth
   ihdr[9] = 2; // RGB
-  return Buffer.concat([SIGNATURE, chunk('IHDR', ihdr), chunk('IDAT', deflateSync(raw, { level: 6 })), chunk('IEND', Buffer.alloc(0))]);
+  return Buffer.concat([SIGNATURE, chunk('IHDR', ihdr), chunk('IDAT', deflateSync(raw, { level })), chunk('IEND', Buffer.alloc(0))]);
 }
 
 function chunk(type, body) {

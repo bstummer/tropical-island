@@ -102,6 +102,13 @@ test('banded share: an undithered slow gradient is all bands, a dithered one, a 
   assert.equal(bandedShare(greyImage(320, 4, (x) => (Math.floor(x / 40) % 2 ? 30 : 220))), 0);
 });
 
+test('banded share: bands across the rows count too, as in a sky gradient', () => {
+  const r = createRandom('image-test')('banded-sky');
+  const slope = 1 / 32;
+  assert.ok(bandedShare(greyImage(4, 320, (x, y) => 100 + Math.floor(y * slope))) > 90);
+  assert.equal(bandedShare(greyImage(64, 320, (x, y) => 100 + y * slope + r.next() + r.next() - 1)), 0);
+});
+
 test('the banding view draws real edges in flat dark grey', () => {
   const view = bandingView(greyImage(40, 8, (x) => (x < 20 ? 30 : 220)));
   assert.deepEqual(at(view, 19, 4), [64, 64, 64]);

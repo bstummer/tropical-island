@@ -5,7 +5,7 @@ import { instrument } from './gl-stats.js';
 // pixel ratio = min(devicePixelRatio, preset.maxPixelRatio) x preset.renderScale.
 // The context is created here, not by three.js, so gl-stats.js can count every
 // call from the first one on.
-export function createRenderer({ canvas, quality: preset, capture }) {
+export function createRenderer({ canvas, quality: preset, capture, fallbackDepth = false }) {
   let quality = preset;
   // The canvas only receives post's output pass (post/frame.js), so it needs no
   // depth and no MSAA. Alpha as three.js would request it.
@@ -25,8 +25,9 @@ export function createRenderer({ canvas, quality: preset, capture }) {
   let renderer;
   try {
     // Reversed depth needs EXT_clip_control; three.js falls back to normal depth
-    // without it (renderer.capabilities.reversedDepthBuffer says which).
-    renderer = new THREE.WebGLRenderer({ canvas, context: gl, reversedDepthBuffer: true });
+    // without it (renderer.capabilities.reversedDepthBuffer says which), as it
+    // does with fallbackDepth.
+    renderer = new THREE.WebGLRenderer({ canvas, context: gl, reversedDepthBuffer: !fallbackDepth });
   } catch (err) {
     throw new Error(`WebGL2 is not available: ${err.message}`);
   }

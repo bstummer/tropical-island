@@ -82,8 +82,8 @@ export function checkSources(srcDir) {
   for (const name of readdirSync(srcDir, { recursive: true })) {
     if (!/\.(js|mjs)$/.test(name)) continue;
     const path = relative(srcDir, join(srcDir, name)).replaceAll('\\', '/');
-    // Blank out comments (keeping offsets) so docs may mention the forbidden APIs.
-    const code = readFileSync(join(srcDir, name), 'utf8').replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, (c) => c.replace(/[^\n]/g, ' '));
+    // Without comments, so docs may mention the forbidden APIs.
+    const code = blankComments(readFileSync(join(srcDir, name), 'utf8'));
     for (const rule of SOURCE_RULES) {
       if (rule.except?.includes(path)) continue;
       for (const match of code.matchAll(rule.re)) {
@@ -92,6 +92,60 @@ export function checkSources(srcDir) {
     }
   }
   return failures;
+}
+
+// JS source with every comment blanked out, keeping line and column offsets.
+// Strings, template literals and regex literals are skipped, so a `/*` or `//`
+// inside one (a glob like './plants/*.js', say) doesn't hide the code after it.
+// A `/` starts a regex where a value can't end before it, the usual heuristic.
+export function blankComments(code) {
+  const out = code.split('');
+  const blank = (from, to) => {
+    for (let k = from; k < to; k++) if (out[k] !== '\n') out[k] = ' ';
+  };
+  let last = ''; // the last significant character of code, to tell a regex from a division
+  for (let i = 0; i < code.length; ) {
+    const c = code[i];
+    const next = code[i + 1];
+    if (c === '/' && next === '/') {
+      const end = code.indexOf('\n', i);
+      blank(i, end === -1 ? code.length : end);
+      i = end === -1 ? code.length : end;
+    } else if (c === '/' && next === '*') {
+      const end = code.indexOf('*/', i + 2);
+      blank(i, end === -1 ? code.length : end + 2);
+      i = end === -1 ? code.length : end + 2;
+    } else if (c === '"' || c === "'" || c === '`') {
+      i = skipQuoted(code, i, c);
+      last = c;
+    } else if (c === '/' && (last === '' || /[(,=:[!&|?{};+\-*%<>~^]/.test(last) || /\b(return|typeof|case|in|of|delete|void|new)\s*$/.test(code.slice(Math.max(0, i - 8), i)))) {
+      i = skipRegex(code, i);
+      last = '/';
+    } else {
+      if (!/\s/.test(c)) last = c;
+      i++;
+    }
+  }
+  return out.join('');
+}
+
+// Index just past the string or template literal opened by `quote` at i.
+function skipQuoted(code, i, quote) {
+  for (i++; i < code.length && code[i] !== quote; i++) if (code[i] === '\\') i++;
+  return i + 1;
+}
+
+// Index just past the regex literal starting at i (its flags included).
+function skipRegex(code, i) {
+  let inClass = false;
+  for (i++; i < code.length && code[i] !== '\n'; i++) {
+    if (code[i] === '\\') i++;
+    else if (code[i] === '[') inClass = true;
+    else if (code[i] === ']') inClass = false;
+    else if (code[i] === '/' && !inClass) break;
+  }
+  for (i++; /\w/.test(code[i] ?? ''); i++);
+  return i;
 }
 
 // Runs every check on a build directory. distDir/index.html must exist.
