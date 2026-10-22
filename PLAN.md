@@ -639,7 +639,9 @@ open, next step. Details belong in code comments.
   terrain from nested grids with a morphing level-of-detail mesh, sunlight by height, and the final views
   with agreed briefs (new: `into-the-sun`, `sand`). The user walked the cove and made the taste calls
   (Decisions). A five-part review fixed cracks between detail levels on `low` and `medium` and stale
-  culling, and tightened the checks. Open items went to Stages 4–9, 11, 12, 14, 17 and 18. Next: Stage 4.
+  culling, and tightened the checks. Open items went to Stages 4–9, 11, 12, 14, 17 and 18. A check of the
+  maths after it replaced the coral heads' weak hash (now tested with the noise, `tests/noise.test.js`).
+  Next: Stage 4.
 - **2026-10-22, Stage 2: a third review.** Light from below comes from the ground's albedo (the far sea's
   until Stage 4); the SH read is unrolled (17% off a SwiftShader frame). The user picked the named sunrise
   and sunset 1° up and an exposure compensation of 0.3 (Decisions). Open: the air's clarity and the

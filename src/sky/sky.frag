@@ -26,7 +26,7 @@ void main() {
   radiance += through * uAureole * (1.0 - g * g) / (4.0 * PI * pow(1.0 + g * g - 2.0 * g * dot(dir, uSunDirection), 1.5));
 
   float angle = 2.0 * asin(min(length(dir - uSunDirection) * 0.5, 1.0));
-  float edge = fwidth(angle);
+  float edge = max(fwidth(angle), 1e-7); // smoothstep's edges must differ
   float disk = 1.0 - smoothstep(uSunRadius - edge, uSunRadius + edge, angle);
   if (disk > 0.0) {
     float x = min(angle / uSunRadius, 1.0);

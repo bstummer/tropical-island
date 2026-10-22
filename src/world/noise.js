@@ -1,6 +1,6 @@
-// Seeded 2D gradient noise for the island's shape (world/island.js). JS only:
-// the GPU gets the island as a heightmap and never evaluates this. Pure and
-// Node-importable.
+// Seeded 2D gradient noise for the island's shape (world/island.js), and a
+// hash for things scattered one per cell of a grid. JS only: the GPU gets the
+// island as a heightmap and never evaluates this. Pure and Node-importable.
 
 // Sixteen unit gradients, evenly around the circle.
 const GX = new Float64Array(16);
@@ -64,4 +64,20 @@ export function fbm(noise, x, y, octaves) {
     x = nx;
   }
   return sum / total;
+}
+
+// A float in [0, 1) from two integers and a seed, each mixed in in turn by
+// murmur3's finaliser, so neighbouring cells and consecutive seeds (one per
+// property of a thing in a cell) come out independent.
+export function cellHash(i, j, seed) {
+  return (fmix(fmix(fmix(seed) ^ i) ^ j) >>> 0) / 4294967296;
+}
+
+// murmur3's 32-bit finaliser: a bijection that spreads every bit into every other.
+function fmix(h) {
+  h ^= h >>> 16;
+  h = Math.imul(h, 0x85ebca6b);
+  h ^= h >>> 13;
+  h = Math.imul(h, 0xc2b2ae35);
+  return h ^ (h >>> 16);
 }

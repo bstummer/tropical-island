@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { createRandom } from '../src/core/random.js';
 import { config } from '../src/config.js';
 import { sunPath } from '../src/sky/sun.js';
-import { createIsland, LAND_ZONES, SEA_ZONES, ZONES } from '../src/world/island.js';
+import { createIsland, LAND_ZONES, SEA_ZONES, smoothstep, ZONES } from '../src/world/island.js';
 
 const SEEDS = Array.from({ length: 20 }, (_, i) => i + 1);
 const settings = config.world.island;
@@ -33,6 +33,14 @@ function sunset() {
   const length = Math.hypot(x, z);
   return [x / length, z / length];
 }
+
+test('smoothstep eases from 0 to 1 between its edges, either way round, and steps where they meet', () => {
+  assert.equal(smoothstep(2, 4, 1), 0);
+  assert.equal(smoothstep(2, 4, 3), 0.5);
+  assert.equal(smoothstep(2, 4, 5), 1);
+  assert.equal(smoothstep(4, 2, 3.5), 1 - smoothstep(2, 4, 3.5));
+  assert.deepEqual([smoothstep(1, 1, 0.9), smoothstep(1, 1, 1), smoothstep(1, 1, 2)], [0, 1, 1]);
+});
 
 test('zone names are unique and split into land and sea', () => {
   assert.equal(new Set(ZONES).size, ZONES.length);

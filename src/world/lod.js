@@ -20,7 +20,7 @@
 // Positions are in the cove's frame (world/island.js): a, o across, y up.
 
 // tree: { origin: [a, o], levels, leaf, grid }; bounds(a, o, size) -> [min, max]
-// height of the terrain over that square, for culling and for the ranges.
+// height of the terrain over that square, for culling.
 export function createLod({ origin, levels, leaf, grid }, bounds) {
   const top = levels - 1;
   const rootSize = leaf * 2 ** top;

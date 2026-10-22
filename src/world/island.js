@@ -27,7 +27,7 @@
 // shapes' and only roughly metres: across the shore it changes by 0.5 to 1.7
 // a metre, so bands measured in it (the zones) vary in width on the ground.
 import { config } from '../config.js';
-import { createNoise, fbm } from './noise.js';
+import { cellHash, createNoise, fbm } from './noise.js';
 
 // From the shore inland. Rock sits outside the order: steep ground and rocky
 // shores, wherever they are.
@@ -265,11 +265,11 @@ export function createIsland(rng, settings = config.world.island, sunsetYaw = co
     let lift = 0;
     for (let i = ci - 1; i <= ci + 1; i++) {
       for (let j = cj - 1; j <= cj + 1; j++) {
-        const h0 = hash(i, j, bommieSeed);
+        const h0 = cellHash(i, j, bommieSeed);
         if (h0 >= chance) continue;
-        const r = radius[0] + (radius[1] - radius[0]) * hash(i, j, bommieSeed + 3);
-        const dx = a - (i + 0.15 + 0.7 * hash(i, j, bommieSeed + 1)) * cell;
-        const dz = o - (j + 0.15 + 0.7 * hash(i, j, bommieSeed + 2)) * cell;
+        const r = radius[0] + (radius[1] - radius[0]) * cellHash(i, j, bommieSeed + 3);
+        const dx = a - (i + 0.15 + 0.7 * cellHash(i, j, bommieSeed + 1)) * cell;
+        const dz = o - (j + 0.15 + 0.7 * cellHash(i, j, bommieSeed + 2)) * cell;
         const q = (dx * dx + dz * dz) / (r * r);
         if (q >= 1) continue;
         const peak = -(top[0] + ((top[1] - top[0]) * h0) / chance);
@@ -492,6 +492,7 @@ function segment(px, pz, ax, az, bx, bz) {
 }
 
 export function smoothstep(e0, e1, x) {
+  if (e0 === e1) return x < e0 ? 0 : 1; // a step, not 0 / 0
   const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0)));
   return t * t * (3 - 2 * t);
 }
@@ -509,12 +510,4 @@ export function smax(a, b, k) {
 
 function softplus(x, k) {
   return x > 20 * k ? x : k * Math.log1p(Math.exp(x / k));
-}
-
-// A float in [0, 1) from two integers and a seed.
-function hash(i, j, seed) {
-  let h = Math.imul(i, 374761393) ^ Math.imul(j, 668265263) ^ Math.imul(seed, 2246822519);
-  h = Math.imul(h ^ (h >>> 13), 1274126177);
-  h ^= h >>> 16;
-  return (h >>> 0) / 4294967296;
 }

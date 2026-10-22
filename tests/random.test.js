@@ -98,3 +98,19 @@ test('normal() has the requested mean and spread', () => {
   assert.ok(Math.abs(mean - 10) < 0.06, `mean ${mean}`);
   assert.ok(Math.abs(sd - 2) < 0.06, `sd ${sd}`);
 });
+
+test('streams of one seed are independent of each other, and of the seed', () => {
+  // The first values of two streams, binned together over many seeds: tied
+  // streams crowd some bins. Under a 99.9% chi-square bound (99 dof: 148).
+  const counts = new Array(100).fill(0);
+  const bySeed = new Array(100).fill(0);
+  for (let seed = 0; seed < 50_000; seed++) {
+    const rng = createRandom(seed);
+    const a = rng('island/coast').next();
+    counts[Math.floor(a * 10) * 10 + Math.floor(rng('island/hills').next() * 10)]++;
+    bySeed[Math.floor(a * 10) * 10 + Math.floor(createRandom(seed + 1)('island/coast').next() * 10)]++;
+  }
+  const chi2 = (c) => c.reduce((s, n) => s + (n - 500) ** 2 / 500, 0);
+  assert.ok(chi2(counts) < 148, `streams tied: chi-square ${chi2(counts).toFixed(0)}`);
+  assert.ok(chi2(bySeed) < 148, `consecutive seeds tied: chi-square ${chi2(bySeed).toFixed(0)}`);
+});

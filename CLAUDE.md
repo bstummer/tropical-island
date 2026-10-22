@@ -183,7 +183,7 @@ src/
                       scene-output.js, scene-check.js (the materials capture mode checks), fullscreen.js (one-triangle
                       passes); later bloom and colour grading. The only place tonemapping happens.
   fixtures/           test scenes for the screenshot tool's checks and the tonecard (?fixture=); not part of the island
-  world/              island.js (the island's shape: the height function and the placement zones; pure), noise.js (its noise),
+  world/              island.js (the island's shape: the height function and the placement zones; pure), noise.js (its noise and a cell hash),
                       heightmap.js (the island as drawn: nested grids of it, and their sampler; pure), heightmap-worker.js
                       (builds them), lod.js (picks the terrain's mesh for a camera; pure), terrain.js (the ground and seabed)
   world/placeholder*  TEMPORARY stand-in water (flat, coloured by depth). Delete once replaced.

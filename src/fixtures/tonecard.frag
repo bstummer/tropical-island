@@ -28,7 +28,7 @@ void main() {
     float y = (uv.y - 0.7) / 0.3; // 0 at the horizon, 1 at the top
     c = mix(vec3(1.6, 0.55, 0.18), vec3(0.02, 0.04, 0.12), pow(y, 0.6)) * mix(1.0, 3.0, uv.x);
     float d = length((uv - vec2(0.8, 0.76)) * vec2(1.78, 1.0));
-    c += vec3(1.0, 0.75, 0.45) * (300.0 * smoothstep(0.022, 0.018, d) + 6.0 * exp(-25.0 * d));
+    c += vec3(1.0, 0.75, 0.45) * (300.0 * (1.0 - smoothstep(0.018, 0.022, d)) + 6.0 * exp(-25.0 * d));
   } else if (uv.y > 0.4) {
     vec2 cell = vec2(uv.x * 6.0, (uv.y - 0.4) / 0.3 * 5.0);
     c = swatch(int(cell.x)) * exp2(floor(cell.y) - 2.0);

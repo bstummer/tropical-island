@@ -48,7 +48,7 @@ void main() {
   vec3 shore = mix(uRock, sand, sandy);
   vec3 albedo = mix(shore, green, inland);
   albedo = mix(albedo, uRock, smoothstep(uRockSlope.x, uRockSlope.y, length(slope)));
-  albedo = mix(albedo, uSeabed, smoothstep(0.5, -0.5, coast) * sandy);
+  albedo = mix(albedo, uSeabed, (1.0 - smoothstep(-0.5, 0.5, coast)) * sandy);
 
   vec3 radiance = albedo / PI * (sunLight(vWorldPos, n) + skyIrradiance(vWorldPos, n));
   gl_FragColor = sceneOutput(aerialPerspective(radiance, vWorldPos), 1.0);
