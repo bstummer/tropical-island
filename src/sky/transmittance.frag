@@ -1,5 +1,6 @@
 // The transmittance table (atmosphere.js): how much light gets through from
-// every height and angle to space. Rendered once.
+// every height and angle to space. Rendered when the time changes, since the
+// haze changes with it.
 
 #include "atmosphere.glsl"
 

@@ -51,7 +51,7 @@ float aerialMiss(int mode) {
   for (int a = 0; a < 3; a++) {
     for (int k = 0; k < 8; k++) {
       vec3 p = farPoint(across(AZIMUTHS[a]), k);
-      vec3 radiance = 0.3 / PI * (sunLight(p, up) + skyIrradiance(up)); // grey ground
+      vec3 radiance = 0.3 / PI * (sunLight(p, up) + skyIrradiance(p, up)); // grey ground
       vec3 ray = p - cameraPosition;
       vec3 dir = normalize(ray);
       float d = length(ray) * 0.001;
@@ -81,10 +81,11 @@ float skyViewMiss() {
 
 // On a white surface facing up, the sun's way and away from it, sky light only:
 // the light state's (times `scale`) against the sky integrated over every
-// direction from sea level, where the light state holds it.
+// direction above the horizon from sea level, where the light state holds it,
+// and the ground lit by the sun and that sky (the fourth sum: level ground).
 float skyLightMiss(float scale) {
-  vec3 normals[3] = vec3[3](vec3(0.0, 1.0, 0.0), across(0.0), across(180.0));
-  vec3 sum[3] = vec3[3](vec3(0.0), vec3(0.0), vec3(0.0));
+  vec3 normals[4] = vec3[4](vec3(0.0, 1.0, 0.0), across(0.0), across(180.0), vec3(0.0, 1.0, 0.0));
+  vec3 sum[4] = vec3[4](vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0));
   const int AZ = 64;
   const int RINGS = 32;
   for (int i = 0; i < AZ; i++) {
@@ -93,14 +94,16 @@ float skyLightMiss(float scale) {
       float sinT = sqrt(max(1.0 - cosT * cosT, 0.0));
       float phi = 2.0 * PI * (float(i) + 0.5) / float(AZ);
       vec3 dir = vec3(sinT * cos(phi), cosT, sinT * sin(phi));
+      if (dir.y < 0.0) continue;
       vec3 sky = skyRadiance(0.0, dir, uSunDirection, 32);
-      for (int n = 0; n < 3; n++) sum[n] += sky * max(dot(normals[n], dir), 0.0);
+      for (int n = 0; n < 4; n++) sum[n] += sky * max(dot(normals[n], dir), 0.0);
     }
   }
+  vec3 level = sum[3] * 4.0 * PI / float(AZ * RINGS) + uSunRadiance * max(uSunDirection.y, 0.0);
   float worst = 0.0;
   for (int n = 0; n < 3; n++) {
-    vec3 truth = sum[n] * 4.0 * PI / float(AZ * RINGS);
-    worst = max(worst, miss(0.8 / PI * scale * skyIrradiance(normals[n]), 0.8 / PI * truth));
+    vec3 truth = sum[n] * 4.0 * PI / float(AZ * RINGS) + uBounceAlbedo * level * (0.5 - 0.5 * normals[n].y);
+    worst = max(worst, miss(0.8 / PI * scale * skyIrradiance(cameraPosition, normals[n]), 0.8 / PI * truth));
   }
   return worst;
 }

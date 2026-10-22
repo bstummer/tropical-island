@@ -1,7 +1,8 @@
 // The multiple-scattering table (atmosphere.js): for every height and sun
 // angle, the light scattered twice and more per unit of sun illuminance, after
 // Hillaire 2020: second-order light from a sphere of directions, made into all
-// orders as a geometric series. Rendered once, after the transmittance table.
+// orders as a geometric series. Rendered after the transmittance table, when
+// the time changes.
 
 #include "atmosphere.glsl"
 

@@ -45,7 +45,10 @@ export const sky = {
     declination: 0, // degrees: equinox, so daylight runs from 6:00 to 18:00
     sunsetYaw: 165, // the view yaw (views.js) that looks into the setting sun: the beach faces it
   },
-  goldenHourElevation: 5, // degrees, the sun's height at the named time golden-hour
+  // The sun's height in degrees at the named times (sky/sun.js). Sunrise and
+  // sunset stand a degree up, so the land still catches the low sun (the user's
+  // pick, PLAN.md Decisions); daylight goes on until its centre meets the horizon.
+  namedElevations: { sunset: 1, goldenHour: 5 },
   // The haze thins as the sun sinks (sky/light.js hazeAmount): its share with the
   // sun on the horizon, and the sun's height (degrees) from which it is all there.
   haze: { low: 0.3, fullAbove: 25 },
@@ -99,8 +102,10 @@ export const sky = {
   heightStep: 1,
   // Exposure follows the light: key / E^compensation, where E is the illuminance
   // (sky/light.js) in units of the sun above the atmosphere. 1 would make every
-  // hour as bright as noon, 0 leave sunset dark.
-  exposure: { key: 4.1, compensation: 0.5 },
+  // hour as bright as noon, 0 leave sunset dark. The user's pick (PLAN.md,
+  // Decisions): 0.3, so a low sun stays darker and keeps its deep orange; 0.5
+  // washed the sunset out. The key keeps noon's exposure as 0.5 had it.
+  exposure: { key: 4.47, compensation: 0.3 },
 };
 
 // The frame readout (core/readout.js) and the benchmark (core/benchmark.js, ?bench=1).

@@ -1,7 +1,7 @@
 // The shared lighting model (CLAUDE.md §8): every lit scene material shades
 // with it, then lets the air between it and the camera have its say:
 //
-//   vec3 radiance = albedo / PI * (sunLight(position, normal) + skyIrradiance(normal));
+//   vec3 radiance = albedo / PI * (sunLight(position, normal) + skyIrradiance(position, normal));
 //   gl_FragColor = sceneOutput(aerialPerspective(radiance, position), alpha);
 //
 // The light state (the uniforms below) lives in ctx.frame.uniforms, and
@@ -15,18 +15,21 @@
 
 uniform vec3 uSunDirection; // towards the sun
 uniform vec3 uSunRadiance; // the sun's illuminance on a surface facing it, at sea level
-uniform vec3 uSkySH[9]; // the sky's radiance as SH (sh.glsl); below the horizon, the lit ground's
+// uSkySH (sh.glsl): the sky's radiance as SH, above the horizon only
+uniform vec3 uLevelLight; // irradiance on level ground in the open: sun and sky
+uniform vec3 uBounceAlbedo; // the ground's, for the light it sends back up (groundAlbedo())
 uniform sampler2D uSkyView;
 uniform vec2 uSkyViewSize;
 uniform float uSkyViewHeight; // km: the camera's height the sky-view table is for
 uniform sampler3D uAerial;
 uniform sampler2D uAerialTransmittance;
 
-// How much of the sun reaches a point: 1 lit, 0 in shadow. The one place
-// where shadows join the light: Stage 5's sun shadows and Stage 10's cloud
-// shadows multiply in here, so every material gets them.
-float sunVisibility(vec3 position, vec3 normal) { // position first, as everywhere here
-  return 1.0;
+// How much of the sun reaches a point, per colour: 1 lit, 0 in shadow, tinted
+// where it comes through leaves or water. The one place where shadows join the
+// light: Stage 5's sun shadows and Stage 10's cloud shadows multiply in here,
+// so every material gets them.
+vec3 sunVisibility(vec3 position, vec3 normal) { // position first, as everywhere here
+  return vec3(1.0);
 }
 
 // Irradiance from the sun on a surface with this normal.
@@ -34,10 +37,19 @@ vec3 sunLight(vec3 position, vec3 normal) {
   return uSunRadiance * max(dot(normal, uSunDirection), 0.0) * sunVisibility(position, normal);
 }
 
-// Irradiance from the whole sky, and from the ground below the horizon, on a
-// surface with this normal.
-vec3 skyIrradiance(vec3 n) {
-  return shIrradiance(uSkySH, n);
+// The albedo of the ground below a point, which sends the light on it back up.
+// The far sea's everywhere for now (config.sky.atmosphere.groundAlbedo): the
+// terrain gives its own here, sand on the beach (PLAN.md Stage 4).
+vec3 groundAlbedo(vec3 position) {
+  return uBounceAlbedo;
+}
+
+// Irradiance from the sky above and the ground below on a surface at position
+// with normal n. The ground is diffuse, lit as level ground in the open is, and
+// fills the lower half of the view from the surface. Where something blocks the
+// sky (a canopy, PLAN.md Stage 8), it is blocked here.
+vec3 skyIrradiance(vec3 position, vec3 n) {
+  return shIrradiance(n) + groundAlbedo(position) * uLevelLight * (0.5 - 0.5 * n.y);
 }
 
 // The sky's radiance towards dir, as the sky draws it: for reflections.

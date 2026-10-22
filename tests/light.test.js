@@ -102,9 +102,19 @@ test('lightFromProbe: with its centre on the horizon, half the sun shines', () =
 
 test('lightFromProbe: a low sun still counts through the surfaces that face it', () => {
   const low = lightFromProbe(probe([1, 1, 1], [0, 0, 0]), sunAt(2), config.sky);
-  // Level ground gets sin(2 degrees) of it, an upright surface facing it nearly all.
+  // Level ground gets sin(2 degrees) of it, an upright surface facing it nearly
+  // all, and half of what the ground sends back up.
   const e = (2 * Math.PI) / 180;
-  assert.ok(close(low.illuminance, (Math.sin(e) + Math.cos(e)) / 2, 1e-6));
+  const fromGround = (luminance(config.sky.atmosphere.groundAlbedo) * Math.sin(e)) / 2;
+  assert.ok(close(low.illuminance, (Math.sin(e) + Math.cos(e) + fromGround) / 2, 1e-6));
+});
+
+test('lightFromProbe: the light on level ground is the sun at its height and the whole sky above', () => {
+  const sky = [0.05, 0.06, 0.08];
+  const state = lightFromProbe(probe([0.9, 0.85, 0.75], sky), sunAt(30), config.sky);
+  // A uniform sky of radiance L over the sphere: pi L on a level surface (the
+  // probe holds the sky above the horizon only; the test's sky fills both halves).
+  state.levelLight.forEach((v, i) => assert.ok(close(v, [0.9, 0.85, 0.75][i] * 0.5 + Math.PI * sky[i], 1e-3), `channel ${i}: ${v}`));
 });
 
 test('hazeAmount: the low share at and below the horizon, all of it from fullAbove up, rising between', () => {

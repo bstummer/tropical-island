@@ -31,8 +31,8 @@ export const views = [
     pitch: 1,
     fov: 8,
     timeOfDay: 'sunset',
-    brief: 'Telephoto from the beach into the setting sun: the disk half sunk into the sea, its glow, and the haze where sea meets sky.',
-    crops: { sun: [0.5, 0.62] },
+    brief: 'Telephoto from the beach into the setting sun, a degree above the sea: the disk, its glow, and the haze where sea meets sky.',
+    crops: { sun: [0.536, 0.5] },
   },
   { name: 'overview', position: [-250, 135, 210], yaw: -50, pitch: -24, fov: 55, timeOfDay: 17, crops: { shoreline: [0.36, 0.49] } },
 ];

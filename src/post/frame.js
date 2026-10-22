@@ -79,8 +79,10 @@ export function createFrame(ctx, display) {
   });
   // Where the browser offers multisampled render-to-texture, three.js would draw
   // straight into the texture the after-opaque pass reads. This (a three.js
-  // internal, as three.js itself sets it) keeps the samples apart and resolves them.
-  renderer.properties.get(sceneTarget).__useRenderToTexture = false;
+  // internal, as three.js itself sets it) keeps the samples apart and resolves
+  // them. A resize disposes the target, and three.js forgets it: set it again then.
+  const keepResolve = () => (renderer.properties.get(sceneTarget).__useRenderToTexture = false);
+  keepResolve();
 
   // Created on first use, kept until dispose().
   let layerTarget = null; // the translucent pass: linear premultiplied colour, transmittance in alpha
@@ -115,6 +117,7 @@ export function createFrame(ctx, display) {
     size.width = buffer.x;
     size.height = buffer.y;
     for (const target of [sceneTarget, layerTarget, ...postTargets]) target?.setSize(size.width, size.height);
+    keepResolve();
     for (const fn of listeners) fn(size);
   });
 
@@ -160,6 +163,8 @@ export function createFrame(ctx, display) {
       uSunDirection: { value: new THREE.Vector3(0, 1, 0) },
       uSunRadiance: { value: new THREE.Vector3() },
       uSkySH: { value: Array.from({ length: 9 }, () => new THREE.Vector3()) },
+      uLevelLight: { value: new THREE.Vector3() },
+      uBounceAlbedo: { value: new THREE.Vector3(...config.sky.atmosphere.groundAlbedo) },
       uSkyView: { value: null },
       uSkyViewSize: { value: new THREE.Vector2(1, 1) },
       uSkyViewHeight: { value: 0 },

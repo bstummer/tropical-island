@@ -1,7 +1,8 @@
 // The light probe (atmosphere.js): the light at sea level for one sun, read
 // back into the light state (light.js). Texel 0 holds the sun's radiance
 // through the atmosphere, texels 1 to 9 the sky's radiance from every
-// direction as spherical harmonics (chunks/sh.glsl), the ground below included.
+// direction above the horizon as spherical harmonics (chunks/sh.glsl): the
+// ground below sends back its own light (chunks/lighting.glsl).
 // Rendered when the time changes.
 
 #include "atmosphere.glsl"
@@ -26,7 +27,7 @@ void main() {
       float sinT = sqrt(max(1.0 - cosT * cosT, 0.0));
       float phi = 2.0 * PI * (float(i) + 0.5) / float(AZIMUTHS);
       vec3 dir = vec3(sinT * cos(phi), cosT, sinT * sin(phi));
-      sum += skyRadiance(0.0, dir, uSun, STEPS) * shBasis(k - 1, dir);
+      if (dir.y > 0.0) sum += skyRadiance(0.0, dir, uSun, STEPS) * shBasis(k - 1, dir);
     }
   }
   gl_FragColor = vec4(sum * 4.0 * PI / float(AZIMUTHS * RINGS), 1.0);

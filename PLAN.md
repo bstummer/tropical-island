@@ -271,6 +271,9 @@ final place, and judged by the runtime check from the start.
   grain near the camera), soil, grass base and rock. Blends follow height, slope and zone. No visible
   tiling.
 - Procedurally shaped rocks and boulders, including the headland.
+- Shade takes its light from below from the ground around it. Known from Stage 2: the lighting assumes the
+  far sea below everything today; sand instead brings shade at noon from 3.3 stops below sunlit ground to
+  about 1.5, and from blue to warm.
 - **Done when** a close-up of sand holds up, no tiling shows from any view, and nothing looks plastic.
 
 ### 5. Shadows
@@ -285,7 +288,10 @@ final place, and judged by the runtime check from the start.
   shader moves (leaves, waves) needs its own depth material; the SunLight addon has only 2 cascades.
 - Known from Stage 2: materials copy `ctx.frame.uniforms` when they are created, so new light uniforms
   (the shadows') must be in it from the start; capture mode's shader pre-compile doesn't reach the
-  materials of passes outside the scene, such as shadow passes.
+  materials of passes outside the scene, such as shadow passes. three's shadow maps fit the frame badly:
+  they render inside every `render()` call (the frame makes up to three a frame) unless told not to, and
+  cast only from objects on the camera's current layer. The sky sits on the opaque layer, so a shadow pass
+  of the frame's own has to leave it out.
 - **Done when** low-sun captures show long, soft shadows from the rocks and terrain, with no acne, no
   detached shadows and no hard edges, and the camera-offset captures show no shimmer (the tool turns the
   camera but can't move it yet).
@@ -301,9 +307,12 @@ final place, and judged by the runtime check from the start.
   - The haze over the far sea matches the physics (the `haze` check), so the colour where the sea meets
     the sky is now the water's own. The placeholder mirrors the sky from 8° up, which leaves a line at
     the beach's horizon and a flat salmon sea at sunset.
-  - The sun's glow around its disk exists only in the sky's shader, so reflections miss it: beside the
-    setting sun the sky reads 186 and the sea 155. Reflections read the sky as seen from the camera's
-    height: from 135 m, up to half again too bright beside a low sun.
+  - The sun's disk, its glow and the ceiling on its brightness exist only in the sky's shader, so
+    reflections miss the glow (beside the setting sun the sky reads 186 and the sea 155) and a reflected
+    sun would come out uncapped. Reflections read the sky as seen from the camera's height: from 135 m,
+    up to half again too bright beside a low sun.
+  - Where no seabed is drawn, `frame.opaque` holds the sky's colour and the far plane's depth. The
+    seabed's own shader already adds the haze in front of it, which the water must not add again.
   - Nothing reads `frame.opaque.depth` yet. The first thing that does proves it in a fixture, as the
     blend fixture proves the colour.
   - The translucent pass has one sample per pixel and can't add light, so glints can't go there.
@@ -353,6 +362,8 @@ final place, and judged by the runtime check from the start.
 - Golden hour and the cove gate need a sky with clouds, so they come before the polish pass.
 - Drifting clouds lit by the sky model, with sunset-coloured undersides. Their shadows slide across the
   lagoon and the land, consistent with the sun shadows.
+- Known from Stage 2: the transmittance table is private to the sky (`sky/atmosphere.js`), and the
+  aerial-perspective table reaches 64 km.
 - **Done when** clouds look soft and full from both the beach and the overview, and their shadows visibly
   move.
 
@@ -362,11 +373,13 @@ final place, and judged by the runtime check from the start.
   of day and fix everything on CLAUDE.md's list of things that break the spell. Known from Stage 1:
   saturated primaries show kinks where the tonemapping clamps (the tonecard's ramps); natural colours
   don't. Known from Stage 2: the sky beside a low sun clips red in the sunset telephoto, so the disk can't
-  show as an orange orb; bloom needs the sun's energy, which the sky holds under a ceiling today. The sky's
+  show as an orange orb; bloom needs the sun's energy, which the sky holds under a ceiling today, and the
+  HDR target holds at most about 2048 (exposed). The sky's
   light on upward faces is up to 10% too strong in red at golden hour (nine SH coefficients can't hold
   the bright band along the horizon). On high-DPI screens the render targets take 0.5–0.7 GB at 4K and
-  0.9–1.3 GB at 5120×2880, against a 256 MB limit. SwiftShader captures take 0.5–0.9 s per frame, close
-  to their 1 s budget, with only the placeholder world.
+  0.9–1.3 GB at 5120×2880, against a 256 MB limit. SwiftShader captures take about 0.5 s per frame on a
+  fast desktop but 1.1–2.3 s in CI, over their 1 s budget, with only the placeholder world (Stage 1:
+  0.46–0.72 s in CI; the lighting now costs about 17% less).
 - Performance pass on the `high` preset. Record what the cove costs per frame: Stage 1's counts, plus the
   benchmark on the machines the user can try, ideally including a mid-range laptop. That decides how much
   more island fits in the budget. Calibrate the limits in `config.js` against it, and tune `medium` and
@@ -409,6 +422,8 @@ final place, and judged by the runtime check from the start.
   the world.
 - Movement and collision maths get tests. Automated runs stub pointer lock and never drive the real
   mouse.
+- Known from Stage 2: the sky's tables render again whenever the camera's height crosses a whole metre, so
+  a head bob around such a step would render them twice a stride.
 - Update the README and the start screen's controls.
 - **Done when** the movement tests pass; invariant tests over seeds show the player can't fall through the
   ground, get stuck or leave the world; and the user has walked and swum the cove and is happy with how it
@@ -508,11 +523,23 @@ Made with the user. Don't reopen them unless the user does.
   cost of a slightly paler midday sky; a world without it was the alternative. (2026-10-21)
 - **The noon sun stands 63° high**, to the right of a viewer facing the sunset, so midday keeps direction
   and shadows; a near-overhead tropical noon was the alternative. (2026-10-21)
+- **The named sunrise and sunset stand the sun 1° up**, so the land still catches it; daylight goes on
+  until the sun's centre meets the sea. 0° (land unlit) and 2° were the alternatives. (2026-10-22)
+- **The exposure follows the light with a compensation of 0.3**: a low sun stays darker and keeps its
+  deep orange, and noon is as before; 0.5 washed the sunset out to pale pink. (2026-10-22)
 
 ## Open questions
 
 Settle these when the stage that needs them arrives. Ask the user where the answer is a matter of taste or
 scope.
+
+- **The air's clarity.** Midday shade gets about 10% of its light from the sky, a very clear atmosphere
+  (hazy tropics: 25–35%); more aerosol would brighten and warm shade, at the cost of a paler sky. Weigh it
+  once Stage 4's ground lights shade from below.
+- **Low-sun sky, for Stage 11 or 12.** From an outside review: at golden hour the sky away from the sun is
+  slate with an olive band; at low sun a dark line runs along the horizon above the brighter placeholder
+  sea; the horizon is 3.7–5 times brighter than the zenith (the haze scatters evenly, g 0.2; sea air is
+  nearer 0.7); the haze thins towards sunset, where real evening haze thickens; sunrise mirrors sunset.
 
 ## Ideas parking lot
 
@@ -524,6 +551,14 @@ Not part of the plan. Build one only if the user asks for it: a passing rain sho
 Newest first. One short entry per session, only a few lines: date, stage, what changed, what is still
 open, next step. Details belong in code comments.
 
+- **2026-10-22, Stage 2: a third review.** The lighting now carries the light from below on its own: the
+  sky's SH holds the sky alone, and the ground below, lit by sun and sky, sends its albedo's share back up
+  (the far sea's for now; the terrain's in Stage 4, by position). `sunVisibility` returns a colour,
+  `skyIrradiance` takes a position. The SH sky light reads its uniform in place, unrolled: 17% off a
+  SwiftShader frame. The render-to-texture guard survives a resize. Pictures change by 2 levels at most.
+  The sun's ceiling turned out not to be a lever for the pale sunset; the exposure is. The user picked
+  the named sunrise and sunset 1° up and an exposure compensation of 0.3 (Decisions). Open: the air's
+  clarity, and the low-sun sky points of the review (Open questions).
 - **2026-10-22, Stage 2 hardened again** after a second outside review, its findings checked against a
   double-precision port of the sky. Fixed: the haze table stopped its rows where they met the sea, so far
   sea and low land got too little haze (the overview's seam is gone); the haze dimmed every colour alike
@@ -542,8 +577,8 @@ open, next step. Details belong in code comments.
   pass, the translucent depth test, the GPU's sky maths against the JS (found the table mappings a quarter
   row off at the horizon) and the light's colour. Time keys are now `,` and `.`. Translucent and post
   passes, when used, cost 3 passes and 38 MB at 1600x900. Verify green on hardware and SwiftShader.
-- **2026-10-21, Stage 2 done.** The user approved it and kept the defaults: haze, its level, and a 63° noon
-  sun (Decisions). Next: Stage 3.
+- **2026-10-21, Stage 2 done** (commit `b43cc9c`; hardened in `aa920bf`). The user approved it and kept the
+  defaults: haze, its level, and a 63° noon sun (Decisions). Next: Stage 3.
 - **2026-10-21, Stage 2 built (review).** `sky/` owns the time (named times, no night, dev keys `[` `]`) and a
   sky after Hillaire 2020 with a thin marine haze; one lighting model (sun, SH sky light, aerial perspective) and
   an exposure that follows the light; frame passes for after-opaque, linear translucent layers (blend fixture)

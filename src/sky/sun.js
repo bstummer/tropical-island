@@ -6,19 +6,20 @@
 // the direction the beach looks out to sea (PLAN.md, Decisions). Hours are
 // solar time: the sun stands highest at 12.
 //
-// Daylight runs from sunrise to sunset, the moments the sun's centre crosses the
-// horizon. There is no night (PLAN.md, Decisions): nothing may set a time
-// outside it. The named times, which ?time=, views and captures accept:
-//   sunrise       the start of daylight
+// Daylight runs from the moment the sun's centre crosses the horizon in the
+// morning to the moment it does in the evening. There is no night (PLAN.md,
+// Decisions): nothing may set a time outside it. The named times, which ?time=,
+// views and captures accept, stand the sun config.sky.namedElevations up:
+//   sunrise       morning, the sun a degree up, a few minutes into daylight
 //   midday        solar noon
-//   golden-hour   evening, the sun config.sky.goldenHourElevation degrees up
-//   sunset        the end of daylight
+//   golden-hour   evening, the sun goldenHour degrees up
+//   sunset        evening, the sun a degree up, a few minutes before daylight ends
 import { config } from '../config.js';
 
 const HOUR_ANGLE = Math.PI / 12; // radians the sky turns per hour
 const DEG = Math.PI / 180;
 
-export function createSunPath({ latitude, declination, sunsetYaw }, goldenHourElevation) {
+export function createSunPath({ latitude, declination, sunsetYaw }, { sunset, goldenHour }) {
   const sinLat = Math.sin(latitude * DEG);
   const cosLat = Math.cos(latitude * DEG);
   const sinDec = Math.sin(declination * DEG);
@@ -46,11 +47,12 @@ export function createSunPath({ latitude, declination, sunsetYaw }, goldenHourEl
   const set = local(daylight.end);
   const setAzimuth = Math.atan2(set.east, set.north);
 
+  const low = hoursFromNoon(sunset * DEG);
   const times = {
-    sunrise: daylight.start,
+    sunrise: 12 - low,
     midday: 12,
-    'golden-hour': 12 + hoursFromNoon(goldenHourElevation * DEG),
-    sunset: daylight.end,
+    'golden-hour': 12 + hoursFromNoon(goldenHour * DEG),
+    sunset: 12 + low,
   };
 
   // Hours of daylight from a number of hours or a name; throws for anything else.
@@ -95,7 +97,7 @@ export function createSunPath({ latitude, declination, sunsetYaw }, goldenHourEl
   };
 }
 
-export const sunPath = createSunPath(config.sky.sun, config.sky.goldenHourElevation);
+export const sunPath = createSunPath(config.sky.sun, config.sky.namedElevations);
 
 // Makes target.timeOfDay hold the time in hours: it reads hours, and takes hours
 // or a name. Anything outside daylight throws, so night can't sneak in.

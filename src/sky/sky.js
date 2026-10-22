@@ -66,6 +66,7 @@ export function create(ctx) {
       const state = lightFromProbe(atmosphere.probe(light.uSunDirection.value), sun, settings);
       light.uSunRadiance.value.fromArray(state.sunRadiance);
       state.sky.forEach((c, k) => light.uSkySH.value[k].fromArray(c));
+      light.uLevelLight.value.fromArray(state.levelLight);
       light.uExposure.value = baseExposure * state.exposure;
     }
     if (timeChanged || h !== height) {

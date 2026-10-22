@@ -6,7 +6,6 @@
 #include "../sky/atmosphere.glsl"
 
 uniform vec3 uDirections[DIRECTIONS];
-uniform vec3 uCoefficients[9];
 uniform vec2 uSkyViewSize;
 
 // Each mapping run forth and back from every texel centre: the worst miss, in texels.
@@ -65,7 +64,7 @@ void main() {
   int i = int(gl_FragCoord.x);
   int n = DIRECTIONS;
   if (i < 9 * n) gl_FragColor = vec4(shBasis(i - 9 * (i / 9), normalize(uDirections[i / 9])), 0.0, 0.0, 1.0);
-  else if (i < 10 * n) gl_FragColor = vec4(shIrradiance(uCoefficients, normalize(uDirections[i - 9 * n])), 1.0);
+  else if (i < 10 * n) gl_FragColor = vec4(shIrradiance(normalize(uDirections[i - 9 * n])), 1.0);
   else if (i == 10 * n) gl_FragColor = vec4(skyViewRoundTrip(), 0.0, 0.0, 1.0);
   else if (i == 10 * n + 1) gl_FragColor = vec4(aerialRoundTrip(), 0.0, 0.0, 1.0);
   else gl_FragColor = vec4(multiscatterRoundTrip(), 0.0, 0.0, 1.0);

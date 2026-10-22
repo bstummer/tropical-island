@@ -20,7 +20,7 @@ export function create(ctx) {
       defines: { DIRECTIONS: directions.length },
       uniforms: {
         uDirections: { value: directions.map((d) => new THREE.Vector3(...d)) },
-        uCoefficients: { value: coefficients.map((c) => new THREE.Vector3(...c)) },
+        uSkySH: { value: coefficients.map((c) => new THREE.Vector3(...c)) },
         uGroundRadius: { value: config.sky.atmosphere.groundRadius },
         uTopRadius: { value: config.sky.atmosphere.topRadius },
         uMultiscatterSize: { value: new THREE.Vector2(...config.sky.tables.multiscatter) },

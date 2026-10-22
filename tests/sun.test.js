@@ -13,7 +13,7 @@ const PATHS = [
   ...[-30, -27, -15, 0, 12, 25].flatMap((latitude) =>
     [-23, 0, 10, 23].map((declination) => {
       const sun = { latitude, declination, sunsetYaw: (latitude * 7 + declination * 3) % 360 };
-      return [`latitude ${latitude}, declination ${declination}`, createSunPath(sun, config.sky.goldenHourElevation), sun];
+      return [`latitude ${latitude}, declination ${declination}`, createSunPath(sun, config.sky.namedElevations), sun];
     }),
   ),
 ];
@@ -30,10 +30,10 @@ for (const [name, path, sun] of PATHS) {
   test(`${name}: the named times are in order and mean what they say`, () => {
     const { sunrise, midday, sunset } = path.times;
     const golden = path.times['golden-hour'];
-    assert.ok(sunrise < midday && midday < golden && golden < sunset);
-    assert.equal(sunrise, path.daylight.start);
-    assert.equal(sunset, path.daylight.end);
-    assert.ok(close(path.position(golden).elevation, config.sky.goldenHourElevation * DEG));
+    assert.ok(path.daylight.start < sunrise && sunrise < midday && midday < golden && golden < sunset && sunset < path.daylight.end);
+    const { sunset: low, goldenHour } = config.sky.namedElevations;
+    assert.ok(close(path.position(sunrise).elevation, low * DEG) && close(path.position(sunset).elevation, low * DEG));
+    assert.ok(close(path.position(golden).elevation, goldenHour * DEG));
     const noon = path.position(midday).elevation;
     assert.ok(close(noon, (90 - Math.abs(sun.latitude - sun.declination)) * DEG), 'noon elevation');
     for (const h of [11.9, 12.1, 9, 15]) assert.ok(path.position(h).elevation < noon, 'midday is the highest');
@@ -65,7 +65,7 @@ test('the game: the noon sun stands to the right of a viewer facing the sunset',
 });
 
 test('times of day: names and daylight hours pass, anything else throws', () => {
-  assert.equal(sunPath.toHours('sunset'), sunPath.daylight.end);
+  assert.equal(sunPath.toHours('sunset'), sunPath.times.sunset);
   assert.equal(sunPath.toHours(12.25), 12.25);
   assert.equal(sunPath.toHours(sunPath.daylight.start), sunPath.daylight.start);
   for (const bad of [sunPath.daylight.start - 0.01, sunPath.daylight.end + 0.01, 0, 24, NaN, 'noon', 'toString', '12', null, undefined]) {
@@ -91,8 +91,8 @@ test('defineTimeOfDay: reads hours, takes names, refuses night', () => {
 });
 
 test('a path on which the sun never sets or never reaches golden hour is refused', () => {
-  assert.throws(() => createSunPath({ latitude: -80, declination: -20, sunsetYaw: 0 }, 5), /never stands/);
-  assert.throws(() => createSunPath({ latitude: 70, declination: -20, sunsetYaw: 0 }, 5), /never stands/);
+  assert.throws(() => createSunPath({ latitude: -80, declination: -20, sunsetYaw: 0 }, { sunset: 1, goldenHour: 5 }), /never stands/);
+  assert.throws(() => createSunPath({ latitude: 70, declination: -20, sunsetYaw: 0 }, { sunset: 1, goldenHour: 5 }), /never stands/);
 });
 
 test('step: minutes either way, stopping at the ends of daylight', () => {

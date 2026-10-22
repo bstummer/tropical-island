@@ -57,12 +57,14 @@ export function hazeAmount(elevation, { low, fullAbove }) {
 
 // The light state from the probe (probe.frag, 10 RGBA texels) for the sun at
 // `sun` (sky/sun.js position()): the sun's radiance as it reaches the scene,
-// the sky's light as SH, the illuminance the exposure is set for, and the
-// exposure (config.sky.exposure).
+// the sky's light as SH (the sky alone), the light on level ground in the open,
+// which the ground sends back up (chunks/lighting.glsl), the illuminance the
+// exposure is set for, and the exposure (config.sky.exposure).
 //
 // The illuminance is the mean of that on level ground and on an upright
 // surface facing the sun: level ground alone loses the low sun long before
-// the eye does, and sunlit walls, trunks and faces still catch it.
+// the eye does, and sunlit walls, trunks and faces still catch it. The upright
+// surface also gets half of the light the ground sends up.
 export function lightFromProbe(probe, sun, { atmosphere, exposure }) {
   const texel = (i) => [probe[4 * i], probe[4 * i + 1], probe[4 * i + 2]];
   const visible = diskAbove(sun.elevation, (atmosphere.sunRadius * Math.PI) / 180);
@@ -71,8 +73,9 @@ export function lightFromProbe(probe, sun, { atmosphere, exposure }) {
   const sunLuminance = luminance(sunRadiance);
   const [x, , z] = sun.direction;
   const across = Math.hypot(x, z) || 1;
-  const level = sunLuminance * Math.max(Math.sin(sun.elevation), 0) + luminance(shIrradiance(sky, [0, 1, 0]));
-  const facing = sunLuminance * Math.cos(sun.elevation) + luminance(shIrradiance(sky, [x / across, 0, z / across]));
-  const illuminance = (level + facing) / 2;
-  return { sunRadiance, sky, illuminance, exposure: exposure.key / Math.max(illuminance, 1e-6) ** exposure.compensation };
+  const levelLight = shIrradiance(sky, [0, 1, 0]).map((v, i) => v + sunRadiance[i] * Math.max(Math.sin(sun.elevation), 0));
+  const fromGround = luminance(levelLight.map((v, i) => v * atmosphere.groundAlbedo[i])) / 2;
+  const facing = sunLuminance * Math.cos(sun.elevation) + luminance(shIrradiance(sky, [x / across, 0, z / across])) + fromGround;
+  const illuminance = (luminance(levelLight) + facing) / 2;
+  return { sunRadiance, sky, levelLight, illuminance, exposure: exposure.key / Math.max(illuminance, 1e-6) ** exposure.compensation };
 }

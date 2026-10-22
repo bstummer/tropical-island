@@ -34,9 +34,9 @@ for (const view of views) {
 }
 
 // The cove faces the sunset (PLAN.md, Decisions): the views out to sea from the
-// beach look straight into the setting sun.
+// beach look straight at where the sun meets the sea.
 test('the beach and horizon views look into the setting sun', () => {
-  const [x, , z] = sunPath.position(sunPath.times.sunset).direction;
+  const [x, , z] = sunPath.position(sunPath.daylight.end).direction;
   const sunYaw = (Math.atan2(-x, -z) * 180) / Math.PI; // yaw 0 looks towards -Z, 90 towards -X
   for (const name of ['beach', 'horizon']) {
     const off = ((((findView(name).yaw - sunYaw) % 360) + 540) % 360) - 180;

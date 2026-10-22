@@ -18,7 +18,9 @@ const ALBEDOS = [[0.8, 0.8, 0.8], [0.18, 0.18, 0.18], [0.06, 0.18, 0.03]];
 const GROUND = [0.3, 0.3, 0.3];
 
 export function create(ctx) {
-  const { scene, camera, frame } = ctx;
+  const { scene, camera, frame, config } = ctx;
+  // The light from below comes from this ground, not the far sea (lighting.glsl groundAlbedo()).
+  frame.uniforms.uBounceAlbedo.value.fromArray(GROUND);
   const group = new THREE.Group();
   group.position.set(camera.position.x, 0, camera.position.z);
   scene.add(group);
@@ -54,6 +56,7 @@ export function create(ctx) {
   return {
     update() {},
     dispose() {
+      frame.uniforms.uBounceAlbedo.value.fromArray(config.sky.atmosphere.groundAlbedo);
       delete window.__LIGHT__;
       scene.remove(group);
       sphere.dispose();

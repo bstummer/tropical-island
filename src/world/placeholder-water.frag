@@ -31,7 +31,7 @@ void main() {
   float fresnel = 0.02 + 0.98 * pow(1.0 - min(facing, 1.0), 5.0); // Schlick, water's 2% head-on
   vec3 mirrored = reflect(-view, up);
   mirrored.y = sqrt(mirrored.y * mirrored.y + 4.0 * WAVE_SLOPE * WAVE_SLOPE);
-  vec3 radiance = (1.0 - fresnel) * body / PI * (sunLight(vWorldPos, up) + skyIrradiance(up)) + fresnel * skyRadiance(normalize(mirrored));
+  vec3 radiance = (1.0 - fresnel) * body / PI * (sunLight(vWorldPos, up) + skyIrradiance(vWorldPos, up)) + fresnel * skyRadiance(normalize(mirrored));
 
   gl_FragColor = sceneOutput(aerialPerspective(radiance, vWorldPos), 1.0);
 }
