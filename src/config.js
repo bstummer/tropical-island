@@ -5,8 +5,8 @@
 // from ctx.quality, so a new system adds its per-preset knobs here.
 export const quality = {
   default: 'high',
-  // msaa: samples per pixel in the HDR target (post/frame.js), at least 2: the
-  // after-opaque pass reads the resolved target while it draws into the samples.
+  // msaa: samples per pixel in the HDR target (post/frame.js), at least 2 (it
+  // checks): the after-opaque pass reads the resolved target while it draws into the samples.
   presets: {
     low: { renderScale: 0.67, maxPixelRatio: 1, msaa: 2 },
     medium: { renderScale: 0.85, maxPixelRatio: 1.5, msaa: 4 },
@@ -89,7 +89,7 @@ export const sky = {
   samples: {
     transmittance: 40,
     multiscatter: { directions: 8, steps: 20 }, // directions per side of a grid over the sphere
-    skyView: 30,
+    skyView: 48,
     aerial: 16,
     probe: { azimuths: 32, rings: 16, steps: 16 },
   },
@@ -165,6 +165,11 @@ export const capture = {
   // lit side: how far its channels may spread at midday (neutral), and how much
   // redder than blue it must be at golden hour (warm).
   light: { neutralLevels: 10, warmLevels: 80 },
+  // The haze fixture (src/fixtures/haze.js), in 8-bit levels: how far the sky's
+  // tables may land from direct marches through the same air. The sky's light as
+  // SH misses the bright band along the horizon by up to 5 levels on a white
+  // surface at golden hour; the tables miss by 1 to 4 levels.
+  haze: { limitLevels: 6 },
 };
 
 // Frame cost limits per quality preset. tools/screenshot.js measures every view

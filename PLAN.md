@@ -259,6 +259,9 @@ final place, and judged by the runtime check from the start.
   view has one, make the views test require it.
 - Rough walking: a toggle that puts the camera at eye height on the terrain, so the user can judge the
   cove's scale from the ground long before Stage 14 builds real walking.
+- Hilltops catch the last light at sunset. Known from Stage 2: the light is the same at every height
+  today, while at sunset the sun is 1.8 times stronger at 50 m than at sea level, and almost 7 times
+  at 300 m.
 - **Done when** the placeholder mound is gone, the overview's landforms read as a tropical island, the views
   frame the cove, each with a brief the user agreed, and the user has checked the cove's scale on foot.
 
@@ -280,6 +283,9 @@ final place, and judged by the runtime check from the start.
 - Known pitfalls in three r186: its PCF shadows add the bias without flipping it for reversed depth, so
   the usual negative bias causes acne; shadow passes ignore `onBeforeCompile`, so anything the vertex
   shader moves (leaves, waves) needs its own depth material; the SunLight addon has only 2 cascades.
+- Known from Stage 2: materials copy `ctx.frame.uniforms` when they are created, so new light uniforms
+  (the shadows') must be in it from the start; capture mode's shader pre-compile doesn't reach the
+  materials of passes outside the scene, such as shadow passes.
 - **Done when** low-sun captures show long, soft shadows from the rocks and terrain, with no acne, no
   detached shadows and no hard edges, and the camera-offset captures show no shimmer (the tool turns the
   camera but can't move it yet).
@@ -291,6 +297,16 @@ final place, and judged by the runtime check from the start.
   or alias; a seamless fade into the horizon haze; the white line of surf on the reef.
 - Walking, swimming and sound will need the water's motion in JS as well, and it must agree with what's
   drawn (CLAUDE.md §5).
+- Known from Stage 2:
+  - The haze over the far sea matches the physics (the `haze` check), so the colour where the sea meets
+    the sky is now the water's own. The placeholder mirrors the sky from 8° up, which leaves a line at
+    the beach's horizon and a flat salmon sea at sunset.
+  - The sun's glow around its disk exists only in the sky's shader, so reflections miss it: beside the
+    setting sun the sky reads 186 and the sea 155. Reflections read the sky as seen from the camera's
+    height: from 135 m, up to half again too bright beside a low sun.
+  - Nothing reads `frame.opaque.depth` yet. The first thing that does proves it in a fixture, as the
+    blend fixture proves the colour.
+  - The translucent pass has one sample per pixel and can't add light, so glints can't go there.
 - **Done when** the placeholder water is gone and the lagoon reads as tropical at every time of day.
 
 ### 7. Shoreline (the hero)
@@ -317,6 +333,8 @@ final place, and judged by the runtime check from the start.
   miss something. Known gaps: the shimmer pan only moves diagonally, so a thin line along that diagonal
   scores nothing; a per-view percentage hides flicker on a single palm; overdraw misses what cut-out
   leaves hide behind their holes, and counts points, lines and sprites wrongly.
+- Shade under a canopy blocks the sky's light as well as the sun's. Known from Stage 2: nothing blocks
+  the sky's light yet, and at golden hour it is 52% of the light on level ground, so shade would glow.
 - **Done when** palms glow when backlit at golden hour, fronds sway and flutter, their shade sits soft on
   the sand, close-ups hold up, and nothing flickers: the shimmer score stays low and the user sees none in
   the running game.
@@ -344,7 +362,11 @@ final place, and judged by the runtime check from the start.
   of day and fix everything on CLAUDE.md's list of things that break the spell. Known from Stage 1:
   saturated primaries show kinks where the tonemapping clamps (the tonecard's ramps); natural colours
   don't. Known from Stage 2: the sky beside a low sun clips red in the sunset telephoto, so the disk can't
-  show as an orange orb; bloom needs the sun's energy, which the sky holds under a ceiling today.
+  show as an orange orb; bloom needs the sun's energy, which the sky holds under a ceiling today. The sky's
+  light on upward faces is up to 10% too strong in red at golden hour (nine SH coefficients can't hold
+  the bright band along the horizon). On high-DPI screens the render targets take 0.5–0.7 GB at 4K and
+  0.9–1.3 GB at 5120×2880, against a 256 MB limit. SwiftShader captures take 0.5–0.9 s per frame, close
+  to their 1 s budget, with only the placeholder world.
 - Performance pass on the `high` preset. Record what the cove costs per frame: Stage 1's counts, plus the
   benchmark on the machines the user can try, ideally including a mid-range laptop. That decides how much
   more island fits in the budget. Calibrate the limits in `config.js` against it, and tune `medium` and
@@ -362,6 +384,8 @@ final place, and judged by the runtime check from the start.
 - Time doesn't pass, but the player can pick any hour from sunrise to sunset, so every one has to work, not
   only the midday and golden hour the cove gate checked. Lighting, exposure and fog stay consistent from
   one hour to the next. There is no night (see Decisions).
+- Known from Stage 2: a time change reads the light back from the GPU and waits for it, so dragging the
+  time (Stage 16's setting) would stutter.
 - **Done when** a capture series from sunrise to sunset has no broken or ugly hour.
 
 ### 13. Small life and detail
@@ -500,6 +524,18 @@ Not part of the plan. Build one only if the user asks for it: a passing rain sho
 Newest first. One short entry per session, only a few lines: date, stage, what changed, what is still
 open, next step. Details belong in code comments.
 
+- **2026-10-22, Stage 2 hardened again** after a second outside review, its findings checked against a
+  double-precision port of the sky. Fixed: the haze table stopped its rows where they met the sea, so far
+  sea and low land got too little haze (the overview's seam is gone); the haze dimmed every colour alike
+  (distant land stays warm now); even steps missed most of the haze on slanted rays (the golden-hour sun
+  was 11–17% too bright); coarse sun-angle columns made the sunset sky up to a quarter too bright; marches
+  sample the middle of each step (the sky was up to 6 levels off). Post passes get depth only when they
+  ask; the frame refuses fewer than 2 MSAA samples; the game refuses browsers that can't render to floats.
+  New checks: the `haze` fixture (the tables against direct marches, proven on deliberate mistakes), the
+  time check on every view through every named time, the beach and horizon views face the sunset, the
+  blend check at exposure 2. Cost: 11 programs (was 10) and one 32×32 table; island frames unchanged.
+  Open: three taste calls for the user (the sun's ceiling, how high the named sunrise and sunset stand,
+  the tonemap's dark end, candidates `cand-*`); notes added to Stages 3, 5, 6, 8, 11 and 12.
 - **2026-10-21, Stage 2 hardened** after an outside code review. Fixed: the blending check missed additive
   blending; a seam at the sunset horizon (the sea now bends with the planet, the sky table covers the sky
   only); `translucent()` on groups; `addPost` removers; time text ("5:60"). New checks prove the after-opaque

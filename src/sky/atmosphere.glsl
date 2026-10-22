@@ -92,6 +92,26 @@ float distanceToGround(float h, float mu) {
   return above / (-r * mu + sqrt(disc)); // the near root, without cancellation
 }
 
+// Where step i of n along a ray to tMax starts and ends. Steps crowd towards
+// the start: rays leave the densest air there, and on a slant even rays to
+// space cross the 150 m of haze in their first kilometre or two. Every march
+// samples each step at its middle (fixtures/haze.js measures them against
+// finer marches).
+vec2 marchSpan(int i, int n, float tMax) {
+  vec2 f = vec2(float(i), float(i + 1)) / float(n);
+  return tMax * f * f;
+}
+
+// The optical depth along the first tMax km of a ray, in `steps` steps.
+vec3 opticalDepth(float h, float mu, float tMax, int steps) {
+  vec3 depth = vec3(0.0);
+  for (int i = 0; i < steps; i++) {
+    vec2 span = marchSpan(i, steps, tMax);
+    depth += medium(heightAlong(h, mu, 0.5 * (span.x + span.y))).extinction * (span.y - span.x);
+  }
+  return depth;
+}
+
 // ---------------------------------------------------------------- transmittance table
 
 // The table holds the transmittance from (h, mu) to the top of the atmosphere,
@@ -125,11 +145,26 @@ vec3 transmittance(float h, float mu) {
 
 // ---------------------------------------------------------------- multiple scattering
 
+// The multiple-scattering table by the sun's zenith cosine (x) and the height
+// (y). Its columns crowd around the sun on the horizon, where the light changes
+// fastest: evenly spaced, sunset's sky came out up to a quarter too bright.
+vec2 multiscatterUv(float h, float muSun) {
+  float m = clamp(muSun, -1.0, 1.0);
+  vec2 x = clamp(vec2(0.5 + 0.5 * sign(m) * sqrt(abs(m)), h / (uTopRadius - uGroundRadius)), 0.0, 1.0);
+  return (x * (uMultiscatterSize - 1.0) + 0.5) / uMultiscatterSize;
+}
+
+void multiscatterParams(vec2 uv, out float h, out float muSun) {
+  vec2 x = (uv * uMultiscatterSize - 0.5) / (uMultiscatterSize - 1.0);
+  float e = 2.0 * x.x - 1.0;
+  muSun = sign(e) * e * e;
+  h = x.y * (uTopRadius - uGroundRadius);
+}
+
 // Light scattered twice and more, per unit of sun illuminance, at height h with the
 // sun at zenith cosine muSun (Hillaire's psi_ms).
 vec3 multiscatter(float h, float muSun) {
-  vec2 x = clamp(vec2(muSun * 0.5 + 0.5, h / (uTopRadius - uGroundRadius)), 0.0, 1.0);
-  return textureLod(uMultiscatter, (x * (uMultiscatterSize - 1.0) + 0.5) / uMultiscatterSize, 0.0).rgb;
+  return textureLod(uMultiscatter, multiscatterUv(h, muSun), 0.0).rgb;
 }
 
 // ---------------------------------------------------------------- in-scattering
@@ -137,7 +172,8 @@ vec3 multiscatter(float h, float muSun) {
 // Light scattered towards the viewer along a ray from height h in direction dir
 // (y up) with the sun towards sun, over the first tMax km, in `steps` steps
 // spaced closer near the start. Returns the radiance; throughput is the
-// fraction of light from behind that gets through.
+// fraction of light from behind that gets through. A ray that runs on below
+// the sea (the aerial-perspective table's do) follows the sea's surface there.
 vec3 inscatter(float h, vec3 dir, vec3 sun, float tMax, int steps, out vec3 throughput) {
   float r = uGroundRadius + h;
   float cosTheta = dot(dir, sun);
@@ -146,15 +182,13 @@ vec3 inscatter(float h, vec3 dir, vec3 sun, float tMax, int steps, out vec3 thro
   float phaseH = miePhase(cosTheta, uHazeG);
   vec3 radiance = vec3(0.0);
   vec3 through = vec3(1.0);
-  float tPrev = 0.0;
   for (int i = 0; i < steps; i++) {
-    float f = (float(i) + 1.0) / float(steps);
-    float t1 = tMax * f * f;
-    float dt = t1 - tPrev;
-    float t = tPrev + 0.3 * dt;
-    tPrev = t1;
+    vec2 span = marchSpan(i, steps, tMax);
+    float dt = span.y - span.x;
+    float t = 0.5 * (span.x + span.y);
     float hs = heightAlong(h, dir.y, t);
     float muSun = dot(vec3(0.0, r, 0.0) + t * dir, sun) / (uGroundRadius + hs);
+    hs = max(hs, 0.0);
     Medium m = medium(hs);
     vec3 sunlight = transmittance(hs, muSun);
     vec3 source = uSunIlluminance * (sunlight * (m.rayleigh * phaseR + m.mie * phaseM + m.haze * phaseH) + multiscatter(hs, muSun) * (m.rayleigh + m.mie + m.haze));

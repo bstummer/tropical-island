@@ -3,18 +3,22 @@ import assert from 'node:assert/strict';
 import { createImage } from '../tools/image.js';
 import { shBasis, shIrradiance } from '../src/sky/light.js';
 import { coefficients, directions, texelCount, texels } from '../src/fixtures/maths-cases.js';
+import { answers as hazeAnswers } from '../src/fixtures/haze-cases.js';
+import { sunPath } from '../src/sky/sun.js';
 import {
   benchmarkProblems,
   blendMismatch,
   checkLimits,
   describeWarning,
   explainLaunchError,
+  hazeProblems,
   isSameFile,
   mathsMismatch,
   metricChanges,
   mismatchWarnings,
   parseArgs,
   resourceLeaks,
+  timeChangeTarget,
 } from '../tools/screenshot.js';
 
 // ---------------------------------------------------------------- own-page requests
@@ -214,7 +218,7 @@ test('blend mismatch: a missing card shows no contrast', () => {
 // ---------------------------------------------------------------- maths fixture
 
 // What the maths fixture would read back from a GPU that agrees with sky/light.js.
-function mathsAnswers({ skyView = 0.001, aerial = 0.002 } = {}) {
+function mathsAnswers({ skyView = 0.001, aerial = 0.002, multiscatter = 0.003 } = {}) {
   const values = new Array(4 * texelCount).fill(0);
   const unit = (d) => d.map((v) => v / Math.hypot(...d));
   directions.forEach((d, j) => {
@@ -223,6 +227,7 @@ function mathsAnswers({ skyView = 0.001, aerial = 0.002 } = {}) {
   });
   values[4 * texels.skyView] = skyView;
   values[4 * texels.aerial] = aerial;
+  values[4 * texels.multiscatter] = multiscatter;
   return values;
 }
 
@@ -231,6 +236,7 @@ test('maths mismatch: answers that agree with sky/light.js come out near zero', 
   assert.ok(m.basis < 1e-12 && m.irradiance < 1e-12, JSON.stringify(m));
   assert.equal(m.skyView, 0.001);
   assert.equal(m.aerial, 0.002);
+  assert.equal(m.multiscatter, 0.003);
 });
 
 test('maths mismatch: a wrong basis value or irradiance shows', () => {
@@ -240,4 +246,37 @@ test('maths mismatch: a wrong basis value or irradiance shows', () => {
   const m = mathsMismatch(values);
   assert.ok(Math.abs(m.basis - 0.3) < 1e-9);
   assert.ok(m.irradiance > 0.005, `irradiance ${m.irradiance}`);
+});
+
+// ---------------------------------------------------------------- haze fixture
+
+const goodHaze = { aerial: 1, skyView: 0.5, skyLight: 4, noHaze: 150, seaLevel: 40, dimSkyLight: 15 };
+
+test('haze problems: small misses and visible mistakes pass', () => {
+  assert.deepEqual(Object.keys(goodHaze), hazeAnswers);
+  assert.deepEqual(hazeProblems(goodHaze, 6, true), []);
+});
+
+test('haze problems: a miss over the limit fails, and so does a mistake the measure cannot see', () => {
+  assert.match(hazeProblems({ ...goodHaze, aerial: 9 }, 6, false).join(), /aerial off by 9\.0/);
+  assert.match(hazeProblems({ ...goodHaze, dimSkyLight: 3 }, 6, false).join(), /dimSkyLight .*misses it/);
+  assert.match(hazeProblems({ ...goodHaze, skyView: NaN }, 6, false).join(), /skyView/);
+});
+
+test('haze problems: tables made at sea level only have to show from high up', () => {
+  const low = { ...goodHaze, seaLevel: 0.5 };
+  assert.deepEqual(hazeProblems(low, 6, false), []);
+  assert.match(hazeProblems(low, 6, true).join(), /seaLevel/);
+});
+
+// ---------------------------------------------------------------- time check
+
+test('time check: four views in a row visit every named time, never their own', () => {
+  const names = Object.keys(sunPath.times);
+  for (const hours of [sunPath.times.midday, sunPath.times.sunset, 9.5, 14]) {
+    const targets = [0, 1, 2, 3].map((i) => timeChangeTarget(i, hours));
+    for (const name of targets) assert.ok(Math.abs(sunPath.times[name] - hours) > 0.5, `${name} from ${hours} h`);
+    const own = names.filter((n) => Math.abs(sunPath.times[n] - hours) <= 0.5);
+    assert.deepEqual(new Set(targets), new Set(names.filter((n) => !own.includes(n))), `from ${hours} h`);
+  }
 });

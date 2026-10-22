@@ -1,10 +1,11 @@
-// The aerial-perspective table's mapping (sky/atmosphere.js renders the
-// table). For the camera's height and the sun, it holds what the air does to
-// the light from a point: rgb the light it adds on the way to the camera, a
-// the share of the point's own light that gets through. By the direction to
-// the point and its distance: x the azimuth from the sun's, as in the
-// sky-view table; y the elevation, crowded around the horizon, where most of
-// the world lies; z the distance, crowded near the camera, out to uAerialRange.
+// The aerial-perspective tables' mapping (sky/atmosphere.js renders them). For
+// the camera's height and the sun, they hold what the air does to the light
+// from a point: the 3D table the light it adds on the way to the camera, the
+// 2D one (by y and z alone) the share of the point's own light that gets
+// through. By the direction to the point and its distance: x the azimuth from
+// the sun's, as in the sky-view table; y the elevation, crowded around the
+// horizon, where most of the world lies; z the distance, crowded near the
+// camera, out to uAerialRange.
 
 #ifndef PI
 #define PI 3.14159265358979

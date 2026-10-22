@@ -8,9 +8,8 @@
 // SQRT_DIRECTIONS, STEPS: config.sky.samples
 
 void main() {
-  vec2 x = (gl_FragCoord.xy - 0.5) / (uMultiscatterSize - 1.0);
-  float muSun = 2.0 * x.x - 1.0;
-  float h = x.y * (uTopRadius - uGroundRadius);
+  float h, muSun;
+  multiscatterParams(gl_FragCoord.xy / uMultiscatterSize, h, muSun);
   vec3 sun = vec3(sqrt(max(1.0 - muSun * muSun, 0.0)), muSun, 0.0);
   float r = uGroundRadius + h;
 
@@ -23,10 +22,12 @@ void main() {
       float phi = 2.0 * PI * (float(i) + 0.5) / float(SQRT_DIRECTIONS);
       vec3 dir = vec3(sinT * cos(phi), cosT, sinT * sin(phi));
       float tGround = distanceToGround(h, dir.y);
-      float dt = (tGround >= 0.0 ? tGround : distanceToTop(h, dir.y)) / float(STEPS);
+      float tMax = tGround >= 0.0 ? tGround : distanceToTop(h, dir.y);
       vec3 through = vec3(1.0);
       for (int k = 0; k < STEPS; k++) {
-        float t = (float(k) + 0.5) * dt;
+        vec2 span = marchSpan(k, STEPS, tMax);
+        float dt = span.y - span.x;
+        float t = 0.5 * (span.x + span.y);
         float hs = heightAlong(h, dir.y, t);
         float muS = dot(vec3(0.0, r, 0.0) + t * dir, sun) / (uGroundRadius + hs);
         Medium m = medium(hs);

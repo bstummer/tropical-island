@@ -20,6 +20,9 @@ export function createRenderer({ canvas, quality: preset, capture, fallbackDepth
     preserveDrawingBuffer: capture,
   });
   if (!gl) throw new Error('WebGL2 is not available.');
+  // Every render target holds floats (the HDR scene, the sky's tables); without
+  // this, drawing into them fails silently.
+  if (!gl.getExtension('EXT_color_buffer_float')) throw new Error('This browser cannot render to float textures (EXT_color_buffer_float).');
   const stats = instrument(gl);
 
   let renderer;

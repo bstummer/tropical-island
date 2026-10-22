@@ -17,8 +17,8 @@ void main() {
   float distance;
   aerialParams(vec3(gl_FragCoord.xy, uSlice + 0.5) / uAerialSize, dir, distance);
   vec3 sun = vec3(sqrt(max(1.0 - uSunMu * uSunMu, 0.0)), uSunMu, 0.0);
-  float tGround = distanceToGround(uHeight, dir.y);
+  // The whole distance, also where the row has met the sea before it: the far
+  // sea lies between rows, and a row cut short there left it with too little haze.
   vec3 through;
-  vec3 light = inscatter(uHeight, dir, sun, tGround >= 0.0 ? min(distance, tGround) : distance, STEPS, through);
-  gl_FragColor = vec4(light, (through.r + through.g + through.b) / 3.0);
+  gl_FragColor = vec4(inscatter(uHeight, dir, sun, distance, STEPS, through), 1.0);
 }

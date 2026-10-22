@@ -29,6 +29,7 @@ import * as staleTimeFixture from './fixtures/stale-time.js';
 import * as blendFixture from './fixtures/blend.js';
 import * as lightFixture from './fixtures/light.js';
 import * as mathsFixture from './fixtures/maths.js';
+import * as hazeFixture from './fixtures/haze.js';
 
 // Updated in this order every frame. Each module exports create(ctx) -> { update(dt, t), dispose(), ready? }
 // where the optional `ready` promise is awaited before a capture starts.
@@ -50,6 +51,7 @@ const FIXTURES = {
   blend: [blendFixture],
   light: [sky, lightFixture],
   maths: [mathsFixture],
+  haze: [sky, hazeFixture],
 };
 
 let captureMode = false;

@@ -33,6 +33,17 @@ for (const view of views) {
   });
 }
 
+// The cove faces the sunset (PLAN.md, Decisions): the views out to sea from the
+// beach look straight into the setting sun.
+test('the beach and horizon views look into the setting sun', () => {
+  const [x, , z] = sunPath.position(sunPath.times.sunset).direction;
+  const sunYaw = (Math.atan2(-x, -z) * 180) / Math.PI; // yaw 0 looks towards -Z, 90 towards -X
+  for (const name of ['beach', 'horizon']) {
+    const off = ((((findView(name).yaw - sunYaw) % 360) + 540) % 360) - 180;
+    assert.ok(Math.abs(off) < 0.5, `${name} looks ${off.toFixed(1)}° away from the setting sun`);
+  }
+});
+
 test('findView returns the view or throws with the known names', () => {
   assert.equal(findView('beach'), views.find((v) => v.name === 'beach'));
   assert.throws(() => findView('underwater'), /Unknown view "underwater".*beach/);

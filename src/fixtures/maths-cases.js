@@ -24,7 +24,8 @@ export const coefficients = [
 ];
 
 // Texels of the result row: 9 basis values per direction, then an irradiance
-// per direction, then the worst round-trip errors of the sky-view and the
-// aerial-perspective mappings, in texels.
-export const texels = { basis: 0, irradiance: 9 * directions.length, skyView: 10 * directions.length, aerial: 10 * directions.length + 1 };
-export const texelCount = texels.aerial + 1;
+// per direction, then the worst round-trip errors of the sky-view, the
+// aerial-perspective and the multiple-scattering mappings, in texels.
+const n = directions.length;
+export const texels = { basis: 0, irradiance: 9 * n, skyView: 10 * n, aerial: 10 * n + 1, multiscatter: 10 * n + 2 };
+export const texelCount = texels.multiscatter + 1;

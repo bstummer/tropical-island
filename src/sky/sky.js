@@ -23,6 +23,7 @@ export function create(ctx) {
   light.uSkyView.value = atmosphere.skyView;
   light.uSkyViewSize.value.fromArray(settings.tables.skyView);
   light.uAerial.value = atmosphere.aerial;
+  light.uAerialTransmittance.value = atmosphere.aerialTransmittance;
   light.uAerialSize.value.fromArray(settings.tables.aerial);
 
   const geometry = new THREE.BufferGeometry();

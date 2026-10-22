@@ -1,8 +1,8 @@
 // Tool fixture (?fixture=maths): the maths the GPU and JS both do must agree
 // (CLAUDE.md §5), and the lookup tables' mappings must invert. At boot it has
 // the GPU evaluate the SH basis and irradiance (chunks/sh.glsl) for the cases in
-// maths-cases.js, and run the sky-view and aerial-perspective mappings forth and
-// back, then leaves the answers in window.__MATHS__ for tools/screenshot.js,
+// maths-cases.js, and run the sky-view, aerial-perspective and multiple-scattering
+// mappings forth and back, then leaves the answers in window.__MATHS__ for tools/screenshot.js,
 // which checks them against sky/light.js. Draws nothing. Not part of the island.
 import * as THREE from 'three';
 import vertexShader from '../post/output.vert';
@@ -22,6 +22,8 @@ export function create(ctx) {
         uDirections: { value: directions.map((d) => new THREE.Vector3(...d)) },
         uCoefficients: { value: coefficients.map((c) => new THREE.Vector3(...c)) },
         uGroundRadius: { value: config.sky.atmosphere.groundRadius },
+        uTopRadius: { value: config.sky.atmosphere.topRadius },
+        uMultiscatterSize: { value: new THREE.Vector2(...config.sky.tables.multiscatter) },
         uSkyViewSize: { value: new THREE.Vector2(...config.sky.tables.skyView) },
         uAerialSize: { value: new THREE.Vector3(...config.sky.tables.aerial) },
         uAerialRange: { value: config.sky.aerialRange },

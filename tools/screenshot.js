@@ -34,6 +34,7 @@ import { decodeDataUrl, encodePng } from './png.js';
 import { bandedShare, bandingView, brightestNear, meanColor, overdrawImage } from './image.js';
 import { blendLayout, cardSpan } from '../src/fixtures/blend-layout.js';
 import { coefficients, directions, texels } from '../src/fixtures/maths-cases.js';
+import { answers as hazeAnswers } from '../src/fixtures/haze-cases.js';
 import { shBasis, shIrradiance } from '../src/sky/light.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -105,7 +106,8 @@ async function capture(args) {
     let reporting = Promise.resolve();
     for (const [i, view] of views.entries()) {
       // The contract checks test the game's capture code, not the view: once per run is enough.
-      const captured = await captureView(context, fileUrl, query, view, outDir, { contractChecks: args.checks && i === 0, gpuTime: kind === 'hardware' });
+      // The time check runs on every view, each going to the next named time in turn.
+      const captured = await captureView(context, fileUrl, query, view, outDir, { contractChecks: args.checks && i === 0, timeCheck: args.checks ? i : null, gpuTime: kind === 'hardware' });
       reporting = reporting.then(async () => {
         const result = await finishView(captured, query);
         if (existsSync(join(outDir, result.file))) outputs.push(join(outDir, result.file));
@@ -176,8 +178,10 @@ async function capture(args) {
 // { result, analysis }, where `analysis` is still running (see finishView).
 // With `contractChecks`, also require that rendering the start frame again, and
 // loading the view fresh at the last motion frame's time, both reproduce the
-// pixels exactly.
-async function captureView(context, fileUrl, query, view, outDir, { contractChecks, gpuTime }) {
+// pixels exactly. With `timeCheck` (the view's index in the run), changing the
+// time of day in the page (timeChangeTarget) must render as loading the view at
+// that time does.
+async function captureView(context, fileUrl, query, view, outDir, { contractChecks, timeCheck, gpuTime }) {
   const started = Date.now();
   const { page, info, problems, consoleWarnings } = await openCapture(context, fileUrl, { ...query, view: view.name });
   const result = { view: view.name, file: `${view.name}.png`, info, timing: { loadMs: Date.now() - started }, problems, warnings: [], consoleWarnings };
@@ -206,7 +210,9 @@ async function captureView(context, fileUrl, query, view, outDir, { contractChec
           problems.push({ kind: 'capture', text: `loading at t=${t} renders differently from seeking there: some state depends on more than t` });
         }
         await fresh.page.close();
-        const changed = await changeTime(context, fileUrl, { ...query, view: view.name }, page, info.timeOfDay);
+      }
+      if (timeCheck !== null) {
+        const changed = await changeTime(context, fileUrl, { ...query, view: view.name }, page, timeChangeTarget(timeCheck, info.timeOfDay));
         problems.push(...changed.problems);
         if (changed.same === false) {
           problems.push({ kind: 'capture', text: `the time of day changed to ${changed.time} in the page renders differently from loading at ${changed.time}` });
@@ -391,7 +397,9 @@ function toolCheckTasks(context, fileUrl, query, view, outDir) {
       return detail;
     }),
     // Translucent layers blend in linear light (post/frame.js), through the post chain.
-    () => checkFixture(context, fileUrl, { ...params, fixture: 'blend' }, async (page, info, problems) => {
+    // At an exposure other than 1: the cards and their references both scale with
+    // it, so a pass that applies it twice or not at all shows only there.
+    () => checkFixture(context, fileUrl, { ...params, fixture: 'blend', exposure: 2 }, async (page, info, problems) => {
       const dataUrl = await page.evaluate(() => window.__CAPTURE__.image());
       writeFileSync(join(dir, 'blend.png'), Buffer.from(dataUrl.slice(dataUrl.indexOf(',') + 1), 'base64'));
       const { worst, contrast } = blendMismatch(decodeDataUrl(dataUrl), { bands: blendLayout.bands, spans: blendLayout.cards.map((_, i) => cardSpan(i)) });
@@ -423,11 +431,25 @@ function toolCheckTasks(context, fileUrl, query, view, outDir) {
       const { valueTolerance, texelTolerance } = config.capture.maths;
       const detail =
         `GPU SH vs sky/light.js off by ${m.basis.toExponential(1)} (basis) and ${m.irradiance.toExponential(1)} (irradiance), ` +
-        `table mappings invert to ${m.skyView.toFixed(4)} and ${m.aerial.toFixed(4)} texels`;
+        `table mappings invert to ${m.skyView.toFixed(4)}, ${m.aerial.toFixed(4)} and ${m.multiscatter.toFixed(4)} texels`;
       if (!(m.basis <= valueTolerance && m.irradiance <= valueTolerance)) problems.push({ kind: 'tool check', text: `maths fixture: ${detail}` });
-      if (!(m.skyView <= texelTolerance && m.aerial <= texelTolerance)) problems.push({ kind: 'tool check', text: `maths fixture: ${detail}` });
+      if (!(m.skyView <= texelTolerance && m.aerial <= texelTolerance && m.multiscatter <= texelTolerance)) problems.push({ kind: 'tool check', text: `maths fixture: ${detail}` });
       return detail;
     }),
+    // The sky's tables agree with the air they come from (src/fixtures/haze.js): from
+    // the beach at golden hour, and from the hill at sunset, high enough above the
+    // sea for tables that ignore the camera's height to show.
+    ...[
+      ['beach', 'golden-hour', false],
+      ['overview', 'sunset', true],
+    ].map(([view, time, high]) => () =>
+      checkFixture(context, fileUrl, { ...params, fixture: 'haze', view, time, name: `haze ${view} ${time}` }, async (page, info, problems) => {
+        const haze = await page.evaluate(() => window.__HAZE__);
+        const limit = config.capture.haze.limitLevels;
+        for (const text of hazeProblems(haze, limit, high)) problems.push({ kind: 'tool check', text: `haze fixture: ${text}` });
+        return `tables vs direct marches, worst in levels (limit ${limit}): ${hazeAnswers.map((name) => `${name} ${haze[name].toFixed(1)}`).join(', ')}`;
+      }),
+    ),
     // Teardown: what a quality change rebuilds must go away completely and come
     // back the same. Also with the blend fixture, which makes the frame create
     // the targets of its translucent pass and post chain.
@@ -448,9 +470,9 @@ function toolCheckTasks(context, fileUrl, query, view, outDir) {
       }
       return `caught ${leaks.join(', ')}`;
     }),
-    // The time-of-day check of the first view must catch a system that reads the time only at boot.
+    // The time-of-day check must catch a system that reads the time only at boot.
     () => checkFixture(context, fileUrl, { ...params, fixture: 'stale-time' }, async (page, info, problems) => {
-      const changed = await changeTime(context, fileUrl, { ...params, fixture: 'stale-time' }, page, info.timeOfDay);
+      const changed = await changeTime(context, fileUrl, { ...params, fixture: 'stale-time' }, page, timeChangeTarget(0, info.timeOfDay));
       problems.push(...changed.problems);
       if (changed.same !== false) problems.push({ kind: 'tool check', text: `stale-time fixture: changing the time to ${changed.time} in the page went unnoticed` });
       return `a time read only at boot: ${changed.same === false ? 'caught' : 'missed'}`;
@@ -458,12 +480,21 @@ function toolCheckTasks(context, fileUrl, query, view, outDir) {
   ];
 }
 
-// Sets another time of day in a loaded capture page, as the game's time
+// The named time view i of a run changes to for the time check: the next one in
+// turn, so a run covers them all, but never the view's own (`hours`).
+export function timeChangeTarget(i, hours) {
+  const names = ['golden-hour', 'sunrise', 'sunset', 'midday'];
+  for (let k = 0; k < names.length; k++) {
+    const name = names[(i + k) % names.length];
+    if (Math.abs(sunPath.times[name] - hours) > 0.5) return name;
+  }
+}
+
+// Sets the named `time` of day in a loaded capture page, as the game's time
 // control does, and loads that time fresh: the two frames must match, or
 // something that depends on the time doesn't follow it. Returns { time, same,
 // problems }, with same null when the fresh page failed.
-async function changeTime(context, fileUrl, params, page, from) {
-  const time = Math.abs(from - sunPath.times['golden-hour']) > 0.5 ? 'golden-hour' : 'midday';
+async function changeTime(context, fileUrl, params, page, time) {
   await page.evaluate((time) => window.__CAPTURE__.render({ time }), time);
   const changed = await page.evaluate(() => window.__CAPTURE__.image());
   const fresh = await openCapture(context, fileUrl, { ...params, time });
@@ -585,7 +616,22 @@ export function mathsMismatch(values) {
     const scale = Math.max(...want.map(Math.abs), 1e-6);
     want.forEach((w, c) => (irradiance = Math.max(irradiance, Math.abs(got[c] - w) / scale)));
   });
-  return { basis, irradiance, skyView: texel(texels.skyView)[0], aerial: texel(texels.aerial)[0] };
+  return { basis, irradiance, skyView: texel(texels.skyView)[0], aerial: texel(texels.aerial)[0], multiscatter: texel(texels.multiscatter)[0] };
+}
+
+// The haze fixture's answers (src/fixtures/haze-cases.js), worst misses in
+// levels: what the tables miss must stay within `limit`, and the deliberate
+// mistakes must go over it, or the measure sees nothing. `high`: the camera is
+// high enough for tables made at sea level to show. Returns problem texts.
+export function hazeProblems(haze, limit, high) {
+  const problems = [];
+  for (const name of ['aerial', 'skyView', 'skyLight']) {
+    if (!(haze[name] <= limit)) problems.push(`${name} off by ${haze[name]?.toFixed(1)} levels (limit ${limit})`);
+  }
+  for (const name of ['noHaze', 'dimSkyLight', ...(high ? ['seaLevel'] : [])]) {
+    if (!(haze[name] > limit)) problems.push(`the deliberate mistake ${name} is only ${haze[name]?.toFixed(1)} levels off, within the limit: the measure misses it`);
+  }
+  return problems;
 }
 
 // What grew between two __CAPTURE__.resources() snapshots: live WebGL objects

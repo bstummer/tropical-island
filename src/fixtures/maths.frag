@@ -3,6 +3,7 @@
 #include "chunks/sh.glsl"
 #include "chunks/sky-view.glsl"
 #include "chunks/aerial.glsl"
+#include "../sky/atmosphere.glsl"
 
 uniform vec3 uDirections[DIRECTIONS];
 uniform vec3 uCoefficients[9];
@@ -46,11 +47,26 @@ float aerialRoundTrip() {
   return worst;
 }
 
+float multiscatterRoundTrip() {
+  float worst = 0.0;
+  for (float y = 0.5; y < uMultiscatterSize.y; y += 1.0) {
+    for (float x = 0.5; x < uMultiscatterSize.x; x += 1.0) {
+      vec2 uv = vec2(x, y) / uMultiscatterSize;
+      float h, muSun;
+      multiscatterParams(uv, h, muSun);
+      vec2 back = multiscatterUv(h, muSun);
+      worst = max(worst, max(abs(back.x - uv.x) * uMultiscatterSize.x, abs(back.y - uv.y) * uMultiscatterSize.y));
+    }
+  }
+  return worst;
+}
+
 void main() {
   int i = int(gl_FragCoord.x);
   int n = DIRECTIONS;
   if (i < 9 * n) gl_FragColor = vec4(shBasis(i - 9 * (i / 9), normalize(uDirections[i / 9])), 0.0, 0.0, 1.0);
   else if (i < 10 * n) gl_FragColor = vec4(shIrradiance(uCoefficients, normalize(uDirections[i - 9 * n])), 1.0);
   else if (i == 10 * n) gl_FragColor = vec4(skyViewRoundTrip(), 0.0, 0.0, 1.0);
-  else gl_FragColor = vec4(aerialRoundTrip(), 0.0, 0.0, 1.0);
+  else if (i == 10 * n + 1) gl_FragColor = vec4(aerialRoundTrip(), 0.0, 0.0, 1.0);
+  else gl_FragColor = vec4(multiscatterRoundTrip(), 0.0, 0.0, 1.0);
 }

@@ -3,7 +3,8 @@
 //   transmittance  how much light gets through from any height and angle; with the haze
 //   multiscatter   light scattered twice and more; with the haze
 //   skyView        the sky in every direction from one height, for one sun; on demand
-//   aerial         what the air does to the light between the camera and any point; on demand
+//   aerial         the light the air adds between the camera and any point; on demand
+//   aerialTransmittance  and the share of the point's light it lets through; on demand
 //   probe          the light at sea level for one sun, read back for light.js; on demand
 // They are small and nothing here runs every frame: the sky changes only when
 // the time (and with it the haze) or the camera's height does.
@@ -13,6 +14,7 @@ import transmittanceShader from './transmittance.frag';
 import multiscatterShader from './multiscatter.frag';
 import skyViewShader from './sky-view.frag';
 import aerialShader from './aerial.frag';
+import aerialTransmittanceShader from './aerial-transmittance.frag';
 import probeShader from './probe.frag';
 import { createFullscreen } from '../post/fullscreen.js';
 
@@ -24,6 +26,7 @@ export function createAtmosphere(renderer, settings, tables, aerialRange, sample
     transmittance: target(tables.transmittance),
     multiscatter: target(tables.multiscatter),
     skyView: target(tables.skyView),
+    aerialTransmittance: target(tables.aerial.slice(1)), // the aerial table's rows and slices
     probe: target([PROBE_TEXELS, 1], THREE.FloatType), // read back: full precision
     aerial: new THREE.WebGL3DRenderTarget(...tables.aerial, { type: THREE.HalfFloatType, depthBuffer: false }),
   };
@@ -67,6 +70,7 @@ export function createAtmosphere(renderer, settings, tables, aerialRange, sample
       uSize: { value: new THREE.Vector2(...tables.skyView) },
     }),
     aerial: pass('sky-aerial', aerialShader, { STEPS: samples.aerial }, { uHeight: { value: 0 }, uSunMu: { value: 1 }, uSlice: { value: 0 } }),
+    aerialTransmittance: pass('sky-aerial-transmittance', aerialTransmittanceShader, { STEPS: samples.aerial }, { uHeight: { value: 0 } }),
     probe: pass('sky-probe', probeShader, { AZIMUTHS: samples.probe.azimuths, RINGS: samples.probe.rings, STEPS: samples.probe.steps }, {
       uSun: { value: new THREE.Vector3(0, 1, 0) },
     }),
@@ -78,6 +82,7 @@ export function createAtmosphere(renderer, settings, tables, aerialRange, sample
     uniforms, // for materials that include atmosphere.glsl
     skyView: targets.skyView.texture,
     aerial: targets.aerial.texture,
+    aerialTransmittance: targets.aerialTransmittance.texture,
     // The transmittance and multiple-scattering tables for this much haze (0 to 1).
     renderTables(haze) {
       uniforms.uHazeAmount.value = haze;
@@ -92,7 +97,9 @@ export function createAtmosphere(renderer, settings, tables, aerialRange, sample
         p.uniforms.uHeight.value = height;
         p.uniforms.uSunMu.value = sunMu;
       }
+      passes.aerialTransmittance.uniforms.uHeight.value = height;
       passes.skyView.render(renderer, targets.skyView);
+      passes.aerialTransmittance.render(renderer, targets.aerialTransmittance);
       for (let slice = 0; slice < tables.aerial[2]; slice++) {
         passes.aerial.uniforms.uSlice.value = slice;
         passes.aerial.render(renderer, targets.aerial, slice);

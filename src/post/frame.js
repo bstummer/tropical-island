@@ -39,13 +39,14 @@
 //                     sets up their materials: blending, no depth writes, and
 //                     sceneOutput() writing linear, premultiplied colour. Returns obj.
 //   opaque            { color, depth }: the opaque scene, compressed like the HDR target
-//                     (read the colour with sceneRadiance()) and its depth, for objects
+//                     (sceneRadiance() reads the colour back as radiance times the
+//                     exposure, as sceneOutput() takes it) and its depth, for objects
 //                     on layers.afterOpaque. Valid only during that pass.
 //   addPost(fn, { order, depth })  fn(renderer, input, output, depth) every frame:
 //                     input is a texture of linear, exposed radiance, output a render
 //                     target to draw the whole result into, and with `depth` set, depth
-//                     is the opaque scene's depth texture (god rays need it). Passes run
-//                     by `order`, then by when they were added. Returns a remover.
+//                     is the opaque scene's depth texture (god rays need it), else null.
+//                     Passes run by `order`, then by when they were added. Returns a remover.
 //   sceneTarget       the HDR target
 //   outputScene       the output pass, for the dev shader hot-swap
 import * as THREE from 'three';
@@ -59,6 +60,9 @@ const PASS_LAYERS = [LAYERS.opaque, LAYERS.afterOpaque, LAYERS.translucent];
 
 export function createFrame(ctx, display) {
   const { renderer, scene, camera, config, quality, params } = ctx;
+  // The after-opaque pass reads the resolved target while it draws into the
+  // samples; without MSAA it would read the very texture it draws into.
+  if (!(quality.msaa >= 2)) throw new Error(`quality.msaa is ${quality.msaa}: the frame needs at least 2 samples`);
   const tonemap = params.tonemap ?? config.post.tonemap;
   if (!config.post.tonemaps[tonemap]) {
     throw new Error(`Unknown tonemap "${tonemap}". Tonemaps: ${Object.keys(config.post.tonemaps).join(', ')}`);
@@ -73,6 +77,10 @@ export function createFrame(ctx, display) {
     depthTexture: new THREE.DepthTexture(1, 1, THREE.FloatType),
     resolveDepthBuffer: false,
   });
+  // Where the browser offers multisampled render-to-texture, three.js would draw
+  // straight into the texture the after-opaque pass reads. This (a three.js
+  // internal, as three.js itself sets it) keeps the samples apart and resolves them.
+  renderer.properties.get(sceneTarget).__useRenderToTexture = false;
 
   // Created on first use, kept until dispose().
   let layerTarget = null; // the translucent pass: linear premultiplied colour, transmittance in alpha
@@ -157,6 +165,7 @@ export function createFrame(ctx, display) {
       uSkyViewHeight: { value: 0 },
       uGroundRadius: { value: config.sky.atmosphere.groundRadius },
       uAerial: { value: null },
+      uAerialTransmittance: { value: null },
       uAerialSize: { value: new THREE.Vector3(1, 1, 1) },
       uAerialRange: { value: config.sky.aerialRange },
     },
@@ -203,7 +212,7 @@ export function createFrame(ctx, display) {
       return object;
     },
     addPost(fn, { order = 0, depth = false } = {}) {
-      const entry = { fn, order, n: postCount++ };
+      const entry = { fn, order, depth, n: postCount++ };
       posts.push(entry);
       posts.sort((a, b) => a.order - b.order || a.n - b.n);
       if (depth) postDepth++;
@@ -254,8 +263,8 @@ export function createFrame(ctx, display) {
         composite.uniforms.uLayer.value = use.translucent ? layerTarget.texture : null;
         composite.render(renderer, postTargets[0]);
         let [from, to] = postTargets;
-        for (const { fn } of posts) {
-          fn(renderer, from.texture, to, sceneTarget.depthTexture);
+        for (const { fn, depth } of posts) {
+          fn(renderer, from.texture, to, depth ? sceneTarget.depthTexture : null);
           [from, to] = [to, from];
         }
         input = from.texture;

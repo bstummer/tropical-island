@@ -20,6 +20,7 @@ uniform sampler2D uSkyView;
 uniform vec2 uSkyViewSize;
 uniform float uSkyViewHeight; // km: the camera's height the sky-view table is for
 uniform sampler3D uAerial;
+uniform sampler2D uAerialTransmittance;
 
 // How much of the sun reaches a point: 1 lit, 0 in shadow. The one place
 // where shadows join the light: Stage 5's sun shadows and Stage 10's cloud
@@ -53,6 +54,6 @@ vec3 skyRadiance(vec3 dir) {
 vec3 aerialPerspective(vec3 radiance, vec3 position) {
   vec3 ray = position - cameraPosition;
   float d = length(ray);
-  vec4 air = texture(uAerial, aerialUvw(ray / max(d, 1e-4), d * 0.001, uSunDirection));
-  return radiance * air.a + air.rgb;
+  vec3 uvw = aerialUvw(ray / max(d, 1e-4), d * 0.001, uSunDirection);
+  return radiance * texture(uAerialTransmittance, uvw.yz).rgb + texture(uAerial, uvw).rgb;
 }

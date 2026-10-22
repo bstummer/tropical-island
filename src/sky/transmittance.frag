@@ -8,8 +8,5 @@
 void main() {
   float h, mu;
   transmittanceParams(gl_FragCoord.xy / uTransmittanceSize, h, mu);
-  float dt = distanceToTop(h, mu) / float(STEPS);
-  vec3 depth = vec3(0.0);
-  for (int i = 0; i < STEPS; i++) depth += medium(heightAlong(h, mu, (float(i) + 0.5) * dt)).extinction;
-  gl_FragColor = vec4(exp(-depth * dt), 1.0);
+  gl_FragColor = vec4(exp(-opticalDepth(h, mu, distanceToTop(h, mu), STEPS)), 1.0);
 }
