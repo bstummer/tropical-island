@@ -8,7 +8,6 @@
 #include "chunks/lighting.glsl"
 #include "atmosphere.glsl"
 
-uniform float uSunRadius; // radians
 uniform float uSunCeiling; // the most the disk may reach once exposed
 uniform float uLimbDarkening; // the disk's edge is 1 - this of its centre
 uniform float uAureoleG; // how sharp the aureole's peak is (Henyey-Greenstein g)

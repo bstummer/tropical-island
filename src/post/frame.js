@@ -27,9 +27,10 @@
 // Systems reach it as ctx.frame:
 //   size              the drawing buffer, { width, height } in pixels
 //   onResize(fn)      fn(size) now and after every resize; returns a remover
-//   uniforms          shared by every scene material: uExposure, and the light state
+//   uniforms          shared by every scene material: uExposure, the light state
 //                     that chunks/lighting.glsl reads and sky/sky.js keeps in step with
-//                     the time of day (neutral until then)
+//                     the time of day, and the terrain's grids that chunks/terrain.glsl
+//                     reads and world/terrain.js fills (neutral until then)
 //   beforeScene(fn)   fn(renderer) every frame after all systems updated and before
 //                     the scene renders, for passes of their own; returns a remover
 //   layers            { opaque, afterOpaque, translucent }: object.layers.set(...)
@@ -173,6 +174,17 @@ export function createFrame(ctx, display) {
       uAerialTransmittance: { value: null },
       uAerialSize: { value: new THREE.Vector3(1, 1, 1) },
       uAerialRange: { value: config.sky.aerialRange },
+      uSunlight: { value: null },
+      uSunlightSize: { value: config.sky.tables.sunlight[0] },
+      uSunlightTop: { value: config.sky.sunlightTop },
+      // The terrain's grids (chunks/terrain.glsl), which world/terrain.js fills.
+      uTerrainHeight: { value: null },
+      uTerrainInfo: { value: null },
+      uTerrainLevels: { value: config.world.terrain.levels.map(() => new THREE.Vector4(0, 0, 1, 0)) },
+      uTerrainFrame: { value: new THREE.Vector4(1, 0, 0, 1) },
+      uTerrainSamples: { value: 2 },
+      uTerrainBlend: { value: 1 },
+      uTerrainReady: { value: 0 },
     },
     layers: LAYERS,
     skyOrder: 1e9,
@@ -237,6 +249,10 @@ export function createFrame(ctx, display) {
       output.compile(renderer, null);
     },
     render() {
+      // The camera moved since the last frame; passes that cull or follow it
+      // (the terrain's nodes, shadow maps) need where it is now, which
+      // renderer.render() would only work out after them.
+      camera.updateMatrixWorld();
       for (const pass of passes) pass(renderer);
       const use = used();
       const linear = use.translucent || posts.length > 0;

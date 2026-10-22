@@ -1,11 +1,12 @@
 // The frame readout: frame time, GPU time where the browser exposes timer
-// queries, and what the frame asks of the GPU (draws, triangles, passes,
-// memory). F3 toggles it; ?stats=1 shows it from the start. Works in the built
-// game. main.js doesn't create it in capture mode, so it never shows in captures.
+// queries, what the frame asks of the GPU (draws, triangles, passes, memory),
+// and where the camera is, how high above the ground. F3 toggles it; ?stats=1
+// shows it from the start. Works in the built game. main.js doesn't create it
+// in capture mode, so it never shows in captures.
 import { formatReadout, summarizeFrames } from './timing.js';
 
 export function create(ctx) {
-  const { config, stats } = ctx;
+  const { config, stats, camera } = ctx;
   const box = document.getElementById('readout');
   const frameMs = [];
   const gpuMs = [];
@@ -51,6 +52,8 @@ export function create(ctx) {
         preset: Object.keys(presets).find((name) => presets[name] === ctx.quality),
         size: ctx.frame.size,
         msaa: ctx.frame.sceneTarget.samples,
+        where: camera.position.toArray(),
+        aboveGround: ctx.terrain ? camera.position.y - ctx.terrain.heightAt(camera.position.x, camera.position.z) : null,
       });
       frameMs.length = gpuMs.length = sinceRefresh = 0;
     },

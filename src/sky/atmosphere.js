@@ -5,6 +5,7 @@
 //   skyView        the sky in every direction from one height, for one sun; on demand
 //   aerial         the light the air adds between the camera and any point; on demand
 //   aerialTransmittance  and the share of the point's light it lets through; on demand
+//   sunlight       the sun's light by the height above the sea, for one sun; on demand
 //   probe          the light at sea level for one sun, read back for light.js; on demand
 // They are small and nothing here runs every frame: the sky changes only when
 // the time (and with it the haze) or the camera's height does.
@@ -15,18 +16,21 @@ import multiscatterShader from './multiscatter.frag';
 import skyViewShader from './sky-view.frag';
 import aerialShader from './aerial.frag';
 import aerialTransmittanceShader from './aerial-transmittance.frag';
+import sunlightShader from './sunlight.frag';
 import probeShader from './probe.frag';
 import { createFullscreen } from '../post/fullscreen.js';
 
 const PROBE_TEXELS = 10;
 
-export function createAtmosphere(renderer, settings, tables, aerialRange, samples) {
+// For config.sky.
+export function createAtmosphere(renderer, { atmosphere: settings, tables, aerialRange, samples, sunlightTop }) {
   const target = ([width, height], type = THREE.HalfFloatType) => new THREE.WebGLRenderTarget(width, height, { type, depthBuffer: false });
   const targets = {
     transmittance: target(tables.transmittance),
     multiscatter: target(tables.multiscatter),
     skyView: target(tables.skyView),
     aerialTransmittance: target(tables.aerial.slice(1)), // the aerial table's rows and slices
+    sunlight: target(tables.sunlight),
     probe: target([PROBE_TEXELS, 1], THREE.FloatType), // read back: full precision
     aerial: new THREE.WebGL3DRenderTarget(...tables.aerial, { type: THREE.HalfFloatType, depthBuffer: false }),
   };
@@ -52,12 +56,15 @@ export function createAtmosphere(renderer, settings, tables, aerialRange, sample
     uOzoneAbsorption: { value: vec3(settings.ozoneAbsorption) },
     uGroundAlbedo: { value: vec3(settings.groundAlbedo) },
     uSunIlluminance: { value: vec3(settings.sunIlluminance) },
+    uSunRadius: { value: (settings.sunRadius * Math.PI) / 180 },
     uTransmittance: { value: targets.transmittance.texture },
     uTransmittanceSize: { value: new THREE.Vector2(...tables.transmittance) },
     uMultiscatter: { value: targets.multiscatter.texture },
     uMultiscatterSize: { value: new THREE.Vector2(...tables.multiscatter) },
     uAerialSize: { value: new THREE.Vector3(...tables.aerial) },
     uAerialRange: { value: aerialRange },
+    uSunlightSize: { value: tables.sunlight[0] },
+    uSunlightTop: { value: sunlightTop },
   };
   const pass = (name, fragmentShader, defines, own = {}) =>
     createFullscreen(new THREE.ShaderMaterial({ name, vertexShader, fragmentShader, defines, uniforms: { ...uniforms, ...own } }));
@@ -71,6 +78,7 @@ export function createAtmosphere(renderer, settings, tables, aerialRange, sample
     }),
     aerial: pass('sky-aerial', aerialShader, { STEPS: samples.aerial }, { uHeight: { value: 0 }, uSunMu: { value: 1 }, uSlice: { value: 0 } }),
     aerialTransmittance: pass('sky-aerial-transmittance', aerialTransmittanceShader, { STEPS: samples.aerial }, { uHeight: { value: 0 } }),
+    sunlight: pass('sky-sunlight', sunlightShader, { STEPS: samples.sunlight }, { uSunMu: { value: 1 } }),
     probe: pass('sky-probe', probeShader, { AZIMUTHS: samples.probe.azimuths, RINGS: samples.probe.rings, STEPS: samples.probe.steps }, {
       uSun: { value: new THREE.Vector3(0, 1, 0) },
     }),
@@ -83,6 +91,7 @@ export function createAtmosphere(renderer, settings, tables, aerialRange, sample
     skyView: targets.skyView.texture,
     aerial: targets.aerial.texture,
     aerialTransmittance: targets.aerialTransmittance.texture,
+    sunlight: targets.sunlight.texture,
     // The transmittance and multiple-scattering tables for this much haze (0 to 1).
     renderTables(haze) {
       uniforms.uHazeAmount.value = haze;
@@ -104,6 +113,13 @@ export function createAtmosphere(renderer, settings, tables, aerialRange, sample
         passes.aerial.uniforms.uSlice.value = slice;
         passes.aerial.render(renderer, targets.aerial, slice);
       }
+      renderer.setRenderTarget(null);
+    },
+    // The sunlight table for the sun at zenith cosine sunMu, with the haze of
+    // the last renderTables().
+    renderSunlight(sunMu) {
+      passes.sunlight.uniforms.uSunMu.value = sunMu;
+      passes.sunlight.render(renderer, targets.sunlight);
       renderer.setRenderTarget(null);
     },
     // The probe for the sun towards `sun` (a world direction, y up), as RGBA floats per texel.

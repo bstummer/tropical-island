@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { diskAbove, hazeAmount, lightFromProbe, luminance, shBasis, shIrradiance } from '../src/sky/light.js';
+import { diskAbove, hazeAmount, lightFromProbe, luminance, shBasis, shIrradiance, sunAtHeight } from '../src/sky/light.js';
 import { config } from '../src/config.js';
 
 // Directions over the sphere with their solid angles (latitude-longitude grid).
@@ -130,4 +130,34 @@ test('hazeAmount: the low share at and below the horizon, all of it from fullAbo
     assert.ok(a >= last && a <= 1, `${d} degrees: ${a}`);
     last = a;
   }
+});
+
+test('sunAtHeight: through a sky of air alone, with the sun overhead, as the exact integral says', () => {
+  const air = { ...config.sky.atmosphere, mieScattering: 0, mieAbsorption: 0, hazeScattering: 0, hazeAbsorption: 0, ozoneAbsorption: [0, 0, 0] };
+  const { rayleighScattering, rayleighHeight, topRadius, groundRadius } = air;
+  for (const h of [0, 0.05, 0.3, 2]) {
+    const got = sunAtHeight(h, Math.PI / 2, air, 1);
+    rayleighScattering.forEach((beta, c) => {
+      const depth = beta * rayleighHeight * (Math.exp(-h / rayleighHeight) - Math.exp(-(topRadius - groundRadius) / rayleighHeight));
+      const want = air.sunIlluminance[c] * Math.exp(-depth);
+      assert.ok(Math.abs(got[c] - want) / want < 1e-5, `${h} km, channel ${c}: ${got[c]} vs ${want}`);
+    });
+  }
+});
+
+test('sunAtHeight: a low sun grows with height, and the horizon dips below the hilltops', () => {
+  const { atmosphere, haze } = config.sky;
+  const at = (h, degrees) => luminance(sunAtHeight(h, (degrees * Math.PI) / 180, atmosphere, hazeAmount((degrees * Math.PI) / 180, haze)));
+  for (const degrees of [0, 1, 5]) {
+    let last = 0;
+    for (const h of [0, 0.01, 0.05, 0.3, 1, 2]) {
+      assert.ok(at(h, degrees) > last, `${degrees}° up: the sun at ${h} km is no brighter than lower down`);
+      last = at(h, degrees);
+    }
+  }
+  // The sun's centre on the sea's horizon: half the disk shows at sea level, all of it from a hill.
+  const radius = (atmosphere.sunRadius * Math.PI) / 180;
+  const below = -radius * 1.5;
+  assert.equal(at(0, (below * 180) / Math.PI), 0, 'a sun below the horizon still shines at sea level');
+  assert.ok(at(0.3, (below * 180) / Math.PI) > 0, "from 300 m up, a sun just below the sea's horizon is still up");
 });

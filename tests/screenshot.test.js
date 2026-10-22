@@ -12,6 +12,7 @@ import {
   describeWarning,
   explainLaunchError,
   hazeProblems,
+  terrainProblems,
   isSameFile,
   mathsMismatch,
   metricChanges,
@@ -250,23 +251,53 @@ test('maths mismatch: a wrong basis value or irradiance shows', () => {
 
 // ---------------------------------------------------------------- haze fixture
 
-const goodHaze = { aerial: 1, skyView: 0.5, skyLight: 4, noHaze: 150, seaLevel: 40, dimSkyLight: 15 };
+const goodHaze = { aerial: 1, skyView: 0.5, skyLight: 4, sunlight: 1, noHaze: 150, seaLevel: 40, dimSkyLight: 15, seaLevelSun: 30, sun: { 50: 1.15, 300: 1.6 } };
 
 test('haze problems: small misses and visible mistakes pass', () => {
-  assert.deepEqual(Object.keys(goodHaze), hazeAnswers);
-  assert.deepEqual(hazeProblems(goodHaze, 6, true), []);
+  assert.deepEqual(Object.keys(goodHaze).slice(0, -1), hazeAnswers);
+  assert.deepEqual(hazeProblems(goodHaze, 6, { high: true }), []);
 });
 
 test('haze problems: a miss over the limit fails, and so does a mistake the measure cannot see', () => {
-  assert.match(hazeProblems({ ...goodHaze, aerial: 9 }, 6, false).join(), /aerial off by 9\.0/);
-  assert.match(hazeProblems({ ...goodHaze, dimSkyLight: 3 }, 6, false).join(), /dimSkyLight .*misses it/);
-  assert.match(hazeProblems({ ...goodHaze, skyView: NaN }, 6, false).join(), /skyView/);
+  assert.match(hazeProblems({ ...goodHaze, aerial: 9 }, 6).join(), /aerial off by 9\.0/);
+  assert.match(hazeProblems({ ...goodHaze, dimSkyLight: 3 }, 6).join(), /dimSkyLight .*misses it/);
+  assert.match(hazeProblems({ ...goodHaze, sunlight: 7 }, 6).join(), /sunlight off by 7\.0/);
+  assert.match(hazeProblems({ ...goodHaze, seaLevelSun: 2 }, 6).join(), /seaLevelSun .*misses it/);
+  assert.match(hazeProblems({ ...goodHaze, skyView: NaN }, 6).join(), /skyView/);
+});
+
+test('haze problems: the sunlight must grow with height', () => {
+  assert.match(hazeProblems({ ...goodHaze, sun: { 50: 0.9, 300: 1.2 } }, 6).join(), /at 50 m .*less than lower down/);
+  assert.match(hazeProblems({ ...goodHaze, sun: { 50: 1.5, 300: 1.2 } }, 6).join(), /at 300 m/);
+  assert.match(hazeProblems({ ...goodHaze, sun: {} }, 6).join(), /no sunlight/);
+});
+
+test('haze problems: in the last minutes of daylight only the sunlight is judged', () => {
+  assert.deepEqual(hazeProblems({ ...goodHaze, aerial: 9, noHaze: 1 }, 6, { sunOnly: true }), []);
+  assert.match(hazeProblems({ ...goodHaze, sunlight: 9 }, 6, { sunOnly: true }).join(), /sunlight off/);
 });
 
 test('haze problems: tables made at sea level only have to show from high up', () => {
   const low = { ...goodHaze, seaLevel: 0.5 };
-  assert.deepEqual(hazeProblems(low, 6, false), []);
-  assert.match(hazeProblems(low, 6, true).join(), /seaLevel/);
+  assert.deepEqual(hazeProblems(low, 6), []);
+  assert.match(hazeProblems(low, 6, { high: true }).join(), /seaLevel/);
+});
+
+// ---------------------------------------------------------------- terrain fixture
+
+const goodTerrain = { gpu: 5e-5, mistaken: 1.6, island: [1, 2, 4, 8].map((texel) => ({ texel, median: 0.004 * texel })) };
+const terrainLimits = { limit: 0.002, islandMedian: 0.04 };
+
+test('terrain problems: heights that agree pass', () => {
+  assert.deepEqual(terrainProblems(goodTerrain, terrainLimits), []);
+});
+
+test('terrain problems: a GPU off, a mistake the check misses, or ground far from the island fail', () => {
+  assert.match(terrainProblems({ ...goodTerrain, gpu: 0.01 }, terrainLimits).join(), /GPU vs world\/heightmap\.js off/);
+  assert.match(terrainProblems({ ...goodTerrain, mistaken: 1e-4 }, terrainLimits).join(), /misses it/);
+  const shifted = { ...goodTerrain, island: goodTerrain.island.map((l) => ({ ...l, median: 0.1 * l.texel })) };
+  assert.equal(terrainProblems(shifted, terrainLimits).length, 4);
+  assert.match(terrainProblems({ ...goodTerrain, gpu: NaN }, terrainLimits).join(), /GPU/);
 });
 
 // ---------------------------------------------------------------- time check

@@ -14,6 +14,7 @@
     "build": "vite build",
     "check": "node tools/check-build.js",
     "shot": "npm run build && node tools/screenshot.js",
+    "map": "node tools/map.js",
     "verify": "npm test && npm run build && npm run check && node tools/screenshot.js --checks"
   },
   "dependencies": {

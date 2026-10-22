@@ -16,6 +16,7 @@ import * as benchmark from './core/benchmark.js';
 import { defineTimeOfDay } from './sky/sun.js';
 import * as timeControl from './sky/time-control.js';
 import * as sky from './sky/sky.js';
+import * as terrain from './world/terrain.js';
 import * as placeholder from './world/placeholder.js';
 import * as shimmerFixture from './fixtures/shimmer.js';
 import * as heavyFixture from './fixtures/heavy.js';
@@ -30,10 +31,11 @@ import * as blendFixture from './fixtures/blend.js';
 import * as lightFixture from './fixtures/light.js';
 import * as mathsFixture from './fixtures/maths.js';
 import * as hazeFixture from './fixtures/haze.js';
+import * as terrainFixture from './fixtures/terrain.js';
 
 // Updated in this order every frame. Each module exports create(ctx) -> { update(dt, t), dispose(), ready? }
 // where the optional `ready` promise is awaited before a capture starts.
-const WORLD_SYSTEMS = [sky, placeholder];
+const WORLD_SYSTEMS = [sky, terrain, placeholder];
 
 // Test scenes that replace the world with ?fixture=<name>: tools/screenshot.js
 // uses them to prove its measurements and the frame's guarantees, the tonecard
@@ -52,6 +54,7 @@ const FIXTURES = {
   light: [sky, lightFixture],
   maths: [mathsFixture],
   haze: [sky, hazeFixture],
+  terrain: [sky, terrain, terrainFixture],
 };
 
 let captureMode = false;

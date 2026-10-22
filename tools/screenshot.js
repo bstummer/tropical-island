@@ -436,18 +436,33 @@ function toolCheckTasks(context, fileUrl, query, view, outDir) {
       if (!(m.skyView <= texelTolerance && m.aerial <= texelTolerance && m.multiscatter <= texelTolerance)) problems.push({ kind: 'tool check', text: `maths fixture: ${detail}` });
       return detail;
     }),
+    // The heights the GPU draws are the ones JS knows (src/fixtures/terrain.js), the
+    // comparison catches a sampler half a metre off, and the drawn ground keeps
+    // close to the island's between samples.
+    () => checkFixture(context, fileUrl, { ...params, fixture: 'terrain' }, async (page, info, problems) => {
+      const t = await page.evaluate(() => window.__TERRAIN__);
+      for (const text of terrainProblems(t, config.capture.terrain)) problems.push({ kind: 'tool check', text: `terrain fixture: ${text}` });
+      const { limit } = config.capture.terrain;
+      return (
+        `${t.points} points: GPU vs world/heightmap.js off by ${t.gpu.toExponential(1)} m (limit ${limit}), ` +
+        `${t.mistaken.toFixed(2)} m half a metre off; drawn vs world/island.js per level (median) ${t.island.map((l) => `${l.median.toFixed(3)} m`).join(', ')}`
+      );
+    }),
     // The sky's tables agree with the air they come from (src/fixtures/haze.js): from
     // the beach at golden hour, and from the hill at sunset, high enough above the
-    // sea for tables that ignore the camera's height to show.
+    // sea for tables that ignore the camera's height to show. And the sunlight in
+    // the last minutes of daylight, when the hills keep the sun the beach is losing.
     ...[
-      ['beach', 'golden-hour', false],
-      ['overview', 'sunset', true],
-    ].map(([view, time, high]) => () =>
+      ['beach', 'golden-hour', {}],
+      ['overview', 'sunset', { high: true }],
+      ['overview', (sunPath.daylight.end - 0.002).toFixed(4), { sunOnly: true }],
+    ].map(([view, time, cases]) => () =>
       checkFixture(context, fileUrl, { ...params, fixture: 'haze', view, time, name: `haze ${view} ${time}` }, async (page, info, problems) => {
         const haze = await page.evaluate(() => window.__HAZE__);
         const limit = config.capture.haze.limitLevels;
-        for (const text of hazeProblems(haze, limit, high)) problems.push({ kind: 'tool check', text: `haze fixture: ${text}` });
-        return `tables vs direct marches, worst in levels (limit ${limit}): ${hazeAnswers.map((name) => `${name} ${haze[name].toFixed(1)}`).join(', ')}`;
+        for (const text of hazeProblems(haze, limit, cases)) problems.push({ kind: 'tool check', text: `haze fixture: ${text}` });
+        const sun = Object.entries(haze.sun).map(([h, ratio]) => `${ratio.toFixed(2)}x at ${h} m`).join(', ');
+        return `tables vs direct marches, worst in levels (limit ${limit}): ${hazeAnswers.map((name) => `${name} ${haze[name].toFixed(1)}`).join(', ')}; sunlight vs sea level ${sun}`;
       }),
     ),
     // Teardown: what a quality change rebuilds must go away completely and come
@@ -619,18 +634,40 @@ export function mathsMismatch(values) {
   return { basis, irradiance, skyView: texel(texels.skyView)[0], aerial: texel(texels.aerial)[0], multiscatter: texel(texels.multiscatter)[0] };
 }
 
+// The terrain fixture's results (src/fixtures/terrain.js): the GPU's heights
+// within `limit` of heightmap.js's, the deliberate mistake beyond it, and per
+// level the drawn ground's median miss of the island within islandMedian of
+// the level's spacing. Returns problem texts.
+export function terrainProblems(t, { limit, islandMedian }) {
+  const problems = [];
+  if (!(t.gpu <= limit)) problems.push(`GPU vs world/heightmap.js off by ${t.gpu?.toExponential(1)} m (limit ${limit})`);
+  if (!(t.mistaken > limit)) problems.push(`a sampler half a metre off is only ${t.mistaken?.toExponential(1)} m off, within the limit: the check misses it`);
+  for (const { texel, median } of t.island) {
+    if (!(median <= islandMedian * texel)) problems.push(`the ${texel} m level misses world/island.js by ${median?.toFixed(3)} m (median; limit ${(islandMedian * texel).toFixed(2)})`);
+  }
+  return problems;
+}
+
 // The haze fixture's answers (src/fixtures/haze-cases.js), worst misses in
 // levels: what the tables miss must stay within `limit`, and the deliberate
-// mistakes must go over it, or the measure sees nothing. `high`: the camera is
-// high enough for tables made at sea level to show. Returns problem texts.
-export function hazeProblems(haze, limit, high) {
+// mistakes must go over it, or the measure sees nothing; and the sunlight must
+// grow with height. `high`: the camera is high enough for tables made at sea
+// level to show. `sunOnly`: judge the sunlight alone. Returns problem texts.
+export function hazeProblems(haze, limit, { high = false, sunOnly = false } = {}) {
   const problems = [];
-  for (const name of ['aerial', 'skyView', 'skyLight']) {
+  for (const name of sunOnly ? ['sunlight'] : ['aerial', 'skyView', 'skyLight', 'sunlight']) {
     if (!(haze[name] <= limit)) problems.push(`${name} off by ${haze[name]?.toFixed(1)} levels (limit ${limit})`);
   }
-  for (const name of ['noHaze', 'dimSkyLight', ...(high ? ['seaLevel'] : [])]) {
+  for (const name of sunOnly ? ['seaLevelSun'] : ['noHaze', 'dimSkyLight', 'seaLevelSun', ...(high ? ['seaLevel'] : [])]) {
     if (!(haze[name] > limit)) problems.push(`the deliberate mistake ${name} is only ${haze[name]?.toFixed(1)} levels off, within the limit: the measure misses it`);
   }
+  const ratios = Object.entries(haze.sun ?? {}).sort(([a], [b]) => a - b);
+  let last = 1;
+  for (const [h, ratio] of ratios) {
+    if (!(ratio >= last * (1 - 1e-3))) problems.push(`the sunlight at ${h} m is ${ratio?.toFixed(3)} times the sea level's, less than lower down`);
+    last = ratio;
+  }
+  if (!ratios.length) problems.push('no sunlight reported by height');
   return problems;
 }
 
@@ -726,6 +763,7 @@ export function describeWarning({ metric, value, limit }) {
 async function checkPlayerMode(context, fileUrl, query, view) {
   const page = await context.newPage();
   await page.setViewportSize(PLAYER_MODE.viewport);
+  await stubPointerLock(page);
   const { problems, consoleWarnings } = watchPage(page, fileUrl);
   const params = new URLSearchParams({ ...query, view: view.name, stats: '1' }); // with the frame readout
   params.delete('capture');
@@ -749,11 +787,62 @@ async function checkPlayerMode(context, fileUrl, query, view) {
     if (await page.evaluate(() => document.getElementById('readout').checkVisibility())) {
       problems.push({ kind: 'player mode', text: `${config.readout.key} does not hide the frame readout` });
     }
+    // Start, walk on the ground for a few frames, and fly again. The pointer
+    // lock is stubbed (stubPointerLock), so no real mouse is captured. The
+    // readout, shown again, says where the camera is and how high above the
+    // ground: the walk has to move it along the ground at eye height, with
+    // Space held too, which would lift a flying camera.
+    await page.click('#start');
+    await page.keyboard.press(config.readout.key);
+    const where = (previous) =>
+      page
+        .waitForFunction(
+          (previous) => {
+            const m = document.getElementById('readout').textContent.match(/at (\S+), (\S+), (\S+) · (\S+) m above the ground/);
+            const at = m?.slice(1).map(Number);
+            return at && at.every(Number.isFinite) && (!previous || at.some((v, i) => v !== previous[i])) && at;
+          },
+          previous,
+          { timeout: 10_000 },
+        )
+        .then((handle) => handle.jsonValue());
+    const start = await where(null);
+    await page.keyboard.press(config.movement.walk.key);
+    await page.keyboard.down('KeyW');
+    await page.keyboard.down('Space');
+    await page.waitForFunction(() => (window.__PLAYER_FRAMES__ = (window.__PLAYER_FRAMES__ ?? 0) + 1) % 10 === 0, null, { polling: 'raf' });
+    await page.keyboard.up('Space');
+    await page.keyboard.up('KeyW');
+    const walked = await where(start);
+    const { eye, float } = config.movement.walk;
+    const moved = Math.hypot(walked[0] - start[0], walked[2] - start[2]);
+    if (!(moved > 0.05 && (Math.abs(walked[3] - eye) < 0.02 || walked[1] <= float + 0.02))) {
+      problems.push({ kind: 'player mode', text: `walking (${config.movement.walk.key}, W and Space) moved the camera ${moved.toFixed(2)} m to ${walked[3].toFixed(2)} m above the ground, not at eye height (${eye} m)` });
+    }
+    await page.keyboard.press(config.movement.walk.key);
   } catch (err) {
     problems.push({ kind: 'player mode', text: err.message.split('\n')[0] });
   }
   await page.close();
   return { problems, consoleWarnings, ms: Date.now() - started };
+}
+
+// Pointer lock that never reaches the browser: requestPointerLock() makes the
+// element the lock holder and fires pointerlockchange, as a real lock would.
+function stubPointerLock(page) {
+  return page.addInitScript(() => {
+    let holder = null;
+    Object.defineProperty(Document.prototype, 'pointerLockElement', { get: () => holder, configurable: true });
+    Element.prototype.requestPointerLock = function () {
+      holder = this;
+      document.dispatchEvent(new Event('pointerlockchange'));
+      return Promise.resolve();
+    };
+    Document.prototype.exitPointerLock = function () {
+      holder = null;
+      document.dispatchEvent(new Event('pointerlockchange'));
+    };
+  });
 }
 
 // The benchmark (?bench=1), shortened: it must visit every view and end with a

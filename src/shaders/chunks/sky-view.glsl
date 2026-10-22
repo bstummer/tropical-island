@@ -13,8 +13,7 @@
 #endif
 
 #include "angles.glsl"
-
-uniform float uGroundRadius; // km
+#include "planet.glsl"
 
 // How far the horizon dips below level from height h, in radians.
 float horizonDip(float h) {

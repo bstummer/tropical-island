@@ -1,10 +1,11 @@
-// Invariants for viewpoints and config. When island.js lands, extend the
-// views test with "every view is above the terrain" (see CLAUDE.md, Testing).
+// Invariants for viewpoints and config.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { views, findView } from '../src/views.js';
 import { config } from '../src/config.js';
 import { sunPath } from '../src/sky/sun.js';
+import { createRandom } from '../src/core/random.js';
+import { createIsland } from '../src/world/island.js';
 
 const SEA_LEVEL = 0;
 
@@ -23,7 +24,7 @@ for (const view of views) {
     assert.ok(Math.abs(view.pitch) <= config.movement.maxPitch);
     assert.doesNotThrow(() => sunPath.toHours(view.timeOfDay), 'timeOfDay is daylight hours or a named time');
     if (view.fov !== undefined) assert.ok(view.fov >= 2 && view.fov <= 120, `fov = ${view.fov}: 2 (a long telephoto) to 120`);
-    if (view.brief !== undefined) assert.ok(typeof view.brief === 'string' && view.brief.trim(), 'brief must be a non-empty line');
+    assert.ok(typeof view.brief === 'string' && view.brief.trim() && !view.brief.includes('\n'), 'every view needs a brief: one line on what the shot is for');
     for (const [name, centre] of Object.entries(view.crops ?? {})) {
       assert.match(name, /^[a-z0-9]+(-[a-z0-9]+)*$/, `crop name "${name}"`);
       assert.ok(centre.length === 2 && centre.every((c) => c >= 0 && c <= 1), `crop "${name}" centre must be [x, y] in 0–1`);
@@ -41,6 +42,32 @@ test('the beach and horizon views look into the setting sun', () => {
   for (const name of ['beach', 'horizon']) {
     const off = ((((findView(name).yaw - sunYaw) % 360) + 540) % 360) - 180;
     assert.ok(Math.abs(off) < 0.5, `${name} looks ${off.toFixed(1)}° away from the setting sun`);
+  }
+});
+
+// The views that look into the sun have it in frame at their time: inside the
+// circle the frame's height spans, so at any window shape.
+test('the horizon and into-the-sun views have the sun in frame', () => {
+  const DEG = Math.PI / 180;
+  for (const name of ['horizon', 'into-the-sun']) {
+    const view = findView(name);
+    const [x, y, z] = sunPath.position(sunPath.toHours(view.timeOfDay)).direction;
+    const yaw = view.yaw * DEG;
+    const pitch = view.pitch * DEG;
+    const ahead = [-Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), -Math.cos(yaw) * Math.cos(pitch)];
+    const off = Math.acos(Math.min(1, x * ahead[0] + y * ahead[1] + z * ahead[2])) / DEG;
+    const half = (view.fov ?? config.camera.fov) / 2;
+    assert.ok(off < half, `${name}: the sun is ${off.toFixed(1)}° off the view's centre, the frame's height spans ±${half}°`);
+  }
+});
+
+// The views are framed on the game's seed (PLAN.md, Decisions), so on that one.
+test('every view is above the ground and the sea, with room for an eye', () => {
+  const island = createIsland(createRandom(config.defaults.seed));
+  for (const view of views) {
+    const [x, y, z] = view.position;
+    const ground = Math.max(island.height(x, z), SEA_LEVEL);
+    assert.ok(y >= ground + 1, `${view.name}: ${(y - ground).toFixed(2)} m above the ground or the sea`);
   }
 });
 

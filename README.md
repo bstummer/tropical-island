@@ -19,6 +19,7 @@ Click to start, then:
 | Mouse | Look around |
 | W A S D | Move |
 | Space / Shift | Up / down |
+| G | Walk on the ground (Shift runs) or fly again |
 | Mouse wheel | Change speed |
 | Esc | Release the mouse |
 | F3 | Show or hide frame time and GPU stats |

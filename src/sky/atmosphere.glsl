@@ -28,6 +28,7 @@ uniform float uHazeG;
 uniform vec3 uOzoneAbsorption;
 uniform vec3 uGroundAlbedo;
 uniform vec3 uSunIlluminance;
+uniform float uSunRadius; // radians: the disk's angular radius
 
 uniform sampler2D uTransmittance;
 uniform vec2 uTransmittanceSize;
@@ -141,6 +142,23 @@ void transmittanceParams(vec2 uv, out float h, out float mu) {
 vec3 transmittance(float h, float mu) {
   if (distanceToGround(h, mu) >= 0.0) return vec3(0.0);
   return textureLod(uTransmittance, transmittanceUv(h, mu), 0.0).rgb;
+}
+
+// ---------------------------------------------------------------- sunlight by height
+
+// The sun's illuminance on a surface facing it at height h, with the sun at
+// zenith cosine muSun: through the air towards the sun's centre, kept up to the
+// horizon, times the share of the disk above it. The horizon dips as h grows,
+// so hilltops keep the sun a little longer than the beach. The probe's sun at
+// sea level is the same (probe.frag, light.js). In `steps` steps of a direct
+// march: the transmittance table's rows lie too far apart near the sea, where
+// the haze makes the light change fastest.
+vec3 sunAtHeight(float h, float muSun, int steps) {
+  float dip = horizonDip(h);
+  float x = clamp((asinPrecise(clamp(muSun, -1.0, 1.0)) + dip) / uSunRadius, -1.0, 1.0);
+  float disk = 1.0 - (acos(x) - x * sqrt(1.0 - x * x)) / PI; // the area of a circle above a chord
+  float mu = max(muSun, -sin(dip));
+  return uSunIlluminance * exp(-opticalDepth(h, mu, distanceToTop(h, mu), steps)) * disk;
 }
 
 // ---------------------------------------------------------------- multiple scattering

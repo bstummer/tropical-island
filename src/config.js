@@ -7,10 +7,14 @@ export const quality = {
   default: 'high',
   // msaa: samples per pixel in the HDR target (post/frame.js), at least 2 (it
   // checks): the after-opaque pass reads the resolved target while it draws into the samples.
+  // terrainDetail: metres from the camera, across the ground, within which the
+  // terrain keeps its finest mesh; each coarser level reaches twice as far
+  // (config.world.terrain). Below leaf x 1.41 / (1 - morph), about 65 m, seams
+  // between levels open (world/lod.js refuses it).
   presets: {
-    low: { renderScale: 0.67, maxPixelRatio: 1, msaa: 2 },
-    medium: { renderScale: 0.85, maxPixelRatio: 1.5, msaa: 4 },
-    high: { renderScale: 1, maxPixelRatio: 2, msaa: 4 },
+    low: { renderScale: 0.67, maxPixelRatio: 1, msaa: 2, terrainDetail: 72 },
+    medium: { renderScale: 0.85, maxPixelRatio: 1.5, msaa: 4, terrainDetail: 90 },
+    high: { renderScale: 1, maxPixelRatio: 2, msaa: 4, terrainDetail: 128 },
   },
 };
 
@@ -86,7 +90,7 @@ export const sky = {
     wavelengths: [680, 550, 440], // nm: the red, green and blue the scattering above is given for
   },
   // Lookup table sizes (sky/atmosphere.js).
-  tables: { transmittance: [256, 64], multiscatter: [32, 32], skyView: [192, 108], aerial: [32, 32, 32] },
+  tables: { transmittance: [256, 64], multiscatter: [32, 32], skyView: [192, 108], aerial: [32, 32, 32], sunlight: [64, 1] },
   // Ray-march steps and sample counts of the tables (sky/*.frag). They run only
   // when the time or the camera's height changes, never per frame.
   samples: {
@@ -95,8 +99,12 @@ export const sky = {
     skyView: 48,
     aerial: 16,
     probe: { azimuths: 32, rings: 16, steps: 16 },
+    sunlight: 64,
   },
   aerialRange: 64, // km: the aerial-perspective table reaches past the horizon from any view
+  // km: the sunlight table (sky/atmosphere.js) holds the sun's light up to this
+  // height above the sea, which no lit surface on the island comes near.
+  sunlightTop: 2,
   // The camera height the sky is drawn for moves in these steps (metres): the sky
   // follows the camera's height, but no faster than this.
   heightStep: 1,
@@ -106,6 +114,169 @@ export const sky = {
   // Decisions): 0.3, so a low sun stays darker and keeps its deep orange; 0.5
   // washed the sunset out. The key keeps noon's exposure as 0.5 had it.
   exposure: { key: 4.47, compensation: 0.3 },
+};
+
+// The island's shape (world/island.js). Metres. The cove's beach is the origin;
+// positions in the cove are [along, out]: along the beach towards the headland,
+// and out to sea, which is towards the setting sun. Ridges are lists of
+// [along, out, height] points.
+export const world = {
+  island: {
+    // From the cove's beach to the far coast. Performance decides the final size
+    // (PLAN.md, Decisions); nothing in the cove changes with it. Past about 2200,
+    // world.terrain's coarsest grid stops short of the deep water round some
+    // seeds: lay its levels out again (tests/heightmap.test.js checks).
+    size: 2000,
+    minSize: 1600, // smaller, and the far coast cuts into the hills behind the cove
+    cove: {
+      radius: 520, // nothing within this of the beach depends on the size
+      blend: 300, // the band beyond it where the rest of the island takes over
+      headlandSide: -1, // -1: the headland is on the left of someone facing the sea, 1: on the right
+      bay: { radius: [130, 185], blend: 90 }, // the beach's arc: its radius towards the headland and the far side
+      // The land the bay is cut into: it reaches `out` to sea (on the headland's
+      // side, on the far side), and between `from` and `to` along the coast falls
+      // back to the island's coast, which curves back with `radius`.
+      front: { out: [190, 105], from: 140, to: 380, radius: 800 },
+      corner: 25, // how round the bay's corners are
+      // Promontories either side of the bay, as chains of [along, out, radius].
+      headland: { path: [[265, -150, 100], [240, 40, 75], [232, 140, 58], [205, 235, 40]], blend: 30 },
+      point: { path: [[-165, 20, 70], [-180, 120, 45]], blend: 25 }, // the low point opposite
+      // Where the beach gives way to rock: towards the headland between these, and
+      // on the far side between these, down to a share of sand.
+      // `fade`: over how many metres around the headland the sand gives way to rock.
+      sand: { headland: [90, 220], far: [-460, -300, 0.3], fade: 90 },
+    },
+    coast: {
+      // The shore's wiggles: in the bay, and either side of it, where they also swing
+      // slowly; they change from the one to the other between `outerFrom` metres along.
+      cove: { amplitude: 2.5, outer: 10, swing: 25, wavelength: 70, outerFrom: [150, 400] },
+      island: { amplitude: 10, swing: 45, wavelength: 380 }, // and around the rest of the island, larger
+      // The island: a main lobe behind the cove, its front `front` out at the cove,
+      // `width` x size across, and `count` more, seeded, reaching out from it.
+      lobes: { front: -20, width: 0.9, count: 3, spread: 115, reach: [0.3, 0.48], radius: [0.32, 0.56] },
+      lobeBlend: 120,
+    },
+    hills: {
+      summit: [100, -650, 285], // the peak behind the cove (PLAN.md, Decisions: 250–300 m)
+      summitRound: 40,
+      // The volcano's profile: shares of the summit's height that fall away by e
+      // over these distances, a steep cone on a broad shield.
+      profile: [[0.6, 220], [0.4, 900]],
+      // Lower summits on the other lobes: shares of the main one's height, their profile, valleys around them.
+      peaks: { share: [0.5, 0.75], profile: [[0.55, 180], [0.45, 500]], valleys: 6 },
+      // Valleys radiating from each summit: `count` around the main one, twice as
+      // many beyond each `branch` band (metres from the top), `length` long, cutting
+      // up to `depth` of the height between `from` and `full` metres out; `saturate`
+      // sets how broad they are. The cove's valley, `width` degrees wide, cuts deeper.
+      valleys: {
+        count: 7,
+        branch: [[220, 420], [550, 900]],
+        length: 700,
+        depth: 0.6,
+        saturate: 0.6,
+        from: 60,
+        full: 300,
+        cove: { width: 11, depth: 0.7 },
+      },
+      ridges: [
+        [[100, -650, 285], [215, -430, 195], [245, -220, 130], [215, -20, 95], [205, 120, 70], [200, 215, 40]], // down to the headland
+        [[100, -650, 285], [-110, -580, 225], [-250, -420, 160], [-290, -200, 85], [-230, -30, 30]], // the valley's far side
+      ],
+      crestRadius: 12, // ridges are rounded this much on top
+      flankSlope: 1.15, // steepest slope of a ridge's flanks, unless its width is held between these
+      width: [12, 120],
+      join: 30, // how smoothly ridges merge where they meet
+      warp: { amplitude: 40, wavelength: 420 }, // bends the ridgelines
+      detail: { share: 0.035, base: 0.8, wavelength: 90, octaves: 4 },
+      gullies: { share: 0.06, wavelength: 50 },
+    },
+    shore: {
+      // A beach rises over its berm to a gentle plain; a rocky shore steeply.
+      // A beach: its berm, then a plain rising `plain` metres over about `plainReach`.
+      beach: { berm: 1.7, bermWidth: 20, plainFrom: 35, plain: 6, plainReach: 150, shelfSlope: 0.07, hillReach: 160 },
+      rocky: { lip: 2.5, lipWidth: 4, rise: 20, reach: 80, shelfSlope: 0.35, hillReach: 18 },
+      hillJoin: 6,
+      undulation: { amplitude: 1.2, wavelength: 140, from: [30, 120] }, // a slow swell on the beach's plain, between these metres inland
+      islandSand: [0.15, 0.45], // noise values over which the rest of the island's shore turns sandy
+      islandSandWavelength: 450,
+    },
+    seabed: {
+      lagoon: { depth: 3.4, swing: 1, wavelength: 160 },
+      reef: {
+        // The crest across the cove: `out` from the beach (PLAN.md, Decisions:
+        // 200–300 m), curving back with `radius`. Around the rest of the island it
+        // keeps mean ± swing from the coast.
+        cove: { out: 265, radius: 520 },
+        island: { mean: 230, swing: 120, wavelength: 600 },
+        crest: 0.35, // depth of the crest, where the surf breaks
+        flat: 0.9, // and of the reef flat behind it
+        flatWidth: 25,
+        backSlope: 0.15, // the back of the reef, down to the lagoon floor
+        roughness: [0.25, 9], // the crest's and the flat's: metres up and down, wavelength
+        // The drop-off seaward of the crest, with spur-and-groove ridges across it:
+        // grooves [height, wavelength], from the crest out to between `groovesEnd` metres.
+        fore: { drop: 22, dropWidth: 25, slope: 0.11, grooves: [1.5, 14], groovesEnd: [60, 160] },
+      },
+      pass: { from: [-80, 200], to: [-110, 340], halfWidth: 24, depth: [6, 12], wall: 0.5 }, // through the reef
+      // From the bay to the pass, deepening and widening along the way.
+      channel: { path: [[-10, 80], [-45, 112], [-48, 150], [-72, 180], [-88, 210]], halfWidth: [7, 18], depth: [3.8, 6.5], wall: 0.3 },
+      bend: { amplitude: 12, wavelength: 70 }, // how far the pass's and the channel's walls wander
+      // Coral heads in the lagoon: from `from` m offshore to `clear` m inside the reef's crest.
+      bommies: { cell: 28, chance: 0.35, radius: [4, 9], top: [0.8, 1.8], from: 45, clear: 50 },
+      minDepth: 0.3, // nothing out in the water comes closer to the surface
+      outerMargin: 300, // past the reef's crest, the seabed is deep beyond this
+    },
+    // Placement zones (world/island.js ZONES). Widths in metres inland; on rocky
+    // shores the sand's band is rock.
+    zones: {
+      rockSlope: 55, // degrees: steeper ground is rock
+      wetSand: 8,
+      drySand: 26,
+      drySandSwing: 5,
+      scrub: 10,
+      palmBelt: 45,
+      palmBeltSwing: 15,
+      wavelength: 250, // long enough that the zones' edges move slower than the shore falls behind
+      reefBack: 60, // the reef zone runs from this far inside the crest
+      reefFore: 25, // to this far outside it
+      reefDeep: 3, // deeper than this, a pass rather than reef
+    },
+  },
+  // The island as drawn (world/heightmap.js, world/terrain.js).
+  terrain: {
+    // Nested grids of `samples` x `samples` heights in the cove's frame, finest
+    // first, each `texel` metres apart around `centre` [along, out]: 1 m over the
+    // bay and beach, 2 m over the hills behind, then the rest of the island. Each
+    // lies inside the next coarser one's full share, and the coarsest covers the
+    // island (tests/heightmap.test.js).
+    samples: 512,
+    levels: [
+      { texel: 1, centre: [0, -20] },
+      { texel: 2, centre: [0, -208] },
+      { texel: 4, centre: [0, -500] },
+      { texel: 8, centre: [0, -1000] },
+    ],
+    blend: 32, // samples over which a level fades into the next coarser one at its edge
+    // The level-of-detail mesh: a quadtree over the coarsest grid. Its smallest
+    // nodes are `leaf` metres across, with `grid` x `grid` quads; each level up
+    // doubles both. A node splits within quality.terrainDetail x 2^level metres of
+    // the camera, and morphs into its parent over the last `morph` of that range.
+    leaf: 32,
+    grid: 32,
+    morph: 0.3,
+    rowsPerTask: 32, // rows of a grid per job of the workers that build it
+    maxWorkers: 8,
+    // Until Stage 4's ground surfaces: plain colours by zone (sRGB hex).
+    colours: {
+      drySand: '#e9dcb4',
+      wetSand: '#b8a57d',
+      seabed: '#e3d7ae',
+      scrub: '#7f8f4a',
+      green: '#4f7a37',
+      jungle: '#2c5626',
+      rock: '#77706a',
+    },
+  },
 };
 
 // The frame readout (core/readout.js) and the benchmark (core/benchmark.js, ?bench=1).
@@ -126,6 +297,10 @@ export const movement = {
   wheelSpeedStep: 1.2, // speed multiplier per mouse-wheel notch
   lookSensitivity: 0.0022, // radians per mouse pixel
   maxPitch: 89, // degrees
+  // Rough walking (core/input.js), to judge the cove's scale on foot until Stage 14:
+  // the key that toggles it, m/s, Shift's factor, the eye's height over the
+  // ground, and over the sea where it is deeper than that.
+  walk: { key: 'KeyG', speed: 1.4, run: 3, eye: 1.7, float: 0.4 },
 };
 
 // Used when a URL param and the active view leave a value unset.
@@ -175,6 +350,13 @@ export const capture = {
   // SH misses the bright band along the horizon by up to 5 levels on a white
   // surface at golden hour; the tables miss by 1 to 4 levels.
   haze: { limitLevels: 6 },
+  // The terrain fixture (src/fixtures/terrain.js), in metres: how far the GPU's
+  // heights may land from world/heightmap.js's (floats on the GPU, doubles in JS),
+  // and the deliberate mistake, half a metre off, that the check has to catch.
+  // And how far the drawn ground may stray from world/island.js between samples,
+  // as a median per level and a share of its spacing: bilinear misses about
+  // 0.005 of it on curved ground, a grid shifted half a sample 0.1 and more.
+  terrain: { limit: 0.002, offset: 0.5, islandMedian: 0.04 },
 };
 
 // Frame cost limits per quality preset. tools/screenshot.js measures every view
@@ -196,4 +378,4 @@ export const build = {
   sizeBudgetBytes: 3 * 1024 * 1024, // raw size of dist/index.html; warn above, fail above 2x
 };
 
-export const config = { quality, camera, post, sky, readout, bench, movement, defaults, capture, budget, build };
+export const config = { quality, camera, post, sky, world, readout, bench, movement, defaults, capture, budget, build };

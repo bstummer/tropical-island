@@ -55,6 +55,37 @@ export function hazeAmount(elevation, { low, fullAbove }) {
   return low + (1 - low) * x * x * (3 - 2 * x);
 }
 
+// The sun's illuminance [r, g, b] on a surface facing it, h km above the sea,
+// with the sun `elevation` radians up and `haze` of the haze there
+// (hazeAmount): through the air towards the sun's centre, kept up to the
+// horizon, which dips as h grows, times the share of the disk above it. A
+// march in doubles, apart from the GPU's (atmosphere.glsl sunAtHeight): the
+// haze fixture holds the sunlight table to it. `atmosphere`: config.sky.atmosphere.
+export function sunAtHeight(h, elevation, atmosphere, haze, steps = 4000) {
+  const { groundRadius: ground, topRadius: top, wavelengths } = atmosphere;
+  const r = ground + h;
+  const dip = Math.asin(Math.sqrt(h * (2 * ground + h)) / r);
+  const disk = diskAbove(elevation + dip, (atmosphere.sunRadius * Math.PI) / 180);
+  const mu = Math.max(Math.sin(elevation), -Math.sin(dip));
+  const length = -r * mu + Math.sqrt(r * r * (mu * mu - 1) + top * top);
+  const hazeExtinction = wavelengths.map((nm) => (atmosphere.hazeScattering + atmosphere.hazeAbsorption) * (nm / 550) ** -atmosphere.hazeAngstrom);
+  const depth = [0, 0, 0];
+  for (let i = 0; i < steps; i++) {
+    // Steps crowd towards the start, where the air is densest.
+    const [t0, t1] = [length * (i / steps) ** 2, length * ((i + 1) / steps) ** 2];
+    const t = (t0 + t1) / 2;
+    const height = Math.max(Math.sqrt(r * r + t * t + 2 * r * t * mu) - ground, 0);
+    const aerosol = (atmosphere.mieScattering + atmosphere.mieAbsorption) * Math.exp(-height / atmosphere.mieHeight);
+    const wet = haze * Math.exp(-height / atmosphere.hazeHeight);
+    const ozone = Math.max(0, 1 - Math.abs(height - 25) / 15);
+    for (let c = 0; c < 3; c++) {
+      const extinction = atmosphere.rayleighScattering[c] * Math.exp(-height / atmosphere.rayleighHeight) + aerosol + hazeExtinction[c] * wet + atmosphere.ozoneAbsorption[c] * ozone;
+      depth[c] += extinction * (t1 - t0);
+    }
+  }
+  return depth.map((d, c) => atmosphere.sunIlluminance[c] * Math.exp(-d) * disk);
+}
+
 // The light state from the probe (probe.frag, 10 RGBA texels) for the sun at
 // `sun` (sky/sun.js position()): the sun's radiance as it reaches the scene,
 // the sky's light as SH (the sky alone), the light on level ground in the open,

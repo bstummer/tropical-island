@@ -6,8 +6,11 @@
 #include "../post/tonemap.glsl"
 
 uniform float uExposure;
+uniform float uSunAt[SUN_AT]; // m: where the sunlight is checked (haze-cases.js)
+uniform vec3 uSunTruth[SUN_AT]; // and what it is there (sky/light.js sunAtHeight)
+uniform float uSunHeights[RATIOS]; // m: where to report it against the sea level's
 
-// TONEMAP: the frame's
+// TONEMAP: the frame's; ANSWERS: how many answers come before the reported heights
 
 const int DIRECT_STEPS = 256; // the direct marches: far finer than any table's
 const float DEG = PI / 180.0;
@@ -40,7 +43,7 @@ vec3 farPoint(vec3 way, int k) {
   float horizon = sqrt(2000.0 * uGroundRadius * cameraPosition.y);
   float d = k < 5 ? SEA[k] * horizon : HILLS[k - 5];
   vec3 p = cameraPosition + way * d;
-  p.y = (k < 5 ? 0.0 : 40.0) - d * d / (2000.0 * uGroundRadius);
+  p.y = (k < 5 ? 0.0 : 40.0) - planetDrop(p.xz);
   return p;
 }
 
@@ -108,14 +111,46 @@ float skyLightMiss(float scale) {
   return worst;
 }
 
+// A point h metres above the sea, every other one 25 km from the camera and
+// bent down with the planet as the terrain is, about 50 m there.
+vec3 sunPoint(float h, int k) {
+  vec3 away = k % 2 == 1 ? 25000.0 * across(90.0) : vec3(0.0);
+  vec3 p = vec3(cameraPosition.x, h, cameraPosition.z) + away;
+  p.y -= planetDrop(p.xz);
+  return p;
+}
+
+// The sunlight on a white surface facing the sun, as lighting.glsl gives it,
+// against sky/light.js's at each height, and at sea level against the light
+// state's (probe.frag and light.js). seaLevel: the sea level's sunlight at
+// every height.
+float sunlightMiss(bool seaLevel) {
+  float worst = miss(0.8 / PI * sunLight(sunPoint(0.0, 0), uSunDirection), 0.8 / PI * uSunRadiance);
+  for (int k = 0; k < SUN_AT; k++) {
+    vec3 seen = sunLight(sunPoint(seaLevel ? 0.0 : uSunAt[k], k), uSunDirection);
+    worst = max(worst, miss(0.8 / PI * seen, 0.8 / PI * uSunTruth[k]));
+  }
+  return worst;
+}
+
 void main() {
   int answer = int(gl_FragCoord.x);
+  if (answer >= ANSWERS) {
+    // The sunlight at a height, as a multiple of the sea level's.
+    float h = uSunHeights[answer - ANSWERS];
+    const vec3 LUMINANCE = vec3(0.2126, 0.7152, 0.0722);
+    float ratio = dot(sunLight(sunPoint(h, 0), uSunDirection), LUMINANCE) / max(dot(sunLight(sunPoint(0.0, 0), uSunDirection), LUMINANCE), 1e-9);
+    gl_FragColor = vec4(ratio, 0.0, 0.0, 1.0);
+    return;
+  }
   float worst;
   if (answer == 0) worst = aerialMiss(0);
   else if (answer == 1) worst = skyViewMiss();
   else if (answer == 2) worst = skyLightMiss(1.0);
-  else if (answer == 3) worst = aerialMiss(1);
-  else if (answer == 4) worst = aerialMiss(2);
-  else worst = skyLightMiss(0.75);
+  else if (answer == 3) worst = sunlightMiss(false);
+  else if (answer == 4) worst = aerialMiss(1);
+  else if (answer == 5) worst = aerialMiss(2);
+  else if (answer == 6) worst = skyLightMiss(0.75);
+  else worst = sunlightMiss(true);
   gl_FragColor = vec4(worst, 0.0, 0.0, 1.0);
 }

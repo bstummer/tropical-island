@@ -20,14 +20,16 @@ const fixed = (v, digits) => (v == null ? 'n/a' : v.toFixed(digits));
 const count = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(2)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}k` : String(n));
 const mb = (bytes) => `${Math.round(bytes / (1024 * 1024))} MB`;
 
-// The readout's three lines. frames and gpu come from summarizeFrames (gpu null
+// The readout's four lines. frames and gpu come from summarizeFrames (gpu null
 // when the browser has no timer queries), counts from gl-stats lastFrame(),
-// memory from gl-stats memory().
-export function formatReadout({ frames, gpu, counts, memory, preset, size, msaa }) {
+// memory from gl-stats memory(); where is the camera's position [x, y, z], and
+// aboveGround how high it is above the ground (null without a terrain).
+export function formatReadout({ frames, gpu, counts, memory, preset, size, msaa, where, aboveGround }) {
   return [
     `${fixed(frames?.mean, 1)} ms · ${fixed(frames?.fps, 0)} fps · GPU ${gpu ? `${fixed(gpu.mean, 2)} ms` : 'n/a'}`,
     `${counts.drawCalls} draws · ${count(counts.triangles)} tris · ${counts.passes} passes · ${memory.programs} programs`,
     `RT ${mb(memory.renderTargetBytes)} · tex ${mb(memory.textureBytes)} · ${preset} ${size.width}×${size.height} · MSAA ${msaa}`,
+    `at ${where.map((v) => v.toFixed(2)).join(', ')} · ${fixed(aboveGround, 2)} m above the ground`,
   ].join('\n');
 }
 

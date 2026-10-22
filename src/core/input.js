@@ -1,8 +1,9 @@
 import * as THREE from 'three';
 
-// Pointer-lock mouse look + free-fly camera (walking comes later).
+// Pointer-lock mouse look + free-fly camera, and rough walking (Stage 14 builds the real thing).
 //   Mouse: look · W/A/S/D: move along the view direction · Space: up · Shift: down
 //   Wheel: fly speed · Esc: release the mouse
+//   G: walk on the ground at eye height (Shift runs), or fly again; in deep water the eye floats
 //   P (dev builds only): log the camera as a views.js entry and copy it to the clipboard
 export function create(ctx) {
   const { camera, renderer, config } = ctx;
@@ -14,7 +15,9 @@ export function create(ctx) {
   const look = new THREE.Euler(0, 0, 0, 'YXZ').copy(camera.rotation);
   const maxPitch = THREE.MathUtils.degToRad(movement.maxPitch);
   const move = new THREE.Vector3();
+  const up = new THREE.Vector3(0, 1, 0);
   let speed = movement.flySpeed;
+  let walking = false;
 
   const locked = () => document.pointerLockElement === canvas;
 
@@ -38,6 +41,7 @@ export function create(ctx) {
   function onKeyDown(e) {
     if (import.meta.env.DEV && e.code === 'KeyP' && !e.repeat) logView();
     if (!locked()) return;
+    if (e.code === movement.walk.key && !e.repeat) walking = !walking;
     pressed.add(e.code);
     if (e.code === 'Space') e.preventDefault();
   }
@@ -81,12 +85,21 @@ export function create(ctx) {
 
   return {
     update(dt) {
-      if (!locked() || dt === 0) return;
-      const axis = (pos, neg) => (pressed.has(pos) ? 1 : 0) - (pressed.has(neg) ? 1 : 0);
-      const shift = pressed.has('ShiftLeft') || pressed.has('ShiftRight');
-      move.set(axis('KeyD', 'KeyA'), 0, -axis('KeyW', 'KeyS')).applyEuler(look);
-      move.y += (pressed.has('Space') ? 1 : 0) - (shift ? 1 : 0);
-      if (move.lengthSq() > 0) camera.position.addScaledVector(move.normalize(), speed * dt);
+      if (locked() && dt > 0) {
+        const axis = (pos, neg) => (pressed.has(pos) ? 1 : 0) - (pressed.has(neg) ? 1 : 0);
+        const shift = pressed.has('ShiftLeft') || pressed.has('ShiftRight');
+        if (walking) {
+          // Along the ground, wherever the view points.
+          move.set(axis('KeyD', 'KeyA'), 0, -axis('KeyW', 'KeyS')).applyAxisAngle(up, look.y);
+          if (move.lengthSq() > 0) camera.position.addScaledVector(move.normalize(), movement.walk.speed * (shift ? movement.walk.run : 1) * dt);
+        } else {
+          move.set(axis('KeyD', 'KeyA'), 0, -axis('KeyW', 'KeyS')).applyEuler(look);
+          move.y += (pressed.has('Space') ? 1 : 0) - (shift ? 1 : 0);
+          if (move.lengthSq() > 0) camera.position.addScaledVector(move.normalize(), speed * dt);
+        }
+      }
+      const ground = walking ? ctx.terrain?.heightAt(camera.position.x, camera.position.z) : undefined;
+      if (ground !== undefined) camera.position.y = Math.max(ground + movement.walk.eye, movement.walk.float);
     },
     dispose() {
       overlay.removeEventListener('click', lock);

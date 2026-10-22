@@ -71,7 +71,7 @@ when a choice is about taste or scope rather than engineering (see Open question
 |---|---|---|---|
 | 1 | HDR frame and measurement | The cove | done |
 | 2 | Sky, sun and atmosphere | The cove | done |
-| 3 | Island shape | The cove | todo |
+| 3 | Island shape | The cove | done |
 | 4 | Ground surfaces and rocks | The cove | todo |
 | 5 | Shadows | The cove | todo |
 | 6 | Ocean | The cove | todo |
@@ -260,10 +260,41 @@ final place, and judged by the runtime check from the start.
 - Rough walking: a toggle that puts the camera at eye height on the terrain, so the user can judge the
   cove's scale from the ground long before Stage 14 builds real walking.
 - Hilltops catch the last light at sunset. Known from Stage 2: the light is the same at every height
-  today, while at sunset the sun is 1.8 times stronger at 50 m than at sea level, and almost 7 times
-  at 300 m.
+  today, while a low sun is several times stronger on a hilltop than on the beach.
 - **Done when** the placeholder mound is gone, the overview's landforms read as a tropical island, the views
   frame the cove, each with a brief the user agreed, and the user has checked the cove's scale on foot.
+
+Sub-steps, in order. Each one ends with `npm run verify` green and `main` shippable, and fixes whatever it
+made untrue in CLAUDE.md. The layout comes first and is judged on a map before anything renders it, and
+the user walks the cove before the views are framed on it: until then, changing the layout is cheap.
+
+- [x] **3.1 Layout.** `world/island.js` holds the height function and the placement zones, with the cove
+  art-directed and the rest of the island coarse. The seabed is designed with the land: sand shelf,
+  lagoon, channels, the reef and a pass through it, the drop-off. The island's size is one setting. A
+  top-down map (relief, depths, zones, where the views stand) lets the user and the AI judge the layout
+  before anything renders it. How high the hills stand, how far out the reef lies and where the headland
+  sits are a matter of taste: show the user candidates as maps side by side. Check: invariant tests over
+  seeds 1–20, each seen red once: the zones run in order from the shore and cover every point once, the
+  beach faces the sunset, the reef stays under water, deep sea rings the island, and resizing leaves the
+  cove's heights unchanged. The pictures don't change (nothing draws the island yet).
+- [x] **3.2 Terrain.** The island replaces the placeholder mound: land and seabed drawn from the heightmap
+  on the GPU, with no facets at eye height, cheap in the distance, and no cracks, popping or crawling
+  ridgelines. The GPU's heights agree with `island.js` at sample points, checked in the browser and
+  proven on a deliberate offset. Until Stage 6, the placeholder water shows the depth below it in its
+  colour, so the lagoon and the reef read from above. The views move onto the new land, keeping their
+  names, and a test keeps them above the terrain. Rough walking arrives here, so the user can judge the
+  scale on foot. Boot stays quick: a verify run loads the page dozens of times. Check: shimmer and cost
+  within their limits, captures within their time budget on SwiftShader, teardown clean. Then the user
+  walks the cove; what they find goes back into 3.1's layout before 3.4 frames the views.
+- [x] **3.3 Light by height.** Sunlight depends on the height of the point it falls on, as the atmosphere
+  says, so hilltops catch the last light while the beach lies in the low sun's dimmer light. Check: the
+  GPU's sunlight at sample heights agrees with direct marches through the atmosphere, the runtime time
+  check still passes, and the overview at sunset shows lit hilltops above a dimmer shore.
+- [x] **3.4 Views and briefs.** The final framing. The existing views keep their names; a new view looks
+  from the beach into the setting sun at golden hour, the shot the cove is laid out for; a close-up
+  shows the ground at the camera's feet. The AI drafts a brief for every view and the user agrees them,
+  then the views test requires one. Check: every view judged against its brief at midday and at golden
+  hour.
 
 ### 4. Ground surfaces and rocks
 
@@ -274,6 +305,12 @@ final place, and judged by the runtime check from the start.
 - Shade takes its light from below from the ground around it. Known from Stage 2: the lighting assumes the
   far sea below everything today; sand instead brings shade at noon from 3.3 stops below sunlit ground to
   about 1.5, and from blue to warm.
+- Known from Stage 3: the zones are worked out twice, and they disagree along the edges between bands.
+  `island.zoneOf` swings the sand's and the palm belt's edges with noise and judges rock by the exact
+  slope; the terrain's shader uses fixed bands and the drawn grid's slope (about 5% of the cove's sandy
+  land differs). Settle one definition, which the GPU and placement (Stages 8–9) share, before building
+  surfaces on it. The terrain's info texture has no channel left. Rock judged by the mip-averaged slope
+  fades on sharp ridges in the distance, where slopes either side average out.
 - **Done when** a close-up of sand holds up, no tiling shows from any view, and nothing looks plastic.
 
 ### 5. Shadows
@@ -292,6 +329,10 @@ final place, and judged by the runtime check from the start.
   they render inside every `render()` call (the frame makes up to three a frame) unless told not to, and
   cast only from objects on the camera's current layer. The sky sits on the opaque layer, so a shadow pass
   of the frame's own has to leave it out.
+- Known from Stage 3: the terrain's morph and the planet's bend (`chunks/planet.glsl`) measure from
+  three's `cameraPosition`, which in a shadow pass is the light's camera. The terrain picks its nodes
+  once a frame, for the main camera, into the meshes' shared instance buffers. three's depth material
+  ignores the terrain's vertex shader.
 - **Done when** low-sun captures show long, soft shadows from the rocks and terrain, with no acne, no
   detached shadows and no hard edges, and the camera-offset captures show no shimmer (the tool turns the
   camera but can't move it yet).
@@ -316,6 +357,14 @@ final place, and judged by the runtime check from the start.
   - Nothing reads `frame.opaque.depth` yet. The first thing that does proves it in a fixture, as the
     blend fixture proves the colour.
   - The translucent pass has one sample per pixel and can't add light, so glints can't go there.
+- Known from Stage 3:
+  - The terrain's shader skips seabed under the placeholder water, which hides it (TEMPORARY in
+    `terrain.frag`): remove that with the placeholder.
+  - The reef's offset (the distance from its crest, for the surf line) exists only in JS.
+  - The terrain's grids end about 2 km out; beyond them heights repeat the coarsest grid's edge (−50 to
+    −90 m) in straight stripes to the horizon. The drawn seabed ends about 1 km out.
+  - The coast's distance comes from the exact shapes, the drawn waterline from the grids: take the
+    waterline from the drawn depth.
 - **Done when** the placeholder water is gone and the lagoon reads as tropical at every time of day.
 
 ### 7. Shoreline (the hero)
@@ -324,6 +373,8 @@ final place, and judged by the runtime check from the start.
   mirror-like, and dries slowly after each wave. Caustics dancing on the shallow seabed. A small shore
   break.
 - Expect several sessions. Split this stage into sub-steps.
+- Known from Stage 3: the coast's distance (`island.sample().coast`) isn't metres; across the shore it
+  changes by 0.5 to 1.7 a metre, so bands measured in it vary in width on the ground.
 - **Done when** the low beach view is a wallpaper, its motion strip shows waves running up and draining
   back naturally (the strip spans 2.5 s today, less than one wave), and the user finds the motion natural
   in the running game.
@@ -344,6 +395,12 @@ final place, and judged by the runtime check from the start.
   leaves hide behind their holes, and counts points, lines and sprites wrongly.
 - Shade under a canopy blocks the sky's light as well as the sun's. Known from Stage 2: nothing blocks
   the sky's light yet, and at golden hour it is 52% of the light on level ground, so shade would glow.
+- Known from Stage 1: no fixture proves alpha-to-coverage yet, and geometry thinner than about two pixels
+  crawls even with MSAA.
+- Known from Stage 3: `island.zone()` costs about 7 µs a point, too slow to place plants by the hundred
+  thousand on the main thread, and it disagrees with the drawn ground along band edges (Stage 4). Plants
+  stand on the ground as drawn (`ctx.terrain.heightAt`, which misses `island.height` by up to decimetres
+  on the coarse grids) and bend with the planet (`chunks/planet.glsl`), or the far ones float.
 - **Done when** palms glow when backlit at golden hour, fronds sway and flutter, their shade sits soft on
   the sand, close-ups hold up, and nothing flickers: the shimmer score stays low and the user sees none in
   the running game.
@@ -354,6 +411,8 @@ final place, and judged by the runtime check from the start.
   creeping onto the sand. One file per species, each with its own wind response.
 - Grass that shows gusts rolling across it, and dappled shade drifting over the sand.
 - Cheap distant vegetation, so the hillsides look lush from the overview.
+- Known from Stage 3: rocky shores get a band of rock zone about 34 m deep; what grows there decides how
+  it looks.
 - **Done when** the jungle-edge view is lush and layered, each species is recognisable by its shape and its
   motion, and the frame cost is within budget.
 
@@ -379,7 +438,10 @@ final place, and judged by the runtime check from the start.
   the bright band along the horizon). On high-DPI screens the render targets take 0.5–0.7 GB at 4K and
   0.9–1.3 GB at 5120×2880, against a 256 MB limit. SwiftShader captures take about 0.5 s per frame on a
   fast desktop but 1.1–2.3 s in CI, over their 1 s budget, with only the placeholder world (Stage 1:
-  0.46–0.72 s in CI; the lighting now costs about 17% less).
+  0.46–0.72 s in CI; the lighting now costs about 17% less). Known from Stage 3: far terrain samples the
+  8 m grid at coarser spacing without prefiltering, so ridgelines may crawl in motion; the headland's
+  inner flank runs inland as a long steep wall; beyond the cove the island is a smooth shape in an even
+  ring of lagoon.
 - Performance pass on the `high` preset. Record what the cove costs per frame: Stage 1's counts, plus the
   benchmark on the machines the user can try, ideally including a mid-range laptop. That decides how much
   more island fits in the budget. Calibrate the limits in `config.js` against it, and tune `medium` and
@@ -399,6 +461,9 @@ final place, and judged by the runtime check from the start.
   one hour to the next. There is no night (see Decisions).
 - Known from Stage 2: a time change reads the light back from the GPU and waits for it, so dragging the
   time (Stage 16's setting) would stutter.
+- Known from Stage 3: the haze check's `aerial` answer stands at 5.6 of its 6-level limit from the
+  overview at sunset, and was measured at 6.0 from the beach in the first and last minutes of daylight;
+  near the sea, the transmittance table's rows lie 25 and 101 m up, in haze 150 m thick.
 - **Done when** a capture series from sunrise to sunset has no broken or ugly hour.
 
 ### 13. Small life and detail
@@ -424,6 +489,8 @@ final place, and judged by the runtime check from the start.
   mouse.
 - Known from Stage 2: the sky's tables render again whenever the camera's height crosses a whole metre, so
   a head bob around such a step would render them twice a stride.
+- Known from Stage 3: the user found the rough walk's pace (1.4 m/s) a bit slow on the bare ground of
+  Stage 3, perhaps for want of detail passing by. Judge the pace again on detailed ground.
 - Update the README and the start screen's controls.
 - **Done when** the movement tests pass; invariant tests over seeds show the player can't fall through the
   ground, get stuck or leave the world; and the user has walked and swum the cove and is happy with how it
@@ -465,6 +532,9 @@ final place, and judged by the runtime check from the start.
   with heavier surf, a hilltop lookout, the jungle interior, a stream. Each area gets views, a polish pass
   and a performance check.
 - Don't start a new area while an existing one still falls short of the bar.
+- Known from Stage 3: the terrain's grids are four nested 512² squares centred on the cove, 1 m apart
+  only over the bay and 2 m up to the summit; another area at the cove's detail needs another layout.
+  Growing the island past about 2200 m needs the grids laid out again (`config.world.island.size`).
 - **Done when** (per area) the user agrees its views clear the bar and the frame cost stays within the
   limits.
 
@@ -482,6 +552,10 @@ final place, and judged by the runtime check from the start.
   clips close leaves, and z-fighting far away (`verify` reports its share on the depth fixture). Decide
   here whether it needs more, such as logarithmic depth, which costs early depth testing and MSAA where
   surfaces intersect.
+- Known from Stage 3: the heightmap's workers are untried outside Chromium; without them the grids
+  build in the main thread, about a second on a fast desktop, and with two cores there is one worker.
+  The terrain's fragment shader is most of a SwiftShader frame, its aerial perspective and its filtered
+  slopes the largest parts.
 - The tools install only Chromium's headless shell. Automated Firefox runs need Playwright's Firefox
   build, a browser download rather than a new npm package; ask the user before adding it. Playwright can
   drive an installed Edge too.
@@ -527,6 +601,16 @@ Made with the user. Don't reopen them unless the user does.
   until the sun's centre meets the sea. 0° (land unlit) and 2° were the alternatives. (2026-10-22)
 - **The exposure follows the light with a compensation of 0.3**: a low sun stays darker and keeps its
   deep orange, and noon is as before; 0.5 washed the sunset out to pale pink. (2026-10-22)
+- **Steep green volcanic ridges behind the cove**, peaking around 250–300 m close behind the beach;
+  gentle hills of about 120 m and a 500 m spire were the alternatives. (2026-10-22)
+- **The reef lies 200–300 m out**, so the surf line reads from the beach and the lagoon is a swim; a
+  barrier reef 600 m to 1 km out with a broad lagoon was the alternative. (2026-10-22)
+- **The headland stands on the left** of someone on the beach facing the sea: its inner cliffs catch the
+  noon sun and the low evening light; on the right it would stand dark beside the sunset. (2026-10-22)
+- **The hilltops' last light is as the atmosphere gives it**: at the named sunset the sun on the summit
+  is 1.6 times the beach's, and lit hilltops over a dark shore show only in the last minutes before the
+  sun touches the sea. Thicker evening haze (a greyer horizon) and a named sunset 0.5° up were the
+  alternatives. (2026-10-22)
 
 ## Open questions
 
@@ -551,56 +635,30 @@ Not part of the plan. Build one only if the user asks for it: a passing rain sho
 Newest first. One short entry per session, only a few lines: date, stage, what changed, what is still
 open, next step. Details belong in code comments.
 
-- **2026-10-22, Stage 2: a third review.** The lighting now carries the light from below on its own: the
-  sky's SH holds the sky alone, and the ground below, lit by sun and sky, sends its albedo's share back up
-  (the far sea's for now; the terrain's in Stage 4, by position). `sunVisibility` returns a colour,
-  `skyIrradiance` takes a position. The SH sky light reads its uniform in place, unrolled: 17% off a
-  SwiftShader frame. The render-to-texture guard survives a resize. Pictures change by 2 levels at most.
-  The sun's ceiling turned out not to be a lever for the pale sunset; the exposure is. The user picked
-  the named sunrise and sunset 1° up and an exposure compensation of 0.3 (Decisions). Open: the air's
-  clarity, and the low-sun sky points of the review (Open questions).
-- **2026-10-22, Stage 2 hardened again** after a second outside review, its findings checked against a
-  double-precision port of the sky. Fixed: the haze table stopped its rows where they met the sea, so far
-  sea and low land got too little haze (the overview's seam is gone); the haze dimmed every colour alike
-  (distant land stays warm now); even steps missed most of the haze on slanted rays (the golden-hour sun
-  was 11–17% too bright); coarse sun-angle columns made the sunset sky up to a quarter too bright; marches
-  sample the middle of each step (the sky was up to 6 levels off). Post passes get depth only when they
-  ask; the frame refuses fewer than 2 MSAA samples; the game refuses browsers that can't render to floats.
-  New checks: the `haze` fixture (the tables against direct marches, proven on deliberate mistakes), the
-  time check on every view through every named time, the beach and horizon views face the sunset, the
-  blend check at exposure 2. Cost: 11 programs (was 10) and one 32×32 table; island frames unchanged.
-  Open: three taste calls for the user (the sun's ceiling, how high the named sunrise and sunset stand,
-  the tonemap's dark end, candidates `cand-*`); notes added to Stages 3, 5, 6, 8, 11 and 12.
-- **2026-10-21, Stage 2 hardened** after an outside code review. Fixed: the blending check missed additive
-  blending; a seam at the sunset horizon (the sea now bends with the planet, the sky table covers the sky
-  only); `translucent()` on groups; `addPost` removers; time text ("5:60"). New checks prove the after-opaque
-  pass, the translucent depth test, the GPU's sky maths against the JS (found the table mappings a quarter
-  row off at the horizon) and the light's colour. Time keys are now `,` and `.`. Translucent and post
-  passes, when used, cost 3 passes and 38 MB at 1600x900. Verify green on hardware and SwiftShader.
+- **2026-10-22, Stage 3 done** (not committed yet). The island's shape (`world/island.js`, `npm run map`),
+  terrain from nested grids with a morphing level-of-detail mesh, sunlight by height, and the final views
+  with agreed briefs (new: `into-the-sun`, `sand`). The user walked the cove and made the taste calls
+  (Decisions). A five-part review fixed cracks between detail levels on `low` and `medium` and stale
+  culling, and tightened the checks. Open items went to Stages 4–9, 11, 12, 14, 17 and 18. Next: Stage 4.
+- **2026-10-22, Stage 2: a third review.** Light from below comes from the ground's albedo (the far sea's
+  until Stage 4); the SH read is unrolled (17% off a SwiftShader frame). The user picked the named sunrise
+  and sunset 1° up and an exposure compensation of 0.3 (Decisions). Open: the air's clarity and the
+  low-sun sky (Open questions).
+- **2026-10-22, Stage 2 hardened again** after a second outside review, checked against a double-precision
+  port of the sky: the haze, its colour and the marches fixed; new checks: the `haze` fixture, the time
+  check on every view, views that face the sunset. Notes went to Stages 3, 5, 6, 8, 11 and 12.
+- **2026-10-21, Stage 2 hardened** after an outside code review: blending, the sunset horizon's seam and
+  smaller fixes; new checks for the after-opaque pass, translucent depth, the GPU's sky maths and the
+  light's colour. Time keys are now `,` and `.`.
 - **2026-10-21, Stage 2 done** (commit `b43cc9c`; hardened in `aa920bf`). The user approved it and kept the
   defaults: haze, its level, and a 63° noon sun (Decisions). Next: Stage 3.
-- **2026-10-21, Stage 2 built (review).** `sky/` owns the time (named times, no night, dev keys `[` `]`) and a
-  sky after Hillaire 2020 with a thin marine haze; one lighting model (sun, SH sky light, aerial perspective) and
-  an exposure that follows the light; frame passes for after-opaque, linear translucent layers (blend fixture)
-  and a post chain; `horizon` view, `light` fixture. Cost: island frames keep 4 draws and 2 passes, overdraw
-  -30-40% (sky drawn last), 10 programs; the tables re-render only when the time or the camera's height
-  changes (~35 draws). SwiftShader ~0.6 s/frame (was ~0.45). After the user's first look: the grey horizon
-  band came mostly from the mirror-flat placeholder sea, which now reflects through small waves; the haze
-  scatters more evenly; the sun got its aureole. Open: the sunset telephoto clips red beside the sun (exposure
-  and grade, Stage 11); sunrise reads as warm as sunset; the sea shows no sun or glitter path, so it looks flat
-  under a low sun (Stage 6); translucent layers have no MSAA. The user kept the haze (Decisions); midday sun
-  height and haze level are still open (`cand-*`). Next: the user's review, then Stage 3.
+- **2026-10-21, Stage 2 built.** `sky/` owns the time (named times, no night) and a sky after Hillaire 2020
+  with a marine haze; one lighting model and an exposure that follows the light; frame passes for
+  after-opaque, linear translucent layers and a post chain. Open items went to Stages 6 and 11.
 - **2026-10-21, Stage 2 planned:** sub-steps 2.1–2.4 (time of day, frame structure, sky, light and haze).
-  Before captures `stage2-before` (also `-sunrise` and `-sunset` at 6.5 h and 18 h): a two-colour sky with
-  no visible sun, land unlit and black at sunrise and sunset, no haze (sea and sky meet in a hard line, and
-  the overview shows the water plane's far edge). Next: 2.1.
-- **2026-10-21, Stage 1 hardened** after an outside review. Captures are about twice as fast, and
-  `npm run shot` skips the checks (`verify` runs them). Captures now fail on hidden shader errors,
-  materials without `sceneOutput()`, WebGL errors and a lost context. Banding is scored per view. CI runs
-  on every branch. Open items went to Stages 2, 5, 7, 8, 11, 15 and 18. Next: Stage 2.
-- **2026-10-20, Stage 1 done.** HDR frame in `post/` (neutral tonemap, 4x MSAA, reversed float depth),
-  capture measurements and tool checks, teardown check, F3 readout, `?bench=1`. First benchmark (one
-  discrete GPU): 2.8–4.7 ms GPU per frame. Open: no bloom, guessed limits, high-DPI `high` over the
-  render-target limit (Stage 11); thin geometry crawls, no alpha-to-coverage fixture (Stage 8); placeholder
-  sky draws first (Stage 2); z-fighting without EXT_clip_control (Stage 18). Next: Stage 2.
+- **2026-10-21, Stage 1 hardened** after an outside review: captures about twice as fast, and they fail on
+  hidden shader errors, WebGL errors and a lost context. Open items went to Stages 2, 5, 7, 8, 11, 15 and 18.
+- **2026-10-20, Stage 1 done.** HDR frame in `post/`, capture measurements and tool checks, F3 readout,
+  `?bench=1`; first benchmark 2.8–4.7 ms GPU per frame on one discrete GPU. Open items went to Stages 2, 8,
+  11 and 18.
 - **2026-10-20, plan.** Wrote this plan. Next: Stage 1.

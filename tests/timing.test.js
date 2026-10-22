@@ -23,14 +23,18 @@ test('frame summaries: a hitch shows in p95 and max, not in the median', () => {
 const counts = { drawCalls: 4, triangles: 162208, passes: 2 };
 const memory = { programs: 4, renderTargetBytes: 88 * 1024 * 1024, textureBytes: 0 };
 
-test('the readout shows timing, GPU time when there is one, counts and memory', () => {
-  const text = formatReadout({ frames: summarizeFrames([16, 17]), gpu: null, counts, memory, preset: 'high', size: { width: 1600, height: 900 }, msaa: 4 });
+test('the readout shows timing, GPU time when there is one, counts, memory, and where the camera is', () => {
+  const where = [3.111, 2.64, -11.59];
+  const text = formatReadout({ frames: summarizeFrames([16, 17]), gpu: null, counts, memory, preset: 'high', size: { width: 1600, height: 900 }, msaa: 4, where, aboveGround: 1.7 });
   const lines = text.split('\n');
-  assert.equal(lines.length, 3);
+  assert.equal(lines.length, 4);
   assert.match(lines[0], /^16\.5 ms · 61 fps · GPU n\/a$/);
   assert.match(lines[1], /4 draws · 162\.2k tris · 2 passes · 4 programs/);
   assert.match(lines[2], /RT 88 MB · tex 0 MB · high 1600×900 · MSAA 4/);
-  assert.match(formatReadout({ frames: null, gpu: summarizeFrames([2.5]), counts, memory, preset: 'low', size: { width: 1, height: 1 }, msaa: 2 }), /n\/a ms · n\/a fps · GPU 2\.50 ms/);
+  assert.equal(lines[3], 'at 3.11, 2.64, -11.59 · 1.70 m above the ground');
+  const other = { frames: null, gpu: summarizeFrames([2.5]), counts, memory, preset: 'low', size: { width: 1, height: 1 }, msaa: 2, where, aboveGround: null };
+  assert.match(formatReadout(other), /n\/a ms · n\/a fps · GPU 2\.50 ms/);
+  assert.match(formatReadout(other), /n\/a m above the ground/);
 });
 
 test('the benchmark summary names the machine and has a row per view plus all views', () => {

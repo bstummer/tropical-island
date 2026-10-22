@@ -12,9 +12,11 @@
 #include "sky-view.glsl"
 #include "aerial.glsl"
 #include "sh.glsl"
+#include "sunlight.glsl"
 
 uniform vec3 uSunDirection; // towards the sun
 uniform vec3 uSunRadiance; // the sun's illuminance on a surface facing it, at sea level
+uniform sampler2D uSunlight; // and by the height above the sea (sunlight.glsl)
 // uSkySH (sh.glsl): the sky's radiance as SH, above the horizon only
 uniform vec3 uLevelLight; // irradiance on level ground in the open: sun and sky
 uniform vec3 uBounceAlbedo; // the ground's, for the light it sends back up (groundAlbedo())
@@ -32,9 +34,15 @@ vec3 sunVisibility(vec3 position, vec3 normal) { // position first, as everywher
   return vec3(1.0);
 }
 
-// Irradiance from the sun on a surface with this normal.
+// Irradiance from the sun on a surface with this normal. It grows with the
+// height above the sea: a low sun's light crosses less haze on its way to a
+// hilltop than to the beach.
 vec3 sunLight(vec3 position, vec3 normal) {
-  return uSunRadiance * max(dot(normal, uSunDirection), 0.0) * sunVisibility(position, normal);
+  // The height above the sea, as before the planet's bend (planet.glsl), so
+  // the light on a hill doesn't change as the camera moves away.
+  float h = position.y + planetDrop(position.xz);
+  vec3 sun = textureLod(uSunlight, vec2(sunlightU(h * 0.001), 0.5), 0.0).rgb;
+  return sun * max(dot(normal, uSunDirection), 0.0) * sunVisibility(position, normal);
 }
 
 // The albedo of the ground below a point, which sends the light on it back up.
