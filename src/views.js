@@ -32,7 +32,7 @@ export const views = [
     pitch: -9,
     timeOfDay: 14.5,
     brief: "Early afternoon from just above the low point at the far end of the bay, along the curve of the beach to the headland: the waterline sweeping into the distance, the sun behind on the right lighting the headland's face.",
-    crops: { headland: [0.3, 0.4] },
+    crops: { headland: [0.69, 0.35] },
   },
   {
     name: 'jungle-edge',

@@ -197,7 +197,7 @@ function describe(island) {
   for (let o = 10; o < 900; o += 1) {
     const s = along(o);
     deepest = Math.min(deepest, s.height);
-    if (reefAt === null && o > 60 && s.height > -1 && s.coast < 0) reefAt = o;
+    if (reefAt === null && o > 60 && s.reef >= 0 && s.coast < 0) reefAt = o; // where the reef offset crosses 0: its crest
   }
   let peak = { height: -Infinity };
   for (let a = -900; a <= 900; a += 5) {
@@ -216,12 +216,38 @@ function describe(island) {
     if (last && s.beach > 0.5 && last.beach > 0.5) beach += Math.hypot(a - last.a, o - last.o);
     last = { a, o, beach: s.beach };
   }
+  // Beyond the cove: the coast traced in from the sea along rays from the
+  // island's middle, and its sandy stretches.
+  const centre = [0, settings.coast.lobes.front - settings.size / 2];
+  const outer = [];
+  for (let k = 0; k < 720; k++) {
+    const t = (2 * Math.PI * k) / 720;
+    const at = (r) => island.sample(...island.fromCove(centre[0] + r * Math.sin(t), centre[1] - r * Math.cos(t)));
+    let r = 3500;
+    while (r > 0 && at(r).coast < 0) r -= 4;
+    const [a, o] = [centre[0] + r * Math.sin(t), centre[1] - r * Math.cos(t)];
+    if (Math.hypot(a, o) >= settings.cove.radius + settings.cove.blend) outer.push({ a, o, sandy: at(r).beach > 0.5 });
+  }
+  const beaches = [];
+  let run = 0;
+  outer.forEach((p, i) => {
+    const q = outer[(i + 1) % outer.length];
+    const step = Math.hypot(q.a - p.a, q.o - p.o);
+    if (p.sandy && step < 50) run += step;
+    else if (run) {
+      beaches.push(run);
+      run = 0;
+    }
+  });
+  if (run) beaches.push(run);
+  const long = beaches.filter((m) => m >= 100);
   const b = island.bounds;
   return [
     `size ${settings.size} m, island bounds ${Math.round(b.maxX - b.minX)} x ${Math.round(b.maxZ - b.minZ)} m (world x, z)`,
     `highest point ${peak.height.toFixed(0)} m, ${Math.round(Math.hypot(peak.a, peak.o))} m from the beach`,
     `reef crest straight out from the beach: ${reefAt === null ? 'none' : `${reefAt} m`}`,
     `sandy shore around the cove: about ${Math.round(beach)} m`,
+    `beyond the cove: ${long.length} beaches of 100 m or more (${long.map((m) => Math.round(m / 10) * 10).join(', ')} m), ${Math.round((100 * outer.filter((p) => p.sandy).length) / outer.length)}% of the coast sand`,
   ];
 }
 

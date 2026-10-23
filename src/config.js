@@ -8,13 +8,14 @@ export const quality = {
   // msaa: samples per pixel in the HDR target (post/frame.js), at least 2 (it
   // checks): the after-opaque pass reads the resolved target while it draws into the samples.
   // terrainDetail: metres from the camera, across the ground, within which the
-  // terrain keeps its finest mesh; each coarser level reaches twice as far
-  // (config.world.terrain). Below leaf x 1.41 / (1 - morph), about 65 m, seams
-  // between levels open (world/lod.js refuses it).
+  // terrain keeps its finest mesh; each coarser level reaches terrainRatio times
+  // as far (config.world.terrain), a ratio over 2 refining the distance. Below
+  // leaf x 1.41 / ((ratio - 1) x (1 - morph)), about 65 m at a ratio of 2,
+  // seams between levels open (world/lod.js refuses it).
   presets: {
-    low: { renderScale: 0.67, maxPixelRatio: 1, msaa: 2, terrainDetail: 72 },
-    medium: { renderScale: 0.85, maxPixelRatio: 1.5, msaa: 4, terrainDetail: 90 },
-    high: { renderScale: 1, maxPixelRatio: 2, msaa: 4, terrainDetail: 128 },
+    low: { renderScale: 0.67, maxPixelRatio: 1, msaa: 2, terrainDetail: 72, terrainRatio: 2 },
+    medium: { renderScale: 0.85, maxPixelRatio: 1.5, msaa: 4, terrainDetail: 90, terrainRatio: 2.5 },
+    high: { renderScale: 1, maxPixelRatio: 2, msaa: 4, terrainDetail: 128, terrainRatio: 2.5 },
   },
 };
 
@@ -197,8 +198,12 @@ export const world = {
       rocky: { lip: 2.5, lipWidth: 4, rise: 20, reach: 80, shelfSlope: 0.35, hillReach: 18 },
       hillJoin: 6,
       undulation: { amplitude: 1.2, wavelength: 140, from: [30, 120] }, // a slow swell on the beach's plain, between these metres inland
-      islandSand: [0.15, 0.45], // noise values over which the rest of the island's shore turns sandy
-      islandSandWavelength: 450,
+      // Beyond the cove, beaches lie in the bays, where the waves leave their sand,
+      // and the points stay rocky. Sandy where the coast's concavity (per km, over
+      // `bayScale` metres) plus `noise` x a noise over `wavelength` metres runs from
+      // edges[0] to edges[1]: the noise makes some bays rocky and some straight
+      // shores sandy.
+      islandSand: { bayScale: 150, noise: 2, wavelength: 450, edges: [-0.9, -0.1] },
     },
     seabed: {
       lagoon: { depth: 3.4, swing: 1, wavelength: 160 },
@@ -208,7 +213,11 @@ export const world = {
         // keeps mean ± swing from the coast.
         cove: { out: 265, radius: 520 },
         island: { mean: 230, swing: 120, wavelength: 600 },
+        // No reef grows on a perfect arc: its crest wanders this far either way over
+        // about this length, and with it the reef's width.
+        wander: [8, 110],
         crest: 0.35, // depth of the crest, where the surf breaks
+        crestBlend: 2, // metres either side of the crest over which the lagoon's side and the drop-off meet
         flat: 0.9, // and of the reef flat behind it
         flatWidth: 25,
         backSlope: 0.15, // the back of the reef, down to the lagoon floor
@@ -217,7 +226,8 @@ export const world = {
         // grooves [height, wavelength], from the crest out to between `groovesEnd` metres.
         fore: { drop: 22, dropWidth: 25, slope: 0.11, grooves: [1.5, 14], groovesEnd: [60, 160] },
       },
-      pass: { from: [-80, 200], to: [-110, 340], halfWidth: 24, depth: [6, 12], wall: 0.5 }, // through the reef
+      // Through the reef, wider towards the sea, its walls `ragged` [metres, wavelength].
+      pass: { from: [-80, 200], to: [-110, 340], halfWidth: [20, 30], depth: [6, 12], wall: 0.5, ragged: [4, 25] },
       // From the bay to the pass, deepening and widening along the way.
       channel: { path: [[-10, 80], [-45, 112], [-48, 150], [-72, 180], [-88, 210]], halfWidth: [7, 18], depth: [3.8, 6.5], wall: 0.3 },
       bend: { amplitude: 12, wavelength: 70 }, // how far the pass's and the channel's walls wander
@@ -237,9 +247,10 @@ export const world = {
       palmBelt: 45,
       palmBeltSwing: 15,
       wavelength: 250, // long enough that the zones' edges move slower than the shore falls behind
-      reefBack: 60, // the reef zone runs from this far inside the crest
-      reefFore: 25, // to this far outside it
-      reefDeep: 3, // deeper than this, a pass rather than reef
+      // The reef zone runs from this far inside the crest out to where it is
+      // deeper than reefDeep: a pass, or the drop-off a few metres outside the crest.
+      reefBack: 60,
+      reefDeep: 3,
     },
   },
   // The island as drawn (world/heightmap.js, world/terrain.js).
@@ -259,8 +270,9 @@ export const world = {
     blend: 32, // samples over which a level fades into the next coarser one at its edge
     // The level-of-detail mesh: a quadtree over the coarsest grid. Its smallest
     // nodes are `leaf` metres across, with `grid` x `grid` quads; each level up
-    // doubles both. A node splits within quality.terrainDetail x 2^level metres of
-    // the camera, and morphs into its parent over the last `morph` of that range.
+    // doubles both. A node splits within quality.terrainDetail x
+    // quality.terrainRatio^level metres of the camera, and morphs into its parent
+    // over the last `morph` of the band between its range and the finer level's.
     leaf: 32,
     grid: 32,
     morph: 0.3,

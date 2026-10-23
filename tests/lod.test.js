@@ -66,8 +66,8 @@ function* edges() {
   }
 }
 
-for (const [preset, { terrainDetail }] of Object.entries(config.quality.presets)) {
-  const { ranges, morphs } = lodRanges(terrainDetail, levels, morph, leaf);
+for (const [preset, { terrainDetail, terrainRatio }] of Object.entries(config.quality.presets)) {
+  const { ranges, morphs } = lodRanges(terrainDetail, levels, morph, leaf, terrainRatio);
 
   test(`${preset}: the nodes cover the ground once, neighbours a level apart at most`, () => {
     for (const cam of cameras) {
@@ -110,10 +110,28 @@ for (const [preset, { terrainDetail }] of Object.entries(config.quality.presets)
   });
 }
 
-test('a detail too short for the nodes to close their seams is refused', () => {
-  const shortest = (leaf * Math.SQRT2) / (1 - morph);
-  assert.throws(() => lodRanges(Math.floor(shortest), levels, morph, leaf), /too short/);
-  assert.doesNotThrow(() => lodRanges(Math.ceil(shortest), levels, morph, leaf));
+test('ranges too short for the nodes to close their seams are refused, and so is a ratio under 2', () => {
+  for (const ratio of [2, 2.5, 3]) {
+    const shortest = (leaf * Math.SQRT2) / ((ratio - 1) * (1 - morph));
+    assert.throws(() => lodRanges(Math.floor(shortest), levels, morph, leaf, ratio), /too short/);
+    assert.doesNotThrow(() => lodRanges(Math.ceil(shortest), levels, morph, leaf, ratio));
+  }
+  assert.throws(() => lodRanges(128, levels, morph, leaf, 1.8), /at least twice/);
+});
+
+test('nothing wholly outside what the camera sees is drawn, quarters included', () => {
+  const { ranges } = lodRanges(128, levels, morph, leaf);
+  let quarters = 0;
+  // Half-spaces through cameras at a few places: only what reaches past the line counts as seen.
+  for (const [cam, line] of [[[0, 100, 0], 0], [[300, 20, -500], 280], [[-900, 50, 400], -950], [[100, 5, 100], 130]]) {
+    const seen = (a0, o0, size) => a0 + size > line;
+    for (const node of lod.select(cam, ranges, seen, [])) {
+      const size = node.spacing * (node.quarter ? grid / 2 : grid);
+      assert.ok(node.a + size > line, `camera ${cam}: a ${node.quarter ? 'quarter' : 'node'} at ${node.a}, ${node.o} lies wholly outside`);
+      if (node.quarter) quarters++;
+    }
+  }
+  assert.ok(quarters > 0, 'no quarters were drawn, so none were tested');
 });
 
 test('culled nodes are left out, and a camera far away still gets the whole ground', () => {

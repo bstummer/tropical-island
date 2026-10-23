@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { createRandom } from '../src/core/random.js';
 import { config } from '../src/config.js';
 import { sunPath } from '../src/sky/sun.js';
-import { createIsland, LAND_ZONES, SEA_ZONES, smoothstep, ZONES } from '../src/world/island.js';
+import { createIsland, LAND_ZONES, SEA_ZONES, smax, smin, smoothstep, ZONES } from '../src/world/island.js';
 
 const SEEDS = Array.from({ length: 20 }, (_, i) => i + 1);
 const settings = config.world.island;
@@ -42,9 +42,35 @@ test('smoothstep eases from 0 to 1 between its edges, either way round, and step
   assert.deepEqual([smoothstep(1, 1, 0.9), smoothstep(1, 1, 1), smoothstep(1, 1, 2)], [0, 1, 1]);
 });
 
+test('smin and smax blend within k of each other, never past the plain min and max', () => {
+  const r = createRandom(1)('test/smin');
+  for (let n = 0; n < 10_000; n++) {
+    const [a, b, k] = [r.range(-50, 50), r.range(-50, 50), r.range(0.1, 30)];
+    const [lo, hi] = [Math.min(a, b), Math.max(a, b)];
+    assert.ok(smin(a, b, k) <= lo && smin(a, b, k) >= lo - k / 4, `smin(${a}, ${b}, ${k}) = ${smin(a, b, k)}`);
+    assert.ok(smax(a, b, k) >= hi && smax(a, b, k) <= hi + k / 4, `smax(${a}, ${b}, ${k}) = ${smax(a, b, k)}`);
+    if (hi - lo >= k) assert.equal(smin(a, b, k), lo, 'apart by k or more, smin is the min');
+  }
+  assert.equal(smin(3, 7, 0), 3);
+});
+
 test('zone names are unique and split into land and sea', () => {
   assert.equal(new Set(ZONES).size, ZONES.length);
   assert.deepEqual([...ZONES].sort(), [...SEA_ZONES, 'rock', ...LAND_ZONES].sort());
+});
+
+test('a point repeated in a path leaves the island whole', () => {
+  const { cove, seabed } = settings;
+  const repeated = (path) => [path[0], ...path];
+  const island = make(1, {
+    cove: { ...cove, headland: { ...cove.headland, path: repeated(cove.headland.path) } },
+    seabed: { ...seabed, channel: { ...seabed.channel, path: repeated(seabed.channel.path) } },
+  });
+  const base = make(1);
+  for (const [x, z] of grid(island, 97)) {
+    assert.ok(Number.isFinite(island.height(x, z)), `${x}, ${z}`);
+    assert.ok(Math.abs(island.height(x, z) - base.height(x, z)) < 1e-6, `the repeated point changed the island at ${x}, ${z}`);
+  }
 });
 
 test('bad settings are refused', () => {
@@ -110,6 +136,20 @@ test('the waterline is where the coast says, and deep sea rings the island', () 
   }
 });
 
+// How far out the reef's crest lies at `a` along the beach: where the distance
+// beyond it crosses 0, near the arc it wanders about (config: seabed.reef).
+function crestAt(island, a) {
+  const { out, radius } = settings.seabed.reef.cove;
+  const out2 = {};
+  let [lo, hi] = [out - (a * a) / (2 * radius) - 40, out - (a * a) / (2 * radius) + 40];
+  for (let k = 0; k < 30; k++) {
+    const mid = (lo + hi) / 2;
+    if (island.evaluate(a, mid, out2).reef < 0) lo = mid;
+    else hi = mid;
+  }
+  return (lo + hi) / 2;
+}
+
 // Where the waterline crosses `a` along the beach, coming in from the bay.
 function waterline(island, a) {
   let o = 150;
@@ -140,7 +180,7 @@ test('the cove faces the setting sun, which goes down over open sea beyond the r
 });
 
 test('the reef stays under water, and a pass runs through it', () => {
-  const { minDepth, reef } = settings.seabed;
+  const { minDepth } = settings.seabed;
   for (const seed of SEEDS) {
     const island = make(seed);
     for (const [x, z] of grid(island, 23)) {
@@ -149,7 +189,7 @@ test('the reef stays under water, and a pass runs through it', () => {
     }
     // Along the crest across the cove.
     const crest = [];
-    for (let a = -250; a <= 150; a += 2) crest.push(island.height(...island.fromCove(a, reef.cove.out - (a * a) / (2 * reef.cove.radius))));
+    for (let a = -250; a <= 150; a += 2) crest.push(island.height(...island.fromCove(a, crestAt(island, a))));
     const shallow = crest.filter((h) => h > -1).length / crest.length;
     assert.ok(shallow > 0.7, `seed ${seed}: only ${(100 * shallow).toFixed(0)}% of the crest is near the surface`);
     assert.ok(Math.min(...crest) < -5, `seed ${seed}: no pass through the reef (deepest ${Math.min(...crest).toFixed(1)} m)`);
@@ -157,7 +197,7 @@ test('the reef stays under water, and a pass runs through it', () => {
 });
 
 test('sea zones lie where the reef puts them: lagoon inside its crest, ocean outside, reef along it', () => {
-  const { zones, seabed } = settings;
+  const { zones } = settings;
   for (const seed of SEEDS) {
     const island = make(seed);
     const seen = new Set();
@@ -168,15 +208,14 @@ test('sea zones lie where the reef puts them: lagoon inside its crest, ocean out
       seen.add(zone);
       if (zone === 'lagoon') assert.ok(s.reef < 0, `seed ${seed}: lagoon ${s.reef.toFixed(0)} m beyond the crest at ${x.toFixed(0)}, ${z.toFixed(0)}`);
       if (zone === 'ocean') assert.ok(s.reef >= 0, `seed ${seed}: ocean ${-s.reef.toFixed(0)} m inside the crest at ${x.toFixed(0)}, ${z.toFixed(0)}`);
-      if (zone === 'reef') assert.ok(s.reef >= -zones.reefBack && s.reef < zones.reefFore, `seed ${seed}: reef ${s.reef.toFixed(0)} m from the crest`);
+      if (zone === 'reef') assert.ok(s.reef >= -zones.reefBack && s.height >= -zones.reefDeep, `seed ${seed}: reef ${s.reef.toFixed(0)} m from the crest, ${-s.height.toFixed(1)} m deep`);
     }
     assert.deepEqual([...seen].sort(), [...SEA_ZONES].sort(), `seed ${seed}: sea zones`);
     // Across the cove the crest is reef, but for the pass.
-    const { out, radius } = seabed.reef.cove;
     let reef = 0;
     let all = 0;
     for (let a = -250; a <= 150; a += 2) {
-      const [x, z] = island.fromCove(a, out - (a * a) / (2 * radius));
+      const [x, z] = island.fromCove(a, crestAt(island, a));
       all++;
       if (island.zone(x, z) === 'reef') reef++;
     }
@@ -268,6 +307,105 @@ test('zones run in order from the shore, land zones on land and sea zones at sea
   }
 });
 
+// A step, unlike a steep slope, doesn't shrink when measured over a shorter
+// distance. Along each line, a change between neighbouring points much larger
+// than the one before is narrowed down by halving the interval ten times: a
+// step keeps its size to the end, a slope or a crease fades away.
+function steps(island, lines, length, step) {
+  const out = {};
+  const h = (a, o) => island.evaluate(a, o, out).height;
+  const found = [];
+  for (const [a0, o0, angle] of lines) {
+    const [ca, co] = [Math.cos(angle), Math.sin(angle)];
+    const at = (t) => h(a0 + t * ca, o0 + t * co);
+    let before = 0;
+    let last = at(0);
+    for (let t = step; t <= length; t += step) {
+      const v = at(t);
+      const change = Math.abs(v - last);
+      if (change > 0.005 && change > 4 * before) {
+        let [lo, hi, hlo, hhi] = [t - step, t, last, v];
+        for (let k = 0; k < 10; k++) {
+          const mid = (lo + hi) / 2;
+          const hm = at(mid);
+          if (Math.abs(hm - hlo) > Math.abs(hhi - hm)) [hi, hhi] = [mid, hm];
+          else [lo, hlo] = [mid, hm];
+        }
+        if (Math.abs(hhi - hlo) > 0.5 * change) found.push(`${(a0 + t * ca).toFixed(1)}, ${(o0 + t * co).toFixed(1)}: ${(hhi - hlo).toFixed(3)} m`);
+      }
+      before = change;
+      last = v;
+    }
+  }
+  return found;
+}
+
+test('the ground and seabed have no steps: the height runs on everywhere', () => {
+  for (const seed of SEEDS.slice(0, 3)) {
+    const island = make(seed);
+    // Finely across the cove (beach, lagoon, channel, reef, pass), coarsely over the island.
+    const cove = Array.from({ length: 60 }, (_, k) => [-300 + (k % 10) * 55, -150 + Math.floor(k / 10) * 70, (k * Math.PI) / 30 + 0.013]);
+    const whole = Array.from({ length: 24 }, (_, k) => [-1800 + (k % 6) * 600, -2600 + Math.floor(k / 6) * 900, (k * Math.PI) / 12 + 0.31]);
+    const found = [...steps(island, cove, 450, 0.1), ...steps(island, whole, 2500, 1)];
+    assert.deepEqual(found, [], `seed ${seed}: steps in the ground at`);
+  }
+});
+
+// The coast beyond the cove, traced inwards from the sea along rays from the
+// island's middle: [{ a, o, sandy, bay }], bay being how much the coast curves
+// round the water there (the coast distance's Laplacian over 150 m).
+function outerCoast(island, rays = 360) {
+  const out = {};
+  const coast = (a, o) => island.evaluate(a, o, out).coast;
+  const centre = [0, settings.coast.lobes.front - settings.size / 2];
+  const points = [];
+  for (let k = 0; k < rays; k++) {
+    const t = (2 * Math.PI * k) / rays;
+    const [da, doo] = [Math.sin(t), -Math.cos(t)];
+    let [lo, hi] = [0, 3500];
+    while (hi > 0 && coast(centre[0] + hi * da, centre[1] + hi * doo) < 0) hi -= 25;
+    lo = hi;
+    hi += 25;
+    for (let i = 0; i < 10; i++) {
+      const mid = (lo + hi) / 2;
+      if (coast(centre[0] + mid * da, centre[1] + mid * doo) > 0) lo = mid;
+      else hi = mid;
+    }
+    const [a, o] = [centre[0] + lo * da, centre[1] + lo * doo];
+    if (Math.hypot(a, o) < settings.cove.radius + settings.cove.blend) continue;
+    const s = 150;
+    const bay = (coast(a + s, o) + coast(a - s, o) + coast(a, o + s) + coast(a, o - s) - 4 * coast(a, o)) / (s * s);
+    points.push({ a, o, sandy: island.evaluate(a, o, out).beach > 0.5, bay });
+  }
+  return points;
+}
+
+test('beyond the cove, a few beaches lie in the bays', () => {
+  for (const seed of SEEDS) {
+    const coast = outerCoast(make(seed));
+    // Runs of sand along the coast, in metres.
+    const beaches = [];
+    let run = 0;
+    coast.forEach((p, i) => {
+      const q = coast[(i + 1) % coast.length];
+      const step = Math.hypot(q.a - p.a, q.o - p.o);
+      if (p.sandy && step < 100) run += step;
+      else if (run) {
+        beaches.push(run);
+        run = 0;
+      }
+    });
+    if (run) beaches.push(run);
+    const sandy = coast.filter((p) => p.sandy);
+    const rocky = coast.filter((p) => !p.sandy);
+    const share = sandy.length / coast.length;
+    assert.ok(beaches.filter((m) => m >= 100).length >= 3, `seed ${seed}: beaches of 100 m or more: ${beaches.filter((m) => m >= 100).map(Math.round)}`);
+    assert.ok(share > 0.15 && share < 0.6, `seed ${seed}: ${(100 * share).toFixed(0)}% of the coast beyond the cove is sand`);
+    const mean = (list) => list.reduce((sum, p) => sum + p.bay, 0) / list.length;
+    assert.ok(mean(sandy) > mean(rocky), `seed ${seed}: the sand lies on straighter or rounder coast than the rock`);
+  }
+});
+
 test('the cove has a gentle sand beach', () => {
   for (const seed of SEEDS) {
     const island = make(seed);
@@ -283,7 +421,8 @@ test('the cove has a gentle sand beach', () => {
       assert.equal(island.zone(...at(3)), 'wet-sand', `seed ${seed}: the beach at ${a} m along`);
       assert.equal(island.zone(...at(20)), 'dry-sand', `seed ${seed}: the beach at ${a} m along`);
       const rise = island.height(...at(15)) - island.height(...at(0));
-      assert.ok(rise / 15 > 1 / 20 && rise / 15 < 1 / 5, `seed ${seed}: the beach at ${a} m along rises 1 in ${(15 / rise).toFixed(1)}`);
+      // Gentle: about 1 in 10 to 1 in 14 over seeds 1-20; twice as steep would read 1 in 5.
+      assert.ok(rise / 15 > 1 / 20 && rise / 15 < 1 / 8, `seed ${seed}: the beach at ${a} m along rises 1 in ${(15 / rise).toFixed(1)}`);
     }
   }
 });

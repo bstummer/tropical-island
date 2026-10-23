@@ -11,8 +11,11 @@
 // It shares the grids with every scene material through ctx.frame.uniforms
 // (chunks/terrain.glsl: the water reads its depth from them), and puts
 // ctx.terrain on the context: { island, heightAt(x, z), heightmap, ready }.
-// heightAt is the height as drawn, for anything that stands on the ground
-// (rough walking); heightmap is world/heightmap.js's, once `ready` resolved.
+// heightAt is the ground's height at its finest: the mesh matches it within
+// about 100 m of the camera, where you walk; farther out the mesh's coarser
+// levels stray from it, by centimetres at a few hundred metres and metres far
+// out, and it depends on where the camera is. heightmap is world/heightmap.js's,
+// once `ready` resolved.
 import * as THREE from 'three';
 import vertexShader from './terrain.vert';
 import fragmentShader from './terrain.frag';
@@ -36,7 +39,7 @@ export function create(ctx) {
   const coarsest = levels.at(-1);
   const extent = (settings.samples - 1) * coarsest.texel;
   const lodLevels = Math.ceil(Math.log2(extent / settings.leaf)) + 1;
-  const { morphs, ranges } = lodRanges(quality.terrainDetail, lodLevels, settings.morph, settings.leaf);
+  const { morphs, ranges } = lodRanges(quality.terrainDetail, lodLevels, settings.morph, settings.leaf, quality.terrainRatio);
 
   const uniforms = frame.uniforms;
   const side = island.side;
@@ -128,8 +131,12 @@ export function create(ctx) {
     const n = settings.samples;
     const height = new THREE.DataArrayTexture(grids.heightData, n, n, levels.length);
     Object.assign(height, { format: THREE.RedFormat, type: THREE.FloatType, minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, generateMipmaps: false, needsUpdate: true });
-    // Kept with the grids, so a quality change doesn't convert them again.
-    grids.infoHalf ??= Uint16Array.from(grids.infoData, THREE.DataUtils.toHalfFloat);
+    // Kept with the grids, so a quality change doesn't convert them again. A
+    // plain loop: Uint16Array.from with a map function takes 20 times as long.
+    if (!grids.infoHalf) {
+      grids.infoHalf = new Uint16Array(grids.infoData.length);
+      for (let i = 0; i < grids.infoHalf.length; i++) grids.infoHalf[i] = THREE.DataUtils.toHalfFloat(grids.infoData[i]);
+    }
     const info = new THREE.DataArrayTexture(grids.infoHalf, n, n, levels.length);
     Object.assign(info, {
       format: THREE.RGBAFormat,

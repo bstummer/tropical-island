@@ -221,7 +221,8 @@ optionally `ready` (a Promise, awaited before a capture starts, for async setup)
 (parsed URL params), `view` (the starting view), `timeOfDay` (hours of daylight; it also takes a named time, and a time at
 night throws), `clock` (`elapsed`, `dt`, `frame`,
 `frozen`, `interval`), `stats` (GPU counts, memory and GPU time from `core/gl-stats.js`), `rng` (`rng('name')` returns a stream with `next/range/int/chance/pick/normal`), `terrain`
-(`world/terrain.js`: `island`, `heightAt(x, z)` the height as drawn, `heightmap` and its `ready`; it exists while the terrain
+(`world/terrain.js`: `island`, `heightAt(x, z)` the ground's height at its finest, which the mesh matches near the camera but
+not far out, where its coarser levels stray from it, `heightmap` and its `ready`; it exists while the terrain
 system does, so systems that read it in `create()` come after `terrain` in `WORLD_SYSTEMS`), and `frame`
 (`post/frame.js`: `size` and `onResize(fn)` for the drawing buffer, `uniforms` every scene material shares (the
 exposure, the light state and the terrain's grids),

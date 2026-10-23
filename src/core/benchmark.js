@@ -4,12 +4,14 @@
 // exposes timer queries, and the frame's GPU counts. It ends with a summary to
 // paste into a session, naming the GPU, browser, resolution and preset. That is
 // how numbers from real machines reach the AI. window.__BENCH__ holds the
-// result for tools/screenshot.js. Runs instead of input: nothing to steer.
+// result for tools/screenshot.js. Runs instead of input: nothing to steer. It
+// starts once `ready` (the world's) resolves, so it measures the whole world:
+// the terrain's grids take a moment to build.
 import { views } from '../views.js';
 import { applyView } from './camera.js';
 import { formatBenchmark } from './timing.js';
 
-export function create(ctx) {
+export function create(ctx, ready) {
   const { config, params, camera, stats, renderer } = ctx;
   const panel = document.getElementById('bench');
   const text = panel.querySelector('pre');
@@ -22,10 +24,16 @@ export function create(ctx) {
   let elapsed = 0;
   let frames = 0;
   let current = null;
+  let started = false;
 
   const stopGpu = stats.onGpuTime((ms) => measuring && current.gpuMs.push(ms));
   panel.hidden = false;
-  next();
+  text.textContent = 'Benchmark: waiting for the world…';
+  // A world that fails to build stops the game and says so itself.
+  ready.then(() => {
+    started = true;
+    next();
+  }, () => {});
 
   function next() {
     index++;
@@ -75,7 +83,7 @@ export function create(ctx) {
 
   return {
     update() {
-      if (index === views.length) return;
+      if (!started || index === views.length) return;
       const interval = ctx.clock.interval;
       elapsed += interval;
       frames++;

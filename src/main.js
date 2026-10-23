@@ -138,7 +138,7 @@ function boot() {
   // Tools around the world: they stay through a quality change.
   const tools = [];
   if (!params.capture) {
-    if (params.bench) tools.push(benchmark.create(ctx));
+    if (params.bench) tools.push(benchmark.create(ctx, Promise.all(world.map((system) => system.ready))));
     else tools.push(input.create(ctx));
     tools.push(readout.create(ctx));
     if (import.meta.env.DEV) tools.push(timeControl.create(ctx));

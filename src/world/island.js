@@ -112,15 +112,28 @@ export function createIsland(rng, settings = config.world.island, sunsetYaw = co
   // How sandy the shore is, 0 (rock) to 1 (beach). It changes slowly along the
   // coast: how steeply the hills come down to the shore follows it, and a
   // sudden change would leave a cliff running inland.
-  function beachiness(a, o, w) {
+  function beachiness(a, o, w, broad) {
     const { sand } = cove;
     let b = (1 - smoothstep(sand.headland[0], sand.headland[1], a)) * (sand.far[2] + (1 - sand.far[2]) * smoothstep(sand.far[0], sand.far[1], a));
     b *= 1 - smoothstep(-sand.fade, 0, capsuleInside(a, o, headland));
     if (w > 0) {
-      const island = smoothstep(shore.islandSand[0], shore.islandSand[1], zoneNoise(a / shore.islandSandWavelength, o / shore.islandSandWavelength));
+      const { islandSand } = shore;
+      const n = zoneNoise(a / islandSand.wavelength, o / islandSand.wavelength);
+      const island = smoothstep(...islandSand.edges, islandSand.noise * n + bayness(a, o, broad));
       b += w * (island - b);
     }
     return b;
+  }
+
+  // How much the coast curves round the water near a, o, per km: positive in a
+  // bay, negative on a point. The broad coast's Laplacian over bayScale metres,
+  // only near the shore, where it decides the beach; it fades out away from it.
+  function bayness(a, o, broad) {
+    const near = 1 - smoothstep(250, 350, Math.abs(broad));
+    if (near === 0) return 0;
+    const s = shore.islandSand.bayScale;
+    const at = (da, dO) => broadCoast(a + da, o + dO, islandWeight(a + da, o + dO));
+    return (near * 1000 * (at(s, 0) + at(-s, 0) + at(0, s) + at(0, -s) - 4 * broad)) / (s * s);
   }
 
   // The hills, as heights above sea level before they meet the shore.
@@ -182,7 +195,10 @@ export function createIsland(rng, settings = config.world.island, sunsetYaw = co
   // it, or a steep rocky shore.
   function shoreHeight(d, b, a, o) {
     const { beach, rocky, undulation } = shore;
-    const sandy = beach.berm * Math.tanh(d / beach.bermWidth) + beach.plain * (1 - Math.exp(-softplus(d - beach.plainFrom, 10) / beach.plainReach));
+    // The plain rises from plainFrom metres inland, eased in: less the ease's
+    // own little rise at the waterline, so the beach starts at the sea.
+    const plainIn = softplus(d - beach.plainFrom, 10) - softplus(-beach.plainFrom, 10);
+    const sandy = beach.berm * Math.tanh(d / beach.bermWidth) + beach.plain * (1 - Math.exp(-plainIn / beach.plainReach));
     const rockyRise = rocky.lip * Math.tanh(d / rocky.lipWidth) + rocky.rise * (1 - Math.exp(-d / rocky.reach));
     const swell = undulation.amplitude * smoothstep(...undulation.from, d) * hillNoise(a / undulation.wavelength - 40.2, o / undulation.wavelength + 8.8);
     // Never below the water: the waterline is where the coast says.
@@ -195,34 +211,27 @@ export function createIsland(rng, settings = config.world.island, sunsetYaw = co
   function reefOffset(a, o, w, broad) {
     const { reef } = seabed;
     const bend = a / reef.cove.radius;
-    const coveOffset = (o - reef.cove.out + (a * a) / (2 * reef.cove.radius)) / Math.sqrt(1 + bend * bend);
+    const [wander, wanderLength] = reef.wander;
+    const wobble = wander * fbm(seabedNoise, a / wanderLength + 41.7, o / wanderLength - 13.3, 2);
+    const coveOffset = (o - reef.cove.out + (a * a) / (2 * reef.cove.radius)) / Math.sqrt(1 + bend * bend) + wobble;
     if (w === 0) return coveOffset;
     const n = fbm(seabedNoise, a / reef.island.wavelength + 9.1, o / reef.island.wavelength - 2.4, 2);
-    const islandOffset = -broad - (reef.island.mean + reef.island.swing * n);
+    const islandOffset = -broad - (reef.island.mean + reef.island.swing * n) + wobble;
     return coveOffset + w * (islandOffset - coveOffset);
   }
 
   // The seabed, x metres offshore and y beyond the reef's crest.
   function seabedHeight(x, y, b, a, o) {
-    const { lagoon, reef } = seabed;
-    const shelf = -x * (shore.rocky.shelfSlope + b * (shore.beach.shelfSlope - shore.rocky.shelfSlope));
+    // The lagoon's side of the crest and the drop-off follow rules of their
+    // own; across a band at the crest they blend, each taken at the crest's
+    // edge of its side, so the reef runs on without a step.
+    const band = seabed.reef.crestBlend;
     let h;
-    if (y <= 0) {
-      const floor = -(lagoon.depth + lagoon.swing * fbm(seabedNoise, a / lagoon.wavelength, o / lagoon.wavelength, 2));
-      h = smax(shelf, floor, 1.5);
-      const flat = -reef.crest - (reef.flat - reef.crest) * smoothstep(0, reef.flatWidth, -y) - reef.backSlope * Math.max(0, -y - reef.flatWidth);
-      const [roughness, roughWavelength] = reef.roughness;
-      const rough = roughness * smoothstep(-reef.flatWidth - 20, 0, y) * fbm(seabedNoise, a / roughWavelength + 3.3, o / roughWavelength, 2);
-      h = smax(h, flat + rough, 1);
-      const { bommies } = seabed;
-      const lagoonShare = smoothstep(bommies.from, bommies.from + 25, x) * (1 - smoothstep(-bommies.clear - 25, -bommies.clear, y));
-      if (lagoonShare > 0) h += lagoonShare * coralHeads(a, o, h);
-    } else {
-      // A shore out here drops straight into the deep, sandy or not.
-      const { fore } = reef;
-      const [groove, grooveWavelength] = fore.grooves;
-      const grooves = groove * smoothstep(0, 10, y) * (1 - smoothstep(...fore.groovesEnd, y)) * fbm(seabedNoise, a / grooveWavelength - 8.8, o / grooveWavelength + 4.4, 2);
-      h = smax(-x * shore.rocky.shelfSlope, -reef.crest - fore.drop * (1 - Math.exp(-y / fore.dropWidth)) - fore.slope * y + grooves, 1);
+    if (y <= -band) h = insideReef(x, y, b, a, o);
+    else if (y >= band) h = outsideReef(x, y, a, o);
+    else {
+      const inside = insideReef(x, Math.min(y, 0), b, a, o);
+      h = inside + (outsideReef(x, Math.max(y, 0), a, o) - inside) * smoothstep(-band, band, y);
     }
     // The pass and the channel, their walls bent so they don't run straight.
     const { bend } = seabed;
@@ -235,25 +244,52 @@ export function createIsland(rng, settings = config.world.island, sunsetYaw = co
     return Math.min(h, -seabed.minDepth * smoothstep(5, 25, x), -0.02 * Math.min(x, 5));
   }
 
-  function passHeight(a, o) {
-    const { t, dist } = segment(a, o, pass.ax, pass.ao, pass.bx, pass.bo);
-    const { depth, wall, halfWidth } = seabed.pass;
-    return -(depth[0] + (depth[1] - depth[0]) * t) + wall * Math.max(0, dist - halfWidth);
+  // Inside the reef's crest (y <= 0): the shelf, the lagoon floor, the reef
+  // flat behind the crest, and coral heads.
+  function insideReef(x, y, b, a, o) {
+    const { lagoon, reef, bommies } = seabed;
+    const shelf = -x * (shore.rocky.shelfSlope + b * (shore.beach.shelfSlope - shore.rocky.shelfSlope));
+    const floor = -(lagoon.depth + lagoon.swing * fbm(seabedNoise, a / lagoon.wavelength, o / lagoon.wavelength, 2));
+    let h = smax(shelf, floor, 1.5);
+    const flat = -reef.crest - (reef.flat - reef.crest) * smoothstep(0, reef.flatWidth, -y) - reef.backSlope * Math.max(0, -y - reef.flatWidth);
+    const [roughness, roughWavelength] = reef.roughness;
+    const rough = roughness * smoothstep(-reef.flatWidth - 20, 0, y) * fbm(seabedNoise, a / roughWavelength + 3.3, o / roughWavelength, 2);
+    h = smax(h, flat + rough, 1);
+    const lagoonShare = smoothstep(bommies.from, bommies.from + 25, x) * (1 - smoothstep(-bommies.clear - 25, -bommies.clear, y));
+    if (lagoonShare > 0) h += lagoonShare * coralHeads(a, o, h);
+    return h;
   }
 
-  // The channel deepens and widens along its path, towards the pass.
+  // Outside it (y >= 0): the drop-off. A shore out here drops straight into
+  // the deep, sandy or not.
+  function outsideReef(x, y, a, o) {
+    const { reef } = seabed;
+    const { fore } = reef;
+    const [groove, grooveWavelength] = fore.grooves;
+    const grooves = groove * smoothstep(0, 10, y) * (1 - smoothstep(...fore.groovesEnd, y)) * fbm(seabedNoise, a / grooveWavelength - 8.8, o / grooveWavelength + 4.4, 2);
+    return smax(-x * shore.rocky.shelfSlope, -reef.crest - fore.drop * (1 - Math.exp(-y / fore.dropWidth)) - fore.slope * y + grooves, 1);
+  }
+
+  function passHeight(a, o) {
+    const { t, dist } = segment(a, o, pass.ax, pass.ao, pass.bx, pass.bo);
+    const { depth, wall, halfWidth, ragged } = seabed.pass;
+    const width = halfWidth[0] + (halfWidth[1] - halfWidth[0]) * t + ragged[0] * seabedNoise(a / ragged[1] + 5.5, o / ragged[1] - 7.7);
+    return -(depth[0] + (depth[1] - depth[0]) * t) + wall * Math.max(0, dist - width);
+  }
+
+  // The channel deepens and widens along its path, towards the pass. Each
+  // stretch is a trough of its own and the deepest has its way, so the floor
+  // runs on without a step where stretches meet at a bend.
   function channelHeight(a, o) {
-    let best = Infinity;
-    let along = 0;
+    const { depth, halfWidth, wall } = seabed.channel;
+    let h = Infinity;
     for (const s of channel) {
       const { t, dist } = segment(a, o, s.ax, s.ao, s.bx, s.bo);
-      if (dist < best) {
-        best = dist;
-        along = s.ha + (s.hb - s.ha) * t;
-      }
+      const along = s.ha + (s.hb - s.ha) * t;
+      const trough = -(depth[0] + (depth[1] - depth[0]) * along) + wall * Math.max(0, dist - (halfWidth[0] + (halfWidth[1] - halfWidth[0]) * along));
+      h = Math.min(h, trough);
     }
-    const { depth, halfWidth, wall } = seabed.channel;
-    return -(depth[0] + (depth[1] - depth[0]) * along) + wall * Math.max(0, best - (halfWidth[0] + (halfWidth[1] - halfWidth[0]) * along));
+    return h;
   }
 
   // Coral heads scattered over the lagoon floor: one or none per cell of a grid,
@@ -285,7 +321,7 @@ export function createIsland(rng, settings = config.world.island, sunsetYaw = co
     const w = islandWeight(a, o);
     const broad = broadCoast(a, o, w);
     const d = coastDistance(a, o, w, broad);
-    const b = beachiness(a, o, w);
+    const b = beachiness(a, o, w, broad);
     const reef = reefOffset(a, o, w, broad);
     let height;
     if (d >= 0) {
@@ -320,8 +356,7 @@ export function createIsland(rng, settings = config.world.island, sunsetYaw = co
     const { coast: d, height: h, beach: b, reef: y, a, o } = s;
     if (d < 0) {
       if (y < -zones.reefBack) return 'lagoon';
-      if (y < zones.reefFore) return h < -zones.reefDeep ? (y < 0 ? 'lagoon' : 'ocean') : 'reef';
-      return 'ocean';
+      return h < -zones.reefDeep ? (y < 0 ? 'lagoon' : 'ocean') : 'reef';
     }
     if (slope > Math.tan(zones.rockSlope * DEG)) return 'rock';
     // The band along the shore is sand or rock, as sandy as the shore is; the
@@ -479,11 +514,13 @@ function capsuleInside(a, o, chain) {
 
 // The closest point of segment a-b to p: how far along (0 to 1) and how far
 // away. Returns the same object every time, so read it before the next call.
+// A segment of no length (a point repeated in a path) is its start.
 const hit = { t: 0, dist: 0 };
 function segment(px, pz, ax, az, bx, bz) {
   const abx = bx - ax;
   const abz = bz - az;
-  const t = Math.min(1, Math.max(0, ((px - ax) * abx + (pz - az) * abz) / (abx * abx + abz * abz)));
+  const length2 = abx * abx + abz * abz;
+  const t = length2 > 0 ? Math.min(1, Math.max(0, ((px - ax) * abx + (pz - az) * abz) / length2)) : 0;
   const dx = px - ax - t * abx;
   const dz = pz - az - t * abz;
   hit.t = t;

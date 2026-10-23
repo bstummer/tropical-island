@@ -3,8 +3,8 @@
 A first-person walk around a procedurally generated tropical island. It runs in the browser from a single
 HTML file: no install, no downloads at runtime, and it works offline.
 
-> Early days: the sky, sun and light are in, but the island is still a simple placeholder while the water,
-> palms and beach are built.
+> Early days: the sky, the light and the island's shape are in; the water, the beach's surfaces and the
+> plants are still to come.
 
 ## Play
 

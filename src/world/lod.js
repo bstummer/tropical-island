@@ -4,18 +4,23 @@
 //
 // A node at level L is leaf x 2^L metres across and drawn with `grid` x `grid`
 // quads, 2^L metres apart. It splits into four children while the camera is
-// within range L - 1 of it, ranges doubling from `detail` metres at level 0.
-// A child out of that range is drawn as a quarter of its parent instead, at
-// the parent's spacing. Every point of the root is covered once, and
+// within range L - 1 of it, the ranges growing by `ratio` a level from
+// `detail` metres at level 0. A child out of that range is drawn as a quarter
+// of its parent instead, at the parent's spacing. Every point of the root is covered once, and
 // neighbours differ by at most one level, so the vertex shader's morph
 // (terrain.vert) closes every seam.
 //
 // Ranges are measured across the ground, ignoring height, here and in the
 // morph. A seam can lie a node's diagonal beyond its level's range, where the
 // coarser side must not have begun to morph yet; across the ground that holds
-// for any terrain once detail x (1 - morph) exceeds a leaf's diagonal (lodRanges
-// checks it). Measured in 3D, a 32 m node on the headland's cliffs spans 70 m
-// of height, and the finest range would have to be about 120 m.
+// for any terrain once detail x (ratio - 1) x (1 - morph) exceeds a leaf's
+// diagonal (lodRanges checks it). Measured in 3D, a 32 m node on the
+// headland's cliffs spans 70 m of height, and the finest range would have to
+// be about 120 m.
+//
+// A ratio over 2 refines the distance more than the near ground: the far
+// levels' error on screen falls to that of the near ones (2.5 halves the worst
+// level's, against doubling the finest range at under 60% of its triangles).
 //
 // Positions are in the cove's frame (world/island.js): a, o across, y up.
 
@@ -85,9 +90,13 @@ export function createLod({ origin, levels, leaf, grid }, bounds) {
         return true;
       }
       for (const [di, dj] of [[0, 0], [1, 0], [0, 1], [1, 1]]) {
-        if (!visit(level - 1, 2 * i + di, 2 * j + dj)) {
-          out.push({ a: a0 + (di * size) / 2, o: o0 + (dj * size) / 2, spacing: size / grid, level, quarter: true });
-        }
+        const [ci, cj] = [2 * i + di, 2 * j + dj];
+        if (visit(level - 1, ci, cj)) continue;
+        // The quarter covers the child's square: culled by its heights.
+        const below = heights[level - 1];
+        const m = 2 * (cj * 2 * count + ci);
+        const [qa, qo] = [a0 + (di * size) / 2, o0 + (dj * size) / 2];
+        if (visible(qa, qo, size / 2, below[m], below[m + 1])) out.push({ a: qa, o: qo, spacing: size / grid, level, quarter: true });
       }
       return true;
     }
@@ -98,15 +107,16 @@ export function createLod({ origin, levels, leaf, grid }, bounds) {
   return { select };
 }
 
-// How far each level reaches: `detail` metres for level 0, doubling, and the
-// distances over which each morphs into the next ([start, end] per level).
-// Throws for a detail too short for nodes `leaf` metres across to close their
-// seams (see the top).
-export function lodRanges(detail, levels, morph, leaf) {
-  if (!(detail * (1 - morph) > leaf * Math.SQRT2)) {
-    throw new Error(`terrain detail ${detail} m is too short for ${leaf} m nodes: it must exceed ${((leaf * Math.SQRT2) / (1 - morph)).toFixed(1)} m`);
+// How far each level reaches: `detail` metres for level 0, growing by `ratio`
+// (at least 2) a level, and the distances over which each morphs into the
+// next ([start, end] per level). Throws for ranges too short for nodes `leaf`
+// metres across to close their seams (see the top).
+export function lodRanges(detail, levels, morph, leaf, ratio = 2) {
+  if (!(ratio >= 2)) throw new Error(`terrain range ratio ${ratio}: each level must reach at least twice as far as the last`);
+  if (!(detail * (ratio - 1) * (1 - morph) > leaf * Math.SQRT2)) {
+    throw new Error(`terrain detail ${detail} m is too short for ${leaf} m nodes: it must exceed ${((leaf * Math.SQRT2) / ((ratio - 1) * (1 - morph))).toFixed(1)} m`);
   }
-  const ranges = Array.from({ length: levels }, (_, level) => detail * 2 ** level);
+  const ranges = Array.from({ length: levels }, (_, level) => detail * ratio ** level);
   const morphs = ranges.map((end, level) => {
     const start = level ? ranges[level - 1] : 0;
     return [end - (end - start) * morph, end];

@@ -310,7 +310,8 @@ the user walks the cove before the views are framed on it: until then, changing 
   slope; the terrain's shader uses fixed bands and the drawn grid's slope (about 5% of the cove's sandy
   land differs). Settle one definition, which the GPU and placement (Stages 8–9) share, before building
   surfaces on it. The terrain's info texture has no channel left. Rock judged by the mip-averaged slope
-  fades on sharp ridges in the distance, where slopes either side average out.
+  fades on sharp ridges in the distance, where slopes either side average out. Sand lies on slopes up to
+  54° where the beach meets the headland, though sand holds to about 34°.
 - **Done when** a close-up of sand holds up, no tiling shows from any view, and nothing looks plastic.
 
 ### 5. Shadows
@@ -331,8 +332,10 @@ the user walks the cove before the views are framed on it: until then, changing 
   of the frame's own has to leave it out.
 - Known from Stage 3: the terrain's morph and the planet's bend (`chunks/planet.glsl`) measure from
   three's `cameraPosition`, which in a shadow pass is the light's camera. The terrain picks its nodes
-  once a frame, for the main camera, into the meshes' shared instance buffers. three's depth material
-  ignores the terrain's vertex shader.
+  once a frame, for the main camera, into the meshes' shared instance buffers: a shadow pass reusing
+  them would miss casters out of view, such as the volcano with the sun behind it. three's depth
+  material ignores the terrain's vertex shader. The mesh's shape depends on where the camera is (its
+  levels of detail), so whatever draws it must agree on that camera.
 - **Done when** low-sun captures show long, soft shadows from the rocks and terrain, with no acne, no
   detached shadows and no hard edges, and the camera-offset captures show no shimmer (the tool turns the
   camera but can't move it yet).
@@ -374,7 +377,10 @@ the user walks the cove before the views are framed on it: until then, changing 
   break.
 - Expect several sessions. Split this stage into sub-steps.
 - Known from Stage 3: the coast's distance (`island.sample().coast`) isn't metres; across the shore it
-  changes by 0.5 to 1.7 a metre, so bands measured in it vary in width on the ground.
+  changes by 0.5 to 1.7 a metre, so bands measured in it vary in width on the ground. Near the camera
+  the waterline is drawn as a polyline 1 m a side, whose kinks show in the `sand` close-up. The cove's
+  beach is a smooth arc by design, as sandy bays behind a headland are; the small-scale life of a real
+  waterline, beach cusps scalloped by the swash every 20–40 m, comes with the waves.
 - **Done when** the low beach view is a wallpaper, its motion strip shows waves running up and draining
   back naturally (the strip spans 2.5 s today, less than one wave), and the user finds the motion natural
   in the running game.
@@ -398,9 +404,12 @@ the user walks the cove before the views are framed on it: until then, changing 
 - Known from Stage 1: no fixture proves alpha-to-coverage yet, and geometry thinner than about two pixels
   crawls even with MSAA.
 - Known from Stage 3: `island.zone()` costs about 7 µs a point, too slow to place plants by the hundred
-  thousand on the main thread, and it disagrees with the drawn ground along band edges (Stage 4). Plants
-  stand on the ground as drawn (`ctx.terrain.heightAt`, which misses `island.height` by up to decimetres
-  on the coarse grids) and bend with the planet (`chunks/planet.glsl`), or the far ones float.
+  thousand on the main thread, and it disagrees with the drawn ground along band edges (Stage 4). Near the
+  camera the mesh is `ctx.terrain.heightAt`, but farther out its levels of detail stray from it (by
+  centimetres at 200–400 m, decimetres beyond, metres far out) and change as the camera moves: distant
+  plants need the mesh's own height, one function shared by the terrain and what stands on it, with a JS
+  twin and a check of the vertex shader's output. Plants also bend with the planet
+  (`chunks/planet.glsl`), or the far ones float.
 - **Done when** palms glow when backlit at golden hour, fronds sway and flutter, their shade sits soft on
   the sand, close-ups hold up, and nothing flickers: the shimmer score stays low and the user sees none in
   the running game.
@@ -512,7 +521,8 @@ the user walks the cove before the views are framed on it: until then, changing 
 
 - A start screen in the game's own visual language. Boot progress if generation takes noticeable time.
   An in-game settings menu: quality, time of day (the only in-game way to change it) and sound. Optionally
-  a photo mode with the UI hidden.
+  a photo mode with the UI hidden. Known from Stage 3: the terrain's detail ignores the field of view, so a
+  zoomed-in photo magnifies far ground at its coarse detail.
 - The game is desktop only (see Decisions). A phone or tablet gets a short note that it needs a desktop
   browser with keyboard and mouse, instead of a start screen that can't work.
 - Capture mode hides all UI, so extend the screenshot tool's player-mode run to also save images of the
@@ -607,6 +617,13 @@ Made with the user. Don't reopen them unless the user does.
   barrier reef 600 m to 1 km out with a broad lagoon was the alternative. (2026-10-22)
 - **The headland stands on the left** of someone on the beach facing the sea: its inner cliffs catch the
   noon sun and the low evening light; on the right it would stand dark beside the sunset. (2026-10-22)
+- **More beaches beyond the cove, in its bays**: sand where the coast curves round the water, with
+  noise so not every bay is sandy; on the game's island five beaches of 90–500 m instead of two, about
+  30% of the coast beyond the cove. The cove's own arc stays as it is: sandy bays behind a headland are
+  smooth curves. (2026-10-23)
+- **The reef is roughened a bit**: its crest wanders about 8 m either way over about 110 m, and its
+  width with it; the pass widens towards the sea between ragged walls. A less circular bay, a blunter
+  headland tip and leaving it regular were the alternatives. (2026-10-23)
 - **The hilltops' last light is as the atmosphere gives it**: at the named sunset the sun on the summit
   is 1.6 times the beach's, and lit hilltops over a dark shore show only in the last minutes before the
   sun touches the sea. Thicker evening haze (a greyer horizon) and a named sunset 0.5° up were the
@@ -635,13 +652,19 @@ Not part of the plan. Build one only if the user asks for it: a passing rain sho
 Newest first. One short entry per session, only a few lines: date, stage, what changed, what is still
 open, next step. Details belong in code comments.
 
-- **2026-10-22, Stage 3 done** (not committed yet). The island's shape (`world/island.js`, `npm run map`),
-  terrain from nested grids with a morphing level-of-detail mesh, sunlight by height, and the final views
-  with agreed briefs (new: `into-the-sun`, `sand`). The user walked the cove and made the taste calls
-  (Decisions). A five-part review fixed cracks between detail levels on `low` and `medium` and stale
+- **2026-10-23, Stage 3: an outside review.** Fixed steps in the seabed (the channel's bends, the reef's
+  crest) and a 1.2 cm one at every sandy waterline, now caught by a test for steps; far terrain finer
+  (each level reaches 2.5 times as far as the last: the far cliffs lose their sawtooth); quarters culled;
+  a 0.7 s stall at boot; a benchmark that measured before the island was in. Cost on `high`: 120–455k
+  triangles, SwiftShader 0.5–1.04 s a frame. The user had the reef roughened a bit and asked for more
+  beaches beyond the cove: they lie in its bays now (Decisions; building the grids costs 18% more).
+  Open: the far mesh's own height (Stages 5, 8). Next: Stage 4.
+- **2026-10-22, Stage 3 done** (commit `70cc348`, the maths check in `fb92551`). The island's shape
+  (`world/island.js`, `npm run map`), terrain from nested grids with a morphing level-of-detail mesh,
+  sunlight by height, and the final views with agreed briefs (new: `into-the-sun`, `sand`). The user
+  walked the cove and made the taste calls (Decisions). A five-part review fixed cracks between detail levels on `low` and `medium` and stale
   culling, and tightened the checks. Open items went to Stages 4–9, 11, 12, 14, 17 and 18. A check of the
   maths after it replaced the coral heads' weak hash (now tested with the noise, `tests/noise.test.js`).
-  Next: Stage 4.
 - **2026-10-22, Stage 2: a third review.** Light from below comes from the ground's albedo (the far sea's
   until Stage 4); the SH read is unrolled (17% off a SwiftShader frame). The user picked the named sunrise
   and sunset 1° up and an exposure compensation of 0.3 (Decisions). Open: the air's clarity and the
