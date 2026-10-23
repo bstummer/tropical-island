@@ -1,55 +1,116 @@
 // The terrain, lit by the shared lighting. Its normal comes from the finest
 // grid's slopes, filtered over the pixel's footprint, so distant slopes keep
-// their detail without sparkling. Until Stage 4's ground surfaces it is
-// plain colours by zone, blended softly: sand by the water, rock where it is
-// steep or the shore is rocky, greens inland.
+// their detail without sparkling. Its ground (world/island.js groundOf) is
+// sand (chunks/sand.glsl), wet by its height above the sea, rock
+// (chunks/rock.glsl), and green inland (chunks/green.glsl), mixed as
+// world/albedo.js mixes them; where sand meets green, the green's patches
+// decide which is where. Pieces with no sand or no rock (world/terrain.js)
+// leave out TERRAIN_SAND or TERRAIN_ROCK and draw what a far, filtered pixel
+// still sees of it as its plain albedo; pieces far from the camera leave out
+// the green's detail (GREEN_DETAIL).
 
 #include "chunks/scene-output.glsl"
 #include "chunks/lighting.glsl"
 #include "chunks/terrain.glsl"
+#include "chunks/sand.glsl"
+#include "chunks/rock.glsl"
+#include "chunks/green.glsl"
 #include "chunks/planet.glsl"
 
-uniform vec3 uDrySand; // linear, as all the colours here
+uniform vec3 uDrySand; // linear albedos, as all here
 uniform vec3 uWetSand;
-uniform vec3 uSeabed;
-uniform vec3 uScrub;
-uniform vec3 uGreen;
-uniform vec3 uJungle;
 uniform vec3 uRock;
-uniform vec4 uBands; // metres inland: wet sand, the shore's band, scrub, the palm belt's end
-uniform vec2 uRockSlope; // slopes over which ground turns to rock
 
 centroid varying vec3 vWorldPos;
+varying vec3 vCentre; // for derivatives (terrain.vert)
 
 void main() {
   vec2 ao = terrainCove(vWorldPos.xz);
-  vec2 dx = dFdx(ao); // before any branch: derivatives need every pixel around
-  vec2 dy = dFdy(ao);
+  // Before any branch: derivatives need every pixel around.
+  vec2 dx = dFdx(terrainCove(vCentre.xz));
+  vec2 dy = dFdy(terrainCove(vCentre.xz));
+  vec3 dPdx = dFdx(vCentre);
+  vec3 dPdy = dFdy(vCentre);
+  vec2 dpdx = dPdx.xz;
+  vec2 dpdy = dPdy.xz;
 
   // TEMPORARY, with world/placeholder.js: its opaque water hides the seabed, so
   // seabed wholly under it across the pixel needn't be shaded (a fifth of a
   // SwiftShader frame). Stage 6's water shows the seabed: remove this then.
   float aboveSea = vWorldPos.y + planetDrop(vWorldPos.xz);
-  if (aboveSea + 2.0 * fwidth(aboveSea) < -0.1) {
+  bool hidden = aboveSea + 2.0 * fwidth(aboveSea) < -0.1;
+
+  vec4 info = vec4(0.0);
+  vec4 cover = vec4(0.0);
+  vec3 n = vec3(0.0, 1.0, 0.0);
+  Sand s;
+  s.albedo = vec3(0.0);
+  s.roughness = 1.0;
+  s.f0 = 0.02;
+  s.film = 0.0;
+  Rock r;
+  r.albedo = vec3(0.0);
+  r.roughness = 1.0;
+  r.f0 = 0.04;
+  r.height = 0.0;
+  r.relief = 0.0;
+  Green gr;
+  gr.albedo = vec3(0.0);
+  gr.height = 0.5;
+  gr.detail = 0.0;
+  gr.width = 0.0;
+  vec3 view = normalize(cameraPosition - vWorldPos);
+  if (!hidden) {
+    terrainGround(ao, dx, dy, info, cover);
+    vec2 slope = terrainWorldSlope(info.xy);
+    n = normalize(vec3(-slope.x, 1.0, -slope.y));
+  }
+  s.normal = n;
+  r.normal = n;
+  gr.normal = n;
+  if (!hidden) {
+    gr = green(vWorldPos, n, info.z, cover.z, cover.w, uDrySand, dpdx, dpdy);
+#ifdef TERRAIN_SAND
+    if (cover.x > 0.0) s = sand(vWorldPos, aboveSea, n, sandWetness(aboveSea - sandReach(vWorldPos.xz)), uDrySand, uWetSand, dpdx, dpdy);
+#else
+    s.albedo = sandAlbedo(sandWetness(aboveSea - sandReach(vWorldPos.xz)), uDrySand, uWetSand);
+#endif
+#ifdef TERRAIN_ROCK
+    if (cover.y > 0.0) r = rock(vWorldPos, aboveSea, n, view, uRock, dPdx, dPdy);
+#else
+    r.albedo = rockAlbedo(uRock, aboveSea);
+#endif
+  }
+  float soft = 1.0 - cover.y; // sand and green
+  if (cover.x > 0.0 && soft > cover.x) cover.x = soft * greenSandShare(cover.x / soft, gr);
+#ifdef TERRAIN_ROCK
+  // Out of any branch, for its derivative. Where rock meets sand or green, the
+  // rest of the pixel keeps their proportions.
+  float rockWidth = fwidth(r.height);
+  if (cover.y > 0.0) {
+    float share = rockShare(cover.y, r, rockWidth);
+    float rest = 1.0 - cover.y;
+    cover.x *= rest > 0.001 ? (1.0 - share) / rest : 0.0;
+    cover.y = share;
+  }
+#endif
+  // Each surface's own normal tilts its share of the pixel, where they meet.
+  float rest = max(1.0 - cover.x - cover.y, 0.0);
+  n = normalize(n + cover.x * (s.normal - n) + cover.y * (r.normal - n) + rest * (gr.normal - n));
+  float kernel = specularKernel(n); // every pixel: it takes derivatives
+  if (hidden) {
     gl_FragColor = sceneOutput(vec3(0.0), 1.0);
     return;
   }
 
-  vec4 info = terrainInfo(ao, dx, dy);
-  vec2 slope = terrainWorldSlope(info.xy);
-  vec3 n = normalize(vec3(-slope.x, 1.0, -slope.y));
-  float coast = info.z;
-  float sandy = smoothstep(0.4, 0.6, info.w);
-
-  float inland = smoothstep(uBands.y - 4.0, uBands.y + 4.0, coast);
-  vec3 sand = mix(uWetSand, uDrySand, smoothstep(uBands.x - 3.0, uBands.x + 3.0, coast));
-  vec3 green = mix(uScrub, uGreen, smoothstep(uBands.z - 5.0, uBands.z + 5.0, coast));
-  green = mix(green, uJungle, smoothstep(uBands.w - 15.0, uBands.w + 15.0, coast));
-  vec3 shore = mix(uRock, sand, sandy);
-  vec3 albedo = mix(shore, green, inland);
-  albedo = mix(albedo, uRock, smoothstep(uRockSlope.x, uRockSlope.y, length(slope)));
-  albedo = mix(albedo, uSeabed, (1.0 - smoothstep(-0.5, 0.5, coast)) * sandy);
-
-  vec3 radiance = albedo / PI * (sunLight(vWorldPos, n) + skyIrradiance(vWorldPos, n));
+  vec3 diffuse = cover.y * r.albedo + rest * gr.albedo;
+  diffuse += cover.x * sandDiffuse(s, n, view);
+  vec3 radiance = diffuse / PI * (sunLight(vWorldPos, n) + skyIrradiance(vWorldPos, n));
+#ifdef TERRAIN_SAND
+  if (cover.x > 0.0) radiance += cover.x * sandShine(s, vWorldPos, n, view, kernel);
+#endif
+#ifdef TERRAIN_ROCK
+  if (cover.y > 0.0) radiance += cover.y * rockShine(r, vWorldPos, n, view, kernel);
+#endif
   gl_FragColor = sceneOutput(aerialPerspective(radiance, vWorldPos), 1.0);
 }

@@ -1,13 +1,15 @@
 // The island as drawn: the nested grids of world/heightmap.js, which
 // world/terrain.js uploads. terrainHeight() samples them exactly as
-// heightmap.js heightAtCove() does, so the drawn ground is where JS thinks it
-// is (the screenshot tool's terrain check compares them). Positions are in
+// heightmap.js heightAtCove() does, and terrainGround() as groundAtCove(), so
+// the drawn ground is where and what JS thinks it is (the screenshot tool's
+// terrain check compares them). Positions are in
 // the cove's frame (world/island.js): a along the beach, o out to sea.
 
 #define TERRAIN_LEVELS 4
 
 uniform highp sampler2DArray uTerrainHeight; // per level: the height at each sample
-uniform mediump sampler2DArray uTerrainInfo; // slope along a and o, distance to the shore, sandiness
+uniform mediump sampler2DArray uTerrainInfo; // slope along a and o, the ground's band, the reef's offset
+uniform lowp sampler2DArray uTerrainGround; // how much of the ground is sand, and rock; how lush the green; how sandy the soil
 uniform vec4 uTerrainLevels[TERRAIN_LEVELS]; // per level: origin a, o; texel
 uniform vec4 uTerrainFrame; // a = dot(xz, .xy), o = dot(xz, .zw)
 uniform float uTerrainSamples;
@@ -70,21 +72,24 @@ float terrainHeight(vec2 ao, int from) {
   return terrainBilinear(TERRAIN_LEVELS - 1, ao);
 }
 
-// Slope, distance to the shore and sandiness at ao, filtered over a pixel's
-// footprint (dx, dy: the derivatives of ao), from the finest level there.
-vec4 terrainInfo(vec2 ao, vec2 dx, vec2 dy) {
-  if (uTerrainReady < 0.5) return vec4(0.0, 0.0, -1e4, 0.0);
-  vec4 info = vec4(0.0);
+// The slopes and the ground at ao (heightmap.js groundAtCove, world/island.js
+// groundOf and lushOf), filtered over a pixel's footprint (dx, dy: the
+// derivatives of ao), from the finest level there. info: slope along a and o,
+// band, reef's offset; cover: sand, rock, how lush the green is, how sandy the soil.
+void terrainGround(vec2 ao, vec2 dx, vec2 dy, out vec4 info, out vec4 cover) {
+  info = vec4(0.0);
+  cover = vec4(0.0);
+  if (uTerrainReady < 0.5) return;
   float footprint = sqrt(max(dot(dx, dx), dot(dy, dy)));
   float left = 1.0; // the share still to fill, finest level first
   for (int k = 0; k < TERRAIN_LEVELS; k++) {
     float w = k == TERRAIN_LEVELS - 1 ? 1.0 : terrainWeight(k, ao);
     if (w <= 0.0) continue;
-    vec2 uv = (terrainGrid(k, ao) + 0.5) / uTerrainSamples;
+    vec3 uvw = vec3((terrainGrid(k, ao) + 0.5) / uTerrainSamples, float(k));
     float lod = log2(max(footprint / uTerrainLevels[k].z, 1e-6));
-    info += left * w * textureLod(uTerrainInfo, vec3(uv, float(k)), lod);
+    info += left * w * textureLod(uTerrainInfo, uvw, lod);
+    cover += left * w * textureLod(uTerrainGround, uvw, lod);
     left *= 1.0 - w;
     if (left <= 0.0) break;
   }
-  return info;
 }

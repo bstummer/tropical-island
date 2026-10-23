@@ -60,7 +60,9 @@ when a choice is about taste or scope rather than engineering (see Open question
   (water, plants), not only at Stages 11 and 18. Don't leave performance to the end.
 - **Works on any machine.** A session may run anywhere, including a cloud container with no GPU, where
   SwiftShader is the only renderer. Nothing in the workflow may depend on one machine's hardware, and
-  captures must stay fast enough on SwiftShader to take in every session.
+  captures must stay fast enough on SwiftShader to take in every session. SwiftShader runs every line of
+  a shader at every pixel, branches or not (measured in Stage 4.3): code a pixel skips still costs it
+  there, so heavy code that only some pixels need goes in a shader variant of its own.
 - **Motion is part of the look.** If a thing looks right frozen but moves wrong, it isn't done. A single
   frame can't show motion: the AI judges it from motion strips and shimmer scores (Stage 1), and the user
   judges it in the running game.
@@ -72,7 +74,7 @@ when a choice is about taste or scope rather than engineering (see Open question
 | 1 | HDR frame and measurement | The cove | done |
 | 2 | Sky, sun and atmosphere | The cove | done |
 | 3 | Island shape | The cove | done |
-| 4 | Ground surfaces and rocks | The cove | todo |
+| 4 | Ground surfaces and rocks | The cove | review |
 | 5 | Shadows | The cove | todo |
 | 6 | Ocean | The cove | todo |
 | 7 | Shoreline | The cove | todo |
@@ -312,7 +314,83 @@ the user walks the cove before the views are framed on it: until then, changing 
   surfaces on it. The terrain's info texture has no channel left. Rock judged by the mip-averaged slope
   fades on sharp ridges in the distance, where slopes either side average out. Sand lies on slopes up to
   54° where the beach meets the headland, though sand holds to about 34°.
+- Known from 4.2: at golden hour the beach reads a flat, muddy brown, whatever the sand: level ground gets
+  a sixth of the low sun's light, and the exposure keeps the evening dark (Decisions). What the
+  sand does with a low sun (ripples catching it, wet sand mirroring the sky) has to carry the evening.
+- Known from 4.3 (an outside review): the ripples keep one spacing and direction everywhere, without
+  forks; between 20 and 120 m the beach has only drifts and wind streaks to show, and beyond that its
+  plain albedo; at 16:30 the sand reads khaki rather than golden (Stage 11's grade may answer it).
+- Known from 4.4: the rock is basalt (Decisions), its relief a field in world space at three scales
+  over a detail tile laid along the axes it faces most (`chunks/rock.glsl`), so no cliff smears; layers
+  of lava flows, streaks down the faces; sand and soil fill its hollows where it gives way to them.
+  Within 200 m it has its tile and lichen, beyond its relief alone, by a cheaper shader. Its outline is
+  still the heightmap's smooth curve, and from a few hundred metres a cliff reads more draped than
+  jointed, its ribs rounded: columns, overhangs and fallen blocks need 4.5's rocks. Where rock pokes
+  through sand it leaves a pepper of black specks; the volcano's steep patches still show as blotches
+  from the overview until plants (Stages 8–9) frame them.
+- Known from 4.5: about 2,000 rocks in the cove (`world/rocks.js`): basalt blocks and fallen columns
+  (`rock-shapes.js`), placed by kind (`rock-placement.js` on `world/scatter.js`), each sunk until its base
+  lies under the ground all round, and moved down each frame as far as the mesh as drawn lies below that
+  ground across it (`chunks/terrain-mesh.glsl`, which the terrain fixture checks against its JS twin), so
+  they stay sunk near and far; sand or soil drifts against their foot. Without shadows (Stage 5) a rock on
+  the sand looks set down on it rather than sitting in it. Up close the blocks are faceted and fairly
+  regular, and the surface detail on their flat facets is faint; the cliffs' outline above their foot is
+  still the heightmap's smooth curve. Rocks stand only round the cove (`config.world.rocks.reach`).
+- Known from 4.6: the green inland (`chunks/green.glsl`) is living green over bare ground in patches,
+  by how lush the ground is (lush in hollows, open on ridges) and how sandy its soil (behind beaches),
+  both kept per sample with the ground (`island.lushOf`, `groundOf`'s `sandy`) for placement too; near
+  the camera, grass and leaf litter tiles (`textures/green.js`). It is painted flat: at standing height
+  it reads as a dense, even lawn strewn with leaves, its tufts and leaves showing within about 15 m;
+  the grass tile is stylised close up (every tuft a star) and the leaves are all of one outline. Seen at
+  a slant the green hides the bare ground between it (`green.stand`), standing in for plants' height:
+  Stage 9's plants hide it themselves. The jungle reads green from afar, as its canopy will. Bare
+  patches 20–60 m off read as soft spots. A thin strip of green runs between the beach and the
+  headland's foot in the `rocks` view, a sliver of ground between sand and steep rock (4.1's rules).
 - **Done when** a close-up of sand holds up, no tiling shows from any view, and nothing looks plastic.
+
+Sub-steps, in order. Each one ends with `npm run verify` green and `main` shippable, and fixes whatever it
+made untrue in CLAUDE.md. What the ground is comes first, so the surfaces and Stages 8–9's placement build
+on one definition of it; then the albedos and the light from below, so the surfaces are tuned once under
+the final light; then the surfaces, hero first. The `stage4-before` capture shows plain colours: sand like
+cardboard in low sun, a wet band of even brown, airbrushed edges from sand to grass, cliffs smeared down
+their faces, rock on the ridges in blotches like camouflage, a flat green lawn at the jungle's edge.
+
+- [x] **4.1 One ground.** What the ground is at each point (its zone, how sandy, how rocky) is worked out
+  once and shared: the GPU draws it, and JS placement reads the same answer, fast enough to place plants
+  by the hundred thousand (Stage 8). Sand lies only as steep as sand holds; rock stays rock on sharp
+  ridges far away. The map shows the ground as drawn. Check: invariant tests over seeds 1–20, each seen
+  red once: the zones keep their order from the shore and cover every point once, and no sand is steeper
+  than sand holds; the GPU and JS agree on the ground at sample points, checked in the browser and proven
+  on a deliberate offset. The pictures keep their plain colours, with the edges moved.
+- [x] **4.2 Albedos and the light from below.** Each surface gets its albedo, from measured values, and
+  shade takes its light from below from the ground around it: sand on the beach, green inland, the sea
+  over water. The surfaces' detail (4.3–4.6) keeps to these albedos on average. How light the sand is
+  (white coral sand or golden) and the air's clarity (Open questions) are a matter of taste: show the user
+  candidates side by side, at noon and at golden hour. Check: the light fixture shows the light from below
+  following the ground under it, and the runtime time check still passes.
+- [x] **4.3 Sand.** The hero surface: dry, damp and wet sand, with ripples and fine grain near the camera,
+  varied at every scale so it never repeats, without sparkle or crawl. The sand can look any wetness, from
+  dry to the mirror sheen just after a wave drains, so Stage 7 only has to drive it; until then the
+  wetness follows the height above the sea. A test scene shows the ground's surfaces without the island:
+  level and steep, from the camera's feet to far away, in high and low sun. Check: the `sand` close-up
+  holds up at its time and at midday, the beach views show no tiling, shimmer, banding and cost stay within
+  their limits, and captures within their time budget on SwiftShader.
+- [x] **4.4 Rock surfaces.** Rock where the ground is steep and along rocky shores: cliffs without smears
+  down their faces, the same rock near and far, darker where the sea wets it. Which rock the island shows
+  (dark basalt, weathered and lichened, or paler) is a matter of taste: show the user candidates side by
+  side. Check: the headland reads as rock, not plastic, in every view that shows it; shimmer and cost
+  within their limits.
+- [x] **4.5 Rocks and boulders.** Procedurally shaped rocks break the heightmap's smooth outlines: at the
+  headland's foot, along rocky shores, scattered inland. They are the first things placed on the ground, by
+  rules Stages 8–9 reuse. They sit in the ground, not on it, near and far (the far mesh strays from
+  `heightAt`: Stage 8's notes), and stay cheap far away. The `rocks` close-up (from 4.4) stands at the
+  headland's foot by the water. Check: invariant tests over seeds: rocks only where the ground allows them, none floats,
+  no view starts inside one; shimmer and cost within their limits.
+- [x] **4.6 Soil and grass base.** The ground inland, where Stages 8–9 grow plants: the sandy scrub behind
+  the beach, the palm belt and the jungle floor, as soil, grass base and leaf litter. The edges from sand
+  to green follow the ground (4.1) and hold up close. From the overview the hills read varied, neither
+  flat nor tiled. Check: the `jungle-edge` foreground holds up, no tiling shows from any view, and cost
+  stays within its limits. Then the user runs the benchmark: the ground fills most of every frame.
 
 ### 5. Shadows
 
@@ -324,6 +402,9 @@ the user walks the cove before the views are framed on it: until then, changing 
 - Known pitfalls in three r186: its PCF shadows add the bias without flipping it for reversed depth, so
   the usual negative bias causes acne; shadow passes ignore `onBeforeCompile`, so anything the vertex
   shader moves (leaves, waves) needs its own depth material; the SunLight addon has only 2 cascades.
+- Known from Stage 4: rocks (`world/rocks.js`) need shadows near and far, and cast them on the sand they
+  sit in; their vertex shader moves each by its offset onto the mesh as drawn, which a shadow pass must
+  take too.
 - Known from Stage 2: materials copy `ctx.frame.uniforms` when they are created, so new light uniforms
   (the shadows') must be in it from the start; capture mode's shader pre-compile doesn't reach the
   materials of passes outside the scene, such as shadow passes. three's shadow maps fit the frame badly:
@@ -343,7 +424,8 @@ the user walks the cove before the views are framed on it: until then, changing 
 ### 6. Ocean
 
 - `water/`: waves (swell plus chop); sky reflection; a sun-glitter path; colour from depth, from clear
-  turquoise shallows to deep blue; the seabed visible through the shallows; a far sea that doesn't sparkle
+  turquoise shallows to deep blue; the seabed visible through the shallows, with surfaces of its own
+  (rippled sand, the reef), which only the water shows; a far sea that doesn't sparkle
   or alias; a seamless fade into the horizon haze; the white line of surf on the reef.
 - Walking, swimming and sound will need the water's motion in JS as well, and it must agree with what's
   drawn (CLAUDE.md §5).
@@ -363,11 +445,13 @@ the user walks the cove before the views are framed on it: until then, changing 
 - Known from Stage 3:
   - The terrain's shader skips seabed under the placeholder water, which hides it (TEMPORARY in
     `terrain.frag`): remove that with the placeholder.
-  - The reef's offset (the distance from its crest, for the surf line) exists only in JS.
   - The terrain's grids end about 2 km out; beyond them heights repeat the coarsest grid's edge (−50 to
     −90 m) in straight stripes to the horizon. The drawn seabed ends about 1 km out.
   - The coast's distance comes from the exact shapes, the drawn waterline from the grids: take the
     waterline from the drawn depth.
+- Known from Stage 4: the GPU reads the reef's offset with the ground (`terrainGround()`, held within
+  ±250 m), but no distance to the shore any more. The light from below takes the far sea's albedo over
+  all water (`world/albedo.js`), though the shallow lagoon over white sand sends up far more.
 - **Done when** the placeholder water is gone and the lagoon reads as tropical at every time of day.
 
 ### 7. Shoreline (the hero)
@@ -381,6 +465,13 @@ the user walks the cove before the views are framed on it: until then, changing 
   the waterline is drawn as a polyline 1 m a side, whose kinks show in the `sand` close-up. The cove's
   beach is a smooth arc by design, as sandy bays behind a headland are; the small-scale life of a real
   waterline, beach cusps scalloped by the swash every 20–40 m, comes with the waves.
+- Known from Stage 4: the sand takes any wetness from dry to a film of water (`chunks/sand.glsl`): the
+  waves only have to drive it; today it follows the height above the sea, its edge wandering in arcs
+  (`sandReach`). Looking down, the sun's glint on the film is a smooth oval, which reads a little CG;
+  looking into a low sun, the wet band stays darker than a real foreshore, which mirrors the bright sky
+  round the sun: the film is only about 2 m wide, and the sky's light as SH blurs that glow away. Rock
+  is wet up to 0.6 m above the sea and darkened by spray to 2 m (`chunks/rock.glsl`): waves breaking on
+  it should drive that too.
 - **Done when** the low beach view is a wallpaper, its motion strip shows waves running up and draining
   back naturally (the strip spans 2.5 s today, less than one wave), and the user finds the motion natural
   in the running game.
@@ -403,12 +494,14 @@ the user walks the cove before the views are framed on it: until then, changing 
   the sky's light yet, and at golden hour it is 52% of the light on level ground, so shade would glow.
 - Known from Stage 1: no fixture proves alpha-to-coverage yet, and geometry thinner than about two pixels
   crawls even with MSAA.
-- Known from Stage 3: `island.zone()` costs about 7 µs a point, too slow to place plants by the hundred
-  thousand on the main thread, and it disagrees with the drawn ground along band edges (Stage 4). Near the
-  camera the mesh is `ctx.terrain.heightAt`, but farther out its levels of detail stray from it (by
-  centimetres at 200–400 m, decimetres beyond, metres far out) and change as the camera moves: distant
-  plants need the mesh's own height, one function shared by the terrain and what stands on it, with a JS
-  twin and a check of the vertex shader's output. Plants also bend with the planet
+- Known from Stage 4: placement reads the drawn ground (`heightmap.zoneAt`, `groundAt`: what the GPU
+  draws, about 0.25 µs a point), not `island.zone()` (7 µs, and a little off the drawn ground).
+- Known from Stage 3: near the camera the mesh is `ctx.terrain.heightAt`, but farther out its levels of detail stray from it (by
+  centimetres at 200–400 m, decimetres beyond, metres far out) and change as the camera moves. Known
+  from Stage 4: `chunks/terrain-mesh.glsl` gives the mesh's own height as drawn (`terrainMeshHeight`, the
+  vertex shader's own morph), with a JS twin (`ctx.terrain.meshHeightAtCove`) that the terrain fixture
+  checks it against; rocks move by it each frame in a pass of a texel each (`world/rocks.js`), and plants
+  can do the same. Placement by rules is `world/scatter.js`. Plants also bend with the planet
   (`chunks/planet.glsl`), or the far ones float.
 - **Done when** palms glow when backlit at golden hour, fronds sway and flutter, their shade sits soft on
   the sand, close-ups hold up, and nothing flickers: the shimmer score stays low and the user sees none in
@@ -422,6 +515,12 @@ the user walks the cove before the views are framed on it: until then, changing 
 - Cheap distant vegetation, so the hillsides look lush from the overview.
 - Known from Stage 3: rocky shores get a band of rock zone about 34 m deep; what grows there decides how
   it looks.
+- Known from Stage 4: the ground says how lush it is and how sandy its soil (`heightmap.groundAt`:
+  `lush`, `sandy`), which the green's look follows: dense jungle where lush, open grass where not,
+  beach plants where sandy. Its patches of green and bare ground near the camera come from GLSL noise
+  alone (`chunks/green.glsl`): grass that should stand only on the green needs them in JS too. The
+  green hides bare ground at a slant to stand in for plants (`config.world.terrain.green.stand`); lower
+  it where real plants stand.
 - **Done when** the jungle-edge view is lush and layered, each species is recognisable by its shape and its
   motion, and the frame cost is within budget.
 
@@ -445,9 +544,13 @@ the user walks the cove before the views are framed on it: until then, changing 
   HDR target holds at most about 2048 (exposed). The sky's
   light on upward faces is up to 10% too strong in red at golden hour (nine SH coefficients can't hold
   the bright band along the horizon). On high-DPI screens the render targets take 0.5–0.7 GB at 4K and
-  0.9–1.3 GB at 5120×2880, against a 256 MB limit. SwiftShader captures take about 0.5 s per frame on a
-  fast desktop but 1.1–2.3 s in CI, over their 1 s budget, with only the placeholder world (Stage 1:
-  0.46–0.72 s in CI; the lighting now costs about 17% less). Known from Stage 3: far terrain samples the
+  0.9–1.3 GB at 5120×2880, against a 256 MB limit. SwiftShader captures took about 0.5 s per frame on a
+  fast desktop but 1.1–2.3 s in CI with only the placeholder world (Stage 1: 0.46–0.72 s in CI; the
+  lighting now costs about 17% less); with the sand (Stage 4.3), 0.6–1.4 s on that desktop, and the
+  budget went from 1 to 2 s with the user's leave; with rock (4.4), 0.6–2.1 s (the `rocks` close-up,
+  where a pixel runs both surfaces' detail), and 2.5 s; with the green (4.6), 0.6–2.3 s. The GPU times
+  the screenshot tool and the benchmark measure on the development laptop follow its GPU's clock, which
+  idles low between frames: they swing several-fold between identical runs. Known from Stage 3: far terrain samples the
   8 m grid at coarser spacing without prefiltering, so ridgelines may crawl in motion; the headland's
   inner flank runs inland as a long steep wall; beyond the cove the island is a smooth shape in an even
   ring of lagoon.
@@ -479,6 +582,8 @@ the user walks the cove before the views are framed on it: until then, changing 
 
 - Signs of life: seabirds, butterflies, crabs, fish shadows in the shallows. Things lying about:
   coconuts, shells, driftwood, fallen flowers and leaves.
+- Known from Stage 4: a strand line of wrack painted on the sand read as smears and footprints, without
+  relief, and went; it needs things lying on the beach. The sand's own bits of shell are flat specks.
 - **Done when** something moves in every view within a few seconds, and the foreground rewards a close
   look.
 
@@ -624,6 +729,22 @@ Made with the user. Don't reopen them unless the user does.
 - **The reef is roughened a bit**: its crest wanders about 8 m either way over about 110 m, and its
   width with it; the pass widens towards the sea between ragged walls. A less circular bay, a blunter
   headland tip and leaving it regular were the alternatives. (2026-10-23)
+- **Bright white sand**, albedo 0.65, at the top of what white coral sand measures: cream-white at
+  midday. Measured coral sand at 0.55 (grey-beige), golden quartz sand at 0.40 and the old plain colour
+  at 0.72 were the alternatives. (2026-10-23)
+- **Dark basalt**, albedo about 0.05: near-black volcanic rock, as the volcano would make, in lava-flow
+  layers, with the beach's white sand gathered in its hollows. It gives the strongest contrast with the
+  sand and the lagoon, and the volcano's steep patches read as dark crags rather than pale blotches; the
+  rocks of 4.5 break into angular blocks. Weathered and lichened grey-brown rock (0.18), pale coral
+  limestone (0.4) and pinkish granite (0.3) were the alternatives. (2026-10-23)
+- **Lush tropical green inland**: saturated greens with little bare ground, grass on open ground and the
+  dark leafy understory in hollows and gullies, so the hills show dark gullies under lighter ridges. A
+  lighter, yellower sunny meadow, a sun-dried ground of olive and straw with more soil and litter, and a
+  darker deep jungle were the alternatives. (2026-10-24)
+- **The air stays as clear as it is**: the light from below lifts shade on the beach, and more aerosol
+  barely changes midday (the sky's share of the light on level ground goes from 9% to 13% at ten times
+  as much) while it spreads a large halo round the low sun. Four and ten times as much were the
+  alternatives. (2026-10-23)
 - **The hilltops' last light is as the atmosphere gives it**: at the named sunset the sun on the summit
   is 1.6 times the beach's, and lit hilltops over a dark shore show only in the last minutes before the
   sun touches the sea. Thicker evening haze (a greyer horizon) and a named sunset 0.5° up were the
@@ -634,9 +755,6 @@ Made with the user. Don't reopen them unless the user does.
 Settle these when the stage that needs them arrives. Ask the user where the answer is a matter of taste or
 scope.
 
-- **The air's clarity.** Midday shade gets about 10% of its light from the sky, a very clear atmosphere
-  (hazy tropics: 25–35%); more aerosol would brighten and warm shade, at the cost of a paler sky. Weigh it
-  once Stage 4's ground lights shade from below.
 - **Low-sun sky, for Stage 11 or 12.** From an outside review: at golden hour the sky away from the sun is
   slate with an olive band; at low sun a dark line runs along the horizon above the brighter placeholder
   sea; the horizon is 3.7–5 times brighter than the zenith (the haze scatters evenly, g 0.2; sea air is
@@ -652,6 +770,15 @@ Not part of the plan. Build one only if the user asks for it: a passing rain sho
 Newest first. One short entry per session, only a few lines: date, stage, what changed, what is still
 open, next step. Details belong in code comments.
 
+- **2026-10-23–24, Stage 4 planned and built (4.1–4.6), to review:** one ground (`island.groundOf`) shared by the GPU and
+  placement; measured albedos and light from below; the user picked bright white sand, the clear air and
+  dark basalt (Decisions). Sand: ripples, grain, wet sand to a film, specular light in the shared model, the
+  `surfaces` fixture; an outside review's flaws went to 4.3's notes and Stages 7, 11, 13. Rock: relief in
+  world space, sand in its hollows, the `rocks` view. Rocks and boulders, placed by rules, on the mesh as
+  drawn (its height in GLSL and JS, checked against each other). The green inland, lush by the ground's
+  relief, grass and leaf litter near, a ragged vegetation line on the sand; the user picked lush tropical.
+  SwiftShader runs untaken branches, so the terrain draws nodes with only the surfaces they hold, near
+  detail apart. Next: the user runs the benchmark (`?bench=1`) and reviews Stage 4.
 - **2026-10-23, Stage 3: an outside review.** Fixed steps in the seabed (the channel's bends, the reef's
   crest) and a 1.2 cm one at every sandy waterline, now caught by a test for steps; far terrain finer
   (each level reaches 2.5 times as far as the last: the far cliffs lose their sawtooth); quarters culled;

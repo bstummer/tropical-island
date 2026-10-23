@@ -10,22 +10,42 @@
 //
 // It shares the grids with every scene material through ctx.frame.uniforms
 // (chunks/terrain.glsl: the water reads its depth from them), and puts
-// ctx.terrain on the context: { island, heightAt(x, z), heightmap, ready }.
+// ctx.terrain on the context: { island, heightAt(x, z), heightmap, ready, mesh,
+// meshHeightAtCove, surfaces }.
 // heightAt is the ground's height at its finest: the mesh matches it within
 // about 100 m of the camera, where you walk; farther out the mesh's coarser
 // levels stray from it, by centimetres at a few hundred metres and metres far
 // out, and it depends on where the camera is. heightmap is world/heightmap.js's,
-// once `ready` resolved.
+// once `ready` resolved: its groundAt and zoneAt are the ground as drawn,
+// which placement reads. mesh: the defines and uniforms of the mesh as drawn
+// (chunks/terrain-mesh.glsl), for what stands on it far away, and
+// meshHeightAtCove its JS twin; surfaces: the uniforms of the ground's
+// surfaces (albedos, chunks/sand.glsl, rock.glsl, green.glsl), for whatever else is
+// made of them or lies on them.
 import * as THREE from 'three';
 import vertexShader from './terrain.vert';
 import fragmentShader from './terrain.frag';
 import HeightmapWorker from './heightmap-worker.js?worker&inline';
 import { createIsland } from './island.js';
-import { createHeightmap, fillRows, layoutLevels } from './heightmap.js';
-import { createLod, lodRanges } from './lod.js';
+import { createHeightmap, fillLush, fillRows, GROUND, layoutLevels } from './heightmap.js';
+import { albedoMap } from './albedo.js';
+import { createSandTextures, sandUniforms } from '../textures/sand.js';
+import { createRockTextures, rockUniforms } from '../textures/rock.js';
+import { createGreenTextures, greenUniforms } from '../textures/green.js';
+import { createLod, createMeshHeight, lodRanges } from './lod.js';
 
 const built = new Map(); // seed -> Promise of the heightmap's grids
 const TERRAIN_LEVELS = 4; // chunks/terrain.glsl's (tests/heightmap.test.js keeps config.world.terrain at it)
+// Surfaces a node of the quadtree may hold (lod.js), each drawn by a shader
+// that has its code: the others leave it out. A GPU skips a surface's code
+// where a pixel has none of it, but SwiftShader runs every line of a shader at
+// every pixel, branches or not. Sand, rock and green show their detail near
+// the camera only: SAND is sand with it, ROCK rock without, DETAIL adds
+// rock's, GREEN the green's (any shader has the green without it).
+const SAND = 1;
+const ROCK = 2;
+const DETAIL = 4;
+const GREEN = 8;
 
 export function create(ctx) {
   const { scene, camera, frame, config, quality, params } = ctx;
@@ -40,6 +60,15 @@ export function create(ctx) {
   const extent = (settings.samples - 1) * coarsest.texel;
   const lodLevels = Math.ceil(Math.log2(extent / settings.leaf)) + 1;
   const { morphs, ranges } = lodRanges(quality.terrainDetail, lodLevels, settings.morph, settings.leaf, quality.terrainRatio);
+  // The mesh as drawn, for chunks/terrain-mesh.glsl: here, and for what stands on it.
+  const drawn = {
+    defines: { LOD_LEVELS: lodLevels },
+    uniforms: {
+      uMorph: { value: morphs.map(([start, end]) => new THREE.Vector2(start, end)) },
+      uLodRange: { value: ranges },
+      uLodTree: { value: new THREE.Vector4(coarsest.origin[0], coarsest.origin[1], settings.leaf, settings.grid) },
+    },
+  };
 
   const uniforms = frame.uniforms;
   const side = island.side;
@@ -48,57 +77,67 @@ export function create(ctx) {
   uniforms.uTerrainSamples.value = settings.samples;
   uniforms.uTerrainBlend.value = settings.blend;
 
-  const colour = (hex) => new THREE.Color(hex); // sRGB hex, made linear
-  const { colours } = settings;
-  const { zones } = config.world.island;
-  const material = new THREE.ShaderMaterial({
-    name: 'terrain',
-    vertexShader,
-    fragmentShader,
-    uniforms: {
-      ...uniforms,
-      uMorph: { value: morphs.map(([start, end]) => new THREE.Vector2(start, end)) },
-      uDrySand: { value: colour(colours.drySand) },
-      uWetSand: { value: colour(colours.wetSand) },
-      uSeabed: { value: colour(colours.seabed) },
-      uScrub: { value: colour(colours.scrub) },
-      uGreen: { value: colour(colours.green) },
-      uJungle: { value: colour(colours.jungle) },
-      uRock: { value: colour(colours.rock) },
-      uBands: {
-        value: new THREE.Vector4(
-          zones.wetSand,
-          zones.wetSand + zones.drySand,
-          zones.wetSand + zones.drySand + zones.scrub,
-          zones.wetSand + zones.drySand + zones.scrub + zones.palmBelt,
-        ),
-      },
-      uRockSlope: { value: new THREE.Vector2(Math.tan(((zones.rockSlope - 5) * Math.PI) / 180), Math.tan(((zones.rockSlope + 5) * Math.PI) / 180)) },
-    },
-    defines: { LOD_LEVELS: lodLevels },
-  });
+  const { albedo } = settings;
+  const looks = { albedo, green: settings.green, wetness: settings.sand.wetness, wetHeight: config.world.island.zones.wetSand, sea: config.sky.atmosphere.groundAlbedo };
+  const linear = (rgb) => new THREE.Vector3(...rgb);
+  const sand = createSandTextures(ctx.renderer, ctx.rng('terrain/sand'), settings.sand, quality.sandTexture);
+  const rockTextures = createRockTextures(ctx.renderer, ctx.rng('terrain/rock'), settings.rock, quality.rockTexture);
+  const greenTextures = createGreenTextures(ctx.renderer, ctx.rng('terrain/green'), settings.green, quality.greenTexture);
+  // The ground's surfaces, shared with what is made of them or lies on them.
+  const surfaces = {
+    uDrySand: { value: linear(albedo.drySand) },
+    uWetSand: { value: linear(albedo.wetSand) },
+    uRock: { value: linear(albedo.rock) },
+    ...sandUniforms(sand, settings.sand, looks.wetHeight, config.sky.sun.sunsetYaw),
+    ...rockUniforms(rockTextures, settings.rock),
+    ...greenUniforms(greenTextures, albedo, settings.green),
+  };
+  const materialUniforms = { ...uniforms, ...drawn.uniforms, ...surfaces };
 
-  // Two meshes share the material: whole nodes, and quarters of nodes, drawn
-  // at their parent's spacing with half the quads.
-  const maxNodes = 4096;
-  const nodes = new THREE.InstancedBufferAttribute(new Float32Array(4 * maxNodes), 4);
-  const quarters = new THREE.InstancedBufferAttribute(new Float32Array(4 * maxNodes), 4);
-  nodes.setUsage(THREE.DynamicDrawUsage);
-  quarters.setUsage(THREE.DynamicDrawUsage);
+  // A material per set of surfaces, each drawing whole nodes and quarters of
+  // nodes (at their parent's spacing with half the quads) with a mesh apiece.
+  // Rock shows its relief at any distance: a far cliff is all relief. The
+  // green's detail reaches less far than sand's, and sand's less far than
+  // rock's, so near sand comes with near rock's.
   // The cove's frame turns the grid's quads into world space; with the
   // headland on the right it also mirrors them, and they would face down.
+  const maxNodes = 4096;
   const mirrored = side * (island.right[0] * island.forward[1] - island.right[1] * island.forward[0]) < 0;
-  const meshes = [gridGeometry(settings.grid, nodes, mirrored), gridGeometry(settings.grid / 2, quarters, mirrored)].map((geometry) => {
-    const mesh = new THREE.Mesh(geometry, material);
-    mesh.name = 'terrain';
-    mesh.frustumCulled = false; // lod.js culls node by node
-    mesh.visible = false; // until the grids are in
-    scene.add(mesh);
-    return mesh;
-  });
+  if (settings.sand.range > settings.rock.range) throw new Error('config.world.terrain: sand shows its detail further out than rock');
+  if (settings.green.range > settings.sand.range) throw new Error('config.world.terrain: the green shows its detail further out than sand');
+  const variants = new Map();
+  const near = [0, SAND, ROCK | DETAIL, SAND | ROCK | DETAIL];
+  for (const surfaces of [...near, ROCK, ...near.map((s) => s | GREEN)]) {
+    const material = new THREE.ShaderMaterial({
+      name: ['terrain', surfaces & SAND && 'sand', surfaces & ROCK && 'rock', surfaces & DETAIL && 'detail', surfaces & GREEN && 'green'].filter(Boolean).join('-'),
+      vertexShader,
+      fragmentShader,
+      uniforms: materialUniforms,
+      defines: {
+        ...drawn.defines,
+        ...(surfaces & SAND ? { TERRAIN_SAND: 1 } : {}),
+        ...(surfaces & ROCK ? { TERRAIN_ROCK: 1 } : {}),
+        ...(surfaces & DETAIL ? { ROCK_DETAIL: 1 } : {}),
+        ...(surfaces & GREEN ? { GREEN_DETAIL: 1 } : {}),
+      },
+    });
+    const meshes = [settings.grid, settings.grid / 2].map((quads) => {
+      const nodes = new THREE.InstancedBufferAttribute(new Float32Array(4 * maxNodes), 4);
+      nodes.setUsage(THREE.DynamicDrawUsage);
+      const mesh = new THREE.Mesh(gridGeometry(quads, nodes, mirrored), material);
+      mesh.name = material.name;
+      mesh.frustumCulled = false; // lod.js culls node by node
+      mesh.visible = false; // until the grids are in
+      scene.add(mesh);
+      return mesh;
+    });
+    variants.set(surfaces, { material, meshes });
+  }
+  const allMeshes = [...variants.values()].flatMap((v) => v.meshes);
 
   let heightmap = null;
   let lod = null;
+  let meshHeight = null;
   let failed = null;
   let disposed = false;
   const textures = [];
@@ -108,8 +147,10 @@ export function create(ctx) {
       if (disposed) return;
       heightmap = grids;
       upload(grids);
-      lod = createLod({ origin: coarsest.origin, levels: lodLevels, leaf: settings.leaf, grid: settings.grid }, nodeBounds(grids));
-      for (const mesh of meshes) mesh.visible = true;
+      const tree = { origin: coarsest.origin, levels: lodLevels, leaf: settings.leaf, grid: settings.grid };
+      lod = createLod(tree, nodeBounds(grids));
+      meshHeight = createMeshHeight(tree, { ranges, morphs }, grids.heightAtCove, levels.length);
+      for (const mesh of allMeshes) mesh.visible = true;
     },
     (err) => {
       failed = err;
@@ -125,31 +166,40 @@ export function create(ctx) {
     },
     // The height as drawn at world x, z; the island's own until the grids are in.
     heightAt: (x, z) => (heightmap ? heightmap.heightAt(x, z) : island.height(x, z)),
+    mesh: drawn,
+    // The mesh's own height at a, o in the cove's frame for a camera at
+    // cam = [a, y, o] (lod.js createMeshHeight), once `ready` resolved.
+    meshHeightAtCove: (a, o, cam) => meshHeight(a, o, cam),
+    surfaces,
   };
 
   function upload(grids) {
     const n = settings.samples;
     const height = new THREE.DataArrayTexture(grids.heightData, n, n, levels.length);
     Object.assign(height, { format: THREE.RedFormat, type: THREE.FloatType, minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, generateMipmaps: false, needsUpdate: true });
-    // Kept with the grids, so a quality change doesn't convert them again. A
-    // plain loop: Uint16Array.from with a map function takes 20 times as long.
-    if (!grids.infoHalf) {
-      grids.infoHalf = new Uint16Array(grids.infoData.length);
-      for (let i = 0; i < grids.infoHalf.length; i++) grids.infoHalf[i] = THREE.DataUtils.toHalfFloat(grids.infoData[i]);
-    }
+    // Kept with the grids, so a quality change doesn't convert them again.
+    grids.infoHalf ??= halves(grids.infoData);
+    // The ground's albedo from above, over the coarsest grid: the light from
+    // below averages it over tens of metres (chunks/lighting.glsl groundAlbedo).
+    const coarsest = grids.levels.at(-1);
+    grids.albedoHalf ??= halves(albedoMap(coarsest, looks));
+    // Filtered and mipmapped: from afar a pixel shows its footprint's average,
+    // so a far ridge keeps its share of rock.
+    const filtered = { minFilter: THREE.LinearMipmapLinearFilter, magFilter: THREE.LinearFilter, generateMipmaps: true, needsUpdate: true };
     const info = new THREE.DataArrayTexture(grids.infoHalf, n, n, levels.length);
-    Object.assign(info, {
-      format: THREE.RGBAFormat,
-      type: THREE.HalfFloatType,
-      minFilter: THREE.LinearMipmapLinearFilter,
-      magFilter: THREE.LinearFilter,
-      generateMipmaps: true,
-      needsUpdate: true,
-    });
-    textures.push(height, info);
+    Object.assign(info, { format: THREE.RGBAFormat, type: THREE.HalfFloatType, ...filtered });
+    const ground = new THREE.DataArrayTexture(grids.groundData, n, n, levels.length);
+    Object.assign(ground, { format: THREE.RGBAFormat, type: THREE.UnsignedByteType, ...filtered });
+    const bounce = new THREE.DataTexture(grids.albedoHalf, n, n, THREE.RGBAFormat, THREE.HalfFloatType);
+    Object.assign(bounce, filtered);
+    textures.push(height, info, ground, bounce);
     uniforms.uTerrainHeight.value = height;
     uniforms.uTerrainInfo.value = info;
+    uniforms.uTerrainGround.value = ground;
     uniforms.uTerrainReady.value = 1;
+    uniforms.uBounceMap.value = bounce;
+    const { origin, texel } = coarsest;
+    uniforms.uBounceLayout.value.set(origin[0] - texel / 2, origin[1] - texel / 2, 1 / (n * texel), Math.log2(settings.bounceReach / texel));
   }
 
   // Each frame, once the camera is where it will be: the nodes for it.
@@ -177,21 +227,30 @@ export function create(ctx) {
       box.max.y = max + 1;
       return frustum.intersectsBox(box);
     }, selected);
-    let whole = 0;
-    let quarter = 0;
+    for (const mesh of allMeshes) mesh.geometry.instanceCount = 0;
+    const sandRange2 = settings.sand.range ** 2;
+    const rockRange2 = settings.rock.range ** 2;
+    const greenRange2 = settings.green.range ** 2;
     for (const node of selected) {
-      const target = node.quarter ? quarters : nodes;
-      const i = node.quarter ? quarter++ : whole++;
+      const size = node.spacing * (node.quarter ? settings.grid / 2 : settings.grid);
+      const da = Math.max(node.a - ca, 0, ca - node.a - size);
+      const dO = Math.max(node.o - co, 0, co - node.o - size);
+      const near2 = da * da + dO * dO;
+      const sandy = node.surfaces & SAND && near2 < sandRange2 ? SAND : 0;
+      const rocky = node.surfaces & ROCK ? (near2 < rockRange2 ? ROCK | DETAIL : ROCK) : 0;
+      const greeny = node.surfaces & GREEN && near2 < greenRange2 ? GREEN : 0;
+      const variant = variants.get(sandy | rocky | greeny);
+      const { geometry } = variant.meshes[node.quarter ? 1 : 0];
+      const i = geometry.instanceCount++;
       if (i >= maxNodes) throw new Error(`terrain: more than ${maxNodes} nodes`);
-      target.setXYZW(i, node.a, node.o, node.spacing, node.level);
+      geometry.attributes.aNode.setXYZW(i, node.a, node.o, node.spacing, node.level);
     }
-    for (const [attribute, count] of [[nodes, whole], [quarters, quarter]]) {
+    for (const { geometry } of allMeshes) {
+      const attribute = geometry.attributes.aNode;
       attribute.clearUpdateRanges();
-      attribute.addUpdateRange(0, 4 * count);
-      attribute.needsUpdate = count > 0;
+      attribute.addUpdateRange(0, 4 * geometry.instanceCount);
+      attribute.needsUpdate = geometry.instanceCount > 0;
     }
-    meshes[0].geometry.instanceCount = whole;
-    meshes[1].geometry.instanceCount = quarter;
   });
 
   return {
@@ -202,18 +261,32 @@ export function create(ctx) {
     dispose() {
       disposed = true;
       stopSelecting();
-      for (const mesh of meshes) {
+      for (const mesh of allMeshes) {
         scene.remove(mesh);
         mesh.geometry.dispose();
       }
-      material.dispose();
+      for (const { material } of variants.values()) material.dispose();
+      sand.dispose();
+      rockTextures.dispose();
+      greenTextures.dispose();
       for (const texture of textures) texture.dispose();
       uniforms.uTerrainHeight.value = null;
       uniforms.uTerrainInfo.value = null;
+      uniforms.uTerrainGround.value = null;
       uniforms.uTerrainReady.value = 0;
+      uniforms.uBounceMap.value = null;
+      uniforms.uBounceLayout.value.set(0, 0, 0, 0);
       delete ctx.terrain;
     },
   };
+}
+
+// Floats as half floats. A plain loop: Uint16Array.from with a map function
+// takes 20 times as long.
+function halves(floats) {
+  const half = new Uint16Array(floats.length);
+  for (let i = 0; i < half.length; i++) half[i] = THREE.DataUtils.toHalfFloat(floats[i]);
+  return half;
 }
 
 // A grid of `quads` x `quads` quads, its vertices at whole numbers (x, 0, z),
@@ -236,13 +309,15 @@ function gridGeometry(quads, nodes, mirrored) {
 }
 
 // The lowest and highest ground over a square of the quadtree, from every
-// grid that covers it, with a little room for the blends between them.
+// grid that covers it, with a little room for the blends between them; and
+// the surfaces on it.
 function nodeBounds(heightmap) {
   const { levels, samples } = heightmap;
   return (a0, o0, size) => {
     let min = Infinity;
     let max = -Infinity;
-    for (const { origin, texel, heights } of levels) {
+    let surfaces = 0;
+    for (const { origin, texel, heights, ground } of levels) {
       const i0 = Math.floor((a0 - origin[0]) / texel) - 1;
       const j0 = Math.floor((o0 - origin[1]) / texel) - 1;
       const i1 = Math.ceil((a0 + size - origin[0]) / texel) + 1;
@@ -253,10 +328,14 @@ function nodeBounds(heightmap) {
           const h = heights[j * samples + i];
           if (h < min) min = h;
           if (h > max) max = h;
+          const n = GROUND * (j * samples + i);
+          if (ground[n] > 0) surfaces |= SAND;
+          if (ground[n + 1] > 0) surfaces |= ROCK;
+          if (ground[n] + ground[n + 1] < 0.85 * 255) surfaces |= GREEN; // a share worth its detail
         }
       }
     }
-    return [min - 1, max + 1];
+    return [min - 1, max + 1, surfaces];
   };
 }
 
@@ -276,27 +355,32 @@ function heightmapFor(island, seed, settings) {
 }
 
 // The grids' jobs: rows of a level each, filled by the workers (or here, if
-// they can't run) into one array per kind, levels one after another.
+// they can't run) into one array per kind, levels one after another; then
+// how lush, from the whole grids.
 function build(island, seed, settings) {
   const { samples, rowsPerTask } = settings;
   const levels = layoutLevels(settings);
   const perLevel = samples * samples;
   const heightData = new Float32Array(levels.length * perLevel);
   const infoData = new Float32Array(4 * levels.length * perLevel);
+  const groundData = new Uint8Array(GROUND * levels.length * perLevel);
   const tasks = [];
   levels.forEach((_, level) => {
     for (let j0 = 0; j0 < samples; j0 += rowsPerTask) tasks.push({ seed, level, j0, j1: Math.min(j0 + rowsPerTask, samples) });
   });
-  const store = ({ level, j0, heights, info }) => {
+  const store = ({ level, j0, heights, info, ground }) => {
     heightData.set(heights, level * perLevel + j0 * samples);
     infoData.set(info, 4 * (level * perLevel + j0 * samples));
+    groundData.set(ground, GROUND * (level * perLevel + j0 * samples));
   };
   const finish = () => {
     const data = levels.map((_, k) => ({
       heights: heightData.subarray(k * perLevel, (k + 1) * perLevel),
       info: infoData.subarray(4 * k * perLevel, 4 * (k + 1) * perLevel),
+      ground: groundData.subarray(GROUND * k * perLevel, GROUND * (k + 1) * perLevel),
     }));
-    return Object.assign(createHeightmap(island, settings, data), { heightData, infoData });
+    fillLush(island, settings, data);
+    return Object.assign(createHeightmap(island, settings, data), { heightData, infoData, groundData });
   };
   return inWorkers(tasks, store, settings.maxWorkers).then(finish, (err) => {
     // Workers that won't start or run (a browser that refuses them from
@@ -307,8 +391,9 @@ function build(island, seed, settings) {
       const rows = task.j1 - task.j0;
       const heights = new Float32Array(rows * samples);
       const info = new Float32Array(4 * rows * samples);
-      fillRows(island, levels[task.level], samples, task.j0, task.j1, heights, info);
-      store({ ...task, heights, info });
+      const ground = new Uint8Array(GROUND * rows * samples);
+      fillRows(island, levels[task.level], samples, task.j0, task.j1, heights, info, ground);
+      store({ ...task, heights, info, ground });
     }
     return finish();
   });

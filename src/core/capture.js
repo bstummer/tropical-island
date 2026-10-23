@@ -22,6 +22,7 @@
 import { applyView } from './camera.js';
 import { measureOverdraw } from './overdraw.js';
 import { missingSceneOutput, misplacedBlending } from '../post/scene-check.js';
+import { luminance, shIrradiance } from '../sky/light.js';
 
 // `app` is main.js's handle on the systems: { systems, setQuality(name), teardown() }.
 export async function runCapture(ctx, display, app, frame) {
@@ -48,6 +49,7 @@ export async function runCapture(ctx, display, app, frame) {
     reversedDepth: renderer.capabilities.reversedDepthBuffer,
     msaa: ctx.frame.sceneTarget.samples,
     tonemap: ctx.frame.tonemap,
+    skyShare: skyShare(ctx.frame.uniforms),
   };
   window.__CAPTURE__ = {
     // Back to back, without waiting for the display: the clock is frozen, so
@@ -127,4 +129,11 @@ async function warmUp(frame, count) {
 
 function nextFrame() {
   return new Promise((resolve) => requestAnimationFrame(resolve));
+}
+
+// The sky's share of the light on level ground in the open, the rest being the
+// sun's: all the light open shade gets, but for what the ground sends up.
+function skyShare({ uSkySH, uLevelLight }) {
+  const sky = shIrradiance(uSkySH.value.map((v) => v.toArray()), [0, 1, 0]);
+  return luminance(sky) / luminance(uLevelLight.value.toArray());
 }

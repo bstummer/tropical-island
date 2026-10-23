@@ -1,4 +1,4 @@
-// Fixture: see light.js.
+// Fixtures light.js and surfaces.js: a mesh in world space, bent with the planet.
 
 centroid varying vec3 vWorldPos; // see world/placeholder-water.vert
 varying vec3 vNormal;

@@ -307,6 +307,81 @@ test('zones run in order from the shore, land zones on land and sea zones at sea
   }
 });
 
+test('the ground is shares of sand and rock that never make more than the whole, and every point has one zone', () => {
+  const island = make(1);
+  const r = createRandom(1)('test/ground');
+  for (let n = 0; n < 20_000; n++) {
+    const s = island.sample(r.range(-1500, 1500), r.range(-1500, 1500));
+    const g = island.groundOf(s, r.range(0, 3));
+    assert.ok(g.sand >= 0 && g.rock >= 0 && g.sand + g.rock <= 1 + 1e-12, `sand ${g.sand}, rock ${g.rock}`);
+  }
+  // Whatever the ground, a point is in exactly one zone: a sea zone under water, a land zone above it.
+  for (let n = 0; n < 20_000; n++) {
+    const sand = r.range(0, 1);
+    const g = { sand, rock: r.range(0, 1 - sand), band: r.range(-1, 4), reef: r.range(-250, 250) };
+    const height = r.range(-30, 30);
+    const zone = island.zoneFrom(g, height);
+    assert.ok((height < 0 ? SEA_ZONES : [...LAND_ZONES, 'rock']).includes(zone), `${zone} at ${height.toFixed(1)} m`);
+  }
+});
+
+test('the soil is sandy behind a beach, less so further inland, and not behind a rocky shore', () => {
+  const island = make(1);
+  const r = createRandom(1)('test/sandy');
+  for (let n = 0; n < 20_000; n++) {
+    const s = { coast: r.range(-20, 200), beach: r.range(0, 1), reef: -100, a: r.range(-1500, 1500), o: r.range(-1500, 1500) };
+    const g = island.groundOf(s, r.range(0, 0.5));
+    assert.ok(g.sandy >= 0 && g.sandy <= 1, `${g.sandy}`);
+    assert.ok(island.groundOf({ ...s, coast: s.coast + 5 }, 0).sandy <= island.groundOf(s, 0).sandy, `${s.coast.toFixed(1)} m inland`);
+    assert.equal(island.groundOf({ ...s, beach: 0 }, 0).sandy, 0, 'behind a rocky shore');
+    if (s.coast > settings.zones.shore + settings.zones.shoreSwing + settings.zones.sandy) assert.equal(g.sandy, 0, `${s.coast.toFixed(1)} m inland`);
+  }
+  assert.ok(island.groundOf({ coast: settings.zones.shore - 5, beach: 1, reef: -100, a: 0, o: 0 }, 0).sandy > 0.9, 'right behind a beach');
+});
+
+test('the green is between open (0) and lush (1), lusher from the scrub into the jungle and in hollows than on ridges', () => {
+  const island = make(1);
+  const r = createRandom(1)('test/lush');
+  for (let n = 0; n < 20_000; n++) {
+    const [a, o] = [r.range(-1500, 1500), r.range(-1500, 1500)];
+    const band = r.range(-1, 4);
+    const relief = r.range(-30, 30);
+    const lush = island.lushOf({ band }, relief, a, o);
+    assert.ok(lush >= 0 && lush <= 1, `${lush} at band ${band.toFixed(2)}, relief ${relief.toFixed(1)} m`);
+    // The same point further in, or lower than its surroundings, is no less lush.
+    assert.ok(island.lushOf({ band: band + 0.5 }, relief, a, o) >= lush, `band ${band.toFixed(2)} at ${a.toFixed(0)}, ${o.toFixed(0)}`);
+    assert.ok(island.lushOf({ band }, relief - 2, a, o) >= lush, `relief ${relief.toFixed(1)} m at ${a.toFixed(0)}, ${o.toFixed(0)}`);
+  }
+});
+
+test('sand lies no steeper than sand holds, and ground too steep for soil is rock', () => {
+  const [, sandMax] = settings.zones.sandSlope.map((deg) => Math.tan((deg * Math.PI) / 180));
+  const [, rockMin] = settings.zones.rockSlope.map((deg) => Math.tan((deg * Math.PI) / 180));
+  for (const seed of SEEDS) {
+    const island = make(seed);
+    let sand = 0;
+    let steep = 0;
+    // Densely round the cove, where its beach meets the headland, and coarsely elsewhere.
+    const cove = [];
+    for (let a = -300; a <= 300; a += 4) for (let o = -150; o <= 150; o += 4) cove.push(island.fromCove(a, o));
+    for (const [x, z] of [...cove, ...grid(island, 31)]) {
+      const s = island.sample(x, z);
+      if (s.height < 0 || s.coast > 120) continue; // the shore and what rises behind it
+      const slope = island.slope(x, z);
+      const zone = island.zoneOf(s, slope);
+      if (zone === 'wet-sand' || zone === 'dry-sand') {
+        sand++;
+        assert.ok(slope <= sandMax, `seed ${seed}: ${zone} on a slope of ${((Math.atan(slope) * 180) / Math.PI).toFixed(0)}° at ${x.toFixed(0)}, ${z.toFixed(0)}`);
+      }
+      if (slope >= rockMin) {
+        steep++;
+        assert.equal(zone, 'rock', `seed ${seed}: ${((Math.atan(slope) * 180) / Math.PI).toFixed(0)}° at ${x.toFixed(0)}, ${z.toFixed(0)}`);
+      }
+    }
+    assert.ok(sand > 300 && steep > 30, `seed ${seed}: only ${sand} points of sand and ${steep} of steep ground`);
+  }
+});
+
 // A step, unlike a steep slope, doesn't shrink when measured over a shorter
 // distance. Along each line, a change between neighbouring points much larger
 // than the one before is narrowed down by halving the interval ten times: a

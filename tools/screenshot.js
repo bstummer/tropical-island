@@ -410,18 +410,28 @@ function toolCheckTasks(context, fileUrl, query, view, outDir) {
       return detail;
     }),
     // The shared lighting's colour, on a white sphere with the sun behind the camera:
-    // neutral at midday, warm at golden hour (PLAN.md Stage 2).
+    // neutral at midday, warm at golden hour (PLAN.md Stage 2). And at midday the
+    // light from below, on the shaded undersides of white spheres over sand and
+    // over sea: the ground's, so brighter over sand (PLAN.md Stage 4).
     ...[
       ['midday', (c) => Math.max(...c) - Math.min(...c) <= config.capture.light.neutralLevels, 'neutral'],
       ['golden-hour', (c) => c[0] - c[2] >= config.capture.light.warmLevels, 'warm'],
     ].map(([time, ok, want]) => () =>
       checkFixture(context, fileUrl, { ...params, fixture: 'light', view: 'jungle-edge', time, name: `light ${time}` }, async (page, info, problems) => {
-        const { white, radius } = await page.evaluate(() => window.__LIGHT__);
+        const { white, radius, overSand, overSea } = await page.evaluate(() => window.__LIGHT__);
         const image = decodeDataUrl(await page.evaluate(() => window.__CAPTURE__.image()));
         writeFileSync(join(dir, `light-${time}.png`), encodePng(image));
         const colour = brightestNear(image, white, radius).map(Math.round);
-        const detail = `a white sphere's lit side at ${time}: ${colour.join(', ')} (should read ${want})`;
+        let detail = `a white sphere's lit side at ${time}: ${colour.join(', ')} (should read ${want})`;
         if (!ok(colour)) problems.push({ kind: 'tool check', text: `light fixture: ${detail}` });
+        if (time !== 'midday') return detail;
+        const underside = ({ at: [x, y], radius: r }) => meanColor(image, Math.round(x - 2), Math.round(y + 0.75 * r - 2), 5, 5).map(Math.round);
+        const [sand, sea] = [underside(overSand), underside(overSea)];
+        const luma = ([r, g, b]) => 0.2126 * r + 0.7152 * g + 0.0722 * b;
+        const ratio = luma(sand) / Math.max(luma(sea), 1);
+        const { bounceRatio } = config.capture.light;
+        detail += `; undersides over sand ${sand.join(', ')}, over sea ${sea.join(', ')}: ${ratio.toFixed(2)}x (at least ${bounceRatio}x)`;
+        if (!(ratio >= bounceRatio)) problems.push({ kind: 'tool check', text: `light fixture: the light from below doesn't follow the ground: ${detail}` });
         return detail;
       }),
     ),
@@ -436,17 +446,28 @@ function toolCheckTasks(context, fileUrl, query, view, outDir) {
       if (!(m.skyView <= texelTolerance && m.aerial <= texelTolerance && m.multiscatter <= texelTolerance)) problems.push({ kind: 'tool check', text: `maths fixture: ${detail}` });
       return detail;
     }),
-    // The heights the GPU draws are the ones JS knows (src/fixtures/terrain.js), the
-    // comparison catches a sampler half a metre off, and the drawn ground keeps
-    // close to the island's between samples.
+    // The heights and the ground the GPU draws are the ones JS knows
+    // (src/fixtures/terrain.js), the comparison catches a sampler half a metre
+    // off, the drawn ground keeps close to the island's between samples, and
+    // the mesh's own height on the GPU is its JS twin's.
     () => checkFixture(context, fileUrl, { ...params, fixture: 'terrain' }, async (page, info, problems) => {
       const t = await page.evaluate(() => window.__TERRAIN__);
       for (const text of terrainProblems(t, config.capture.terrain)) problems.push({ kind: 'tool check', text: `terrain fixture: ${text}` });
-      const { limit } = config.capture.terrain;
+      const { limit, mesh } = config.capture.terrain;
       return (
         `${t.points} points: GPU vs world/heightmap.js off by ${t.gpu.toExponential(1)} m (limit ${limit}), ` +
-        `${t.mistaken.toFixed(2)} m half a metre off; drawn vs world/island.js per level (median) ${t.island.map((l) => `${l.median.toFixed(3)} m`).join(', ')}`
+        `${t.mistaken.toFixed(2)} m half a metre off; the ground at ${t.ground.gpu.toFixed(2)} of its limits ` +
+        `(${Object.entries(t.ground.fields).map(([f, v]) => `${f} ${v.toFixed(2)}`).join(', ')}), ` +
+        `${t.ground.mistaken.toFixed(1)} half a metre off; drawn vs world/island.js per level (median) ${t.island.map((l) => `${l.median.toFixed(3)} m`).join(', ')}; ` +
+        `the mesh's height at ${t.mesh.points} points off its twin by ${t.mesh.gpu.toExponential(1)} m (limit ${mesh}), ${t.mesh.mistaken.toFixed(2)} m for a camera 30 m off`
       );
+    }),
+    // The ground's tiles repeat (src/fixtures/surfaces.js), and the check would see if they didn't.
+    () => checkFixture(context, fileUrl, { ...params, fixture: 'surfaces', view: 'sand' }, async (page, info, problems) => {
+      const s = await page.evaluate(() => window.__SURFACES__);
+      for (const text of surfaceProblems(s, config.capture.surfaces)) problems.push({ kind: 'tool check', text: `surfaces fixture: ${text}` });
+      const pct = (v) => `${(100 * v).toFixed(2)}%`;
+      return Object.entries(s).map(([name, t]) => `${name} tile: ${pct(t.whole)} of texels change shifted a whole tile, ${pct(t.half)} half a tile`).join('; ');
     }),
     // The sky's tables agree with the air they come from (src/fixtures/haze.js): from
     // the beach at golden hour, and from the hill at sunset, high enough above the
@@ -635,15 +656,33 @@ export function mathsMismatch(values) {
 }
 
 // The terrain fixture's results (src/fixtures/terrain.js): the GPU's heights
-// within `limit` of heightmap.js's, the deliberate mistake beyond it, and per
-// level the drawn ground's median miss of the island within islandMedian of
-// the level's spacing. Returns problem texts.
-export function terrainProblems(t, { limit, islandMedian }) {
+// within `limit` of heightmap.js's and its ground within its limits (a share
+// of them, at most 1), the deliberate mistakes beyond them, and per level the
+// drawn ground's median miss of the island within islandMedian of the level's
+// spacing. Returns problem texts.
+export function terrainProblems(t, { limit, islandMedian, mesh }) {
   const problems = [];
   if (!(t.gpu <= limit)) problems.push(`GPU vs world/heightmap.js off by ${t.gpu?.toExponential(1)} m (limit ${limit})`);
   if (!(t.mistaken > limit)) problems.push(`a sampler half a metre off is only ${t.mistaken?.toExponential(1)} m off, within the limit: the check misses it`);
+  if (!(t.ground?.gpu <= 1)) problems.push(`the GPU's ground vs world/heightmap.js's at ${t.ground?.gpu?.toFixed(2)} of its limits`);
+  if (!(t.ground?.mistaken > 1)) problems.push(`the ground half a metre off is only ${t.ground?.mistaken?.toFixed(2)} of its limits: the check misses it`);
+  if (!(t.mesh?.gpu <= mesh)) problems.push(`the GPU's mesh height vs world/lod.js's twin off by ${t.mesh?.gpu?.toExponential(1)} m (limit ${mesh})`);
+  if (!(t.mesh?.mistaken > mesh)) problems.push(`the mesh's height for a camera 30 m off is only ${t.mesh?.mistaken?.toExponential(1)} m off, within the limit: the check misses it`);
   for (const { texel, median } of t.island) {
     if (!(median <= islandMedian * texel)) problems.push(`the ${texel} m level misses world/island.js by ${median?.toFixed(3)} m (median; limit ${(islandMedian * texel).toFixed(2)})`);
+  }
+  return problems;
+}
+
+// The surfaces fixture's tile check (src/fixtures/surfaces.js): per tile, the
+// share of texels a whole tile's shift changed within `share`, and half a
+// tile's above `mistaken`. Returns problem texts.
+export function surfaceProblems(s, { share, mistaken, tiles }) {
+  const problems = [];
+  for (const name of tiles) {
+    const t = s?.[name];
+    if (!(t?.whole <= share)) problems.push(`the ${name} tile doesn't repeat: shifted a whole tile, ${(100 * t?.whole).toFixed(2)}% of its texels change (limit ${100 * share}%)`);
+    if (!(t?.half > mistaken)) problems.push(`the ${name} tile shifted half a tile changes only ${(100 * t?.half).toFixed(2)}% of its texels: the check misses it`);
   }
   return problems;
 }

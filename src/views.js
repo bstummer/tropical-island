@@ -83,6 +83,16 @@ export const views = [
     brief: "Late afternoon, looking down at the sand at your feet near the water: its grain and ripples in the low sun from ahead on the left, the wet margin and the water's edge across the top.",
     crops: { grain: [0.6, 0.7], edge: [0.5, 0.2] },
   },
+  {
+    name: 'rocks',
+    position: [95.93, 3.32, 94.03],
+    yaw: -160,
+    pitch: 6,
+    fov: 60,
+    timeOfDay: 15,
+    brief: "Mid-afternoon at the end of the beach, where rock takes over: the low rock shelf running out to the water, wet and dark where the sea reaches it, and the headland's face rising behind, lit from the right by the sun over the lagoon.",
+    crops: { face: [0.35, 0.35], shelf: [0.6, 0.65] },
+  },
 ];
 
 export function findView(name) {

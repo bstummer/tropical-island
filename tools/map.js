@@ -7,8 +7,11 @@
 // as someone on the cove's beach facing the sea sees them, the setting sun at
 // the top. --set overrides a setting under config.world.island for candidates,
 // with a JSON value: --set size=3000 --set cove.headlandSide=1.
-// Land is coloured by zone and shaded from the upper left; contours every 20 m
-// (100 m bold). Water is coloured by depth, with contours at 1, 2, 5, 10, 20 and 50 m.
+// Land is coloured by zone, the green darker the lusher it is (island.js
+// lushOf), and shaded from the upper left; contours every 20 m (100 m bold). Water is coloured by depth, with contours at 1, 2, 5, 10, 20 and 50 m.
+// Heights and zones are the ground as the game draws it (world/heightmap.js's
+// grids, built here, a second or two); beyond the grids, which a larger island
+// can reach past, the island's own.
 // The pure helpers are exported for tests/map.test.js.
 import { chromium } from 'playwright';
 import { existsSync, mkdirSync, realpathSync } from 'node:fs';
@@ -18,6 +21,7 @@ import { config } from '../src/config.js';
 import { views } from '../src/views.js';
 import { createRandom } from '../src/core/random.js';
 import { createIsland } from '../src/world/island.js';
+import { buildHeightmap } from '../src/world/heightmap.js';
 import { encodePng } from './png.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -33,6 +37,7 @@ const ZONE_COLOURS = {
   jungle: [48, 108, 52],
   rock: [138, 131, 120],
 };
+const GREEN = new Set(['scrub', 'palm-belt', 'jungle']);
 const DEPTH_COLOURS = [
   [0, [150, 232, 222]],
   [1, [110, 214, 210]],
@@ -54,6 +59,7 @@ async function main(argv) {
 
   const started = performance.now();
   const island = createIsland(createRandom(seed), settings);
+  const heightmap = buildHeightmap(island, config.world.terrain);
   // The whole island with its reef and the deep water round it, whatever its size.
   const { minA, maxA, minO, maxO } = island.coveBounds;
   const side = settings.cove.headlandSide;
@@ -61,7 +67,7 @@ async function main(argv) {
     { name: 'island', u: [Math.min(side * minA, side * maxA), Math.max(side * minA, side * maxA)], o: [minO, maxO] },
     { name: 'cove', u: [-560, 560], o: [-760, 560] },
     { name: 'bay', u: [-300, 300], o: [-200, 400] },
-  ].map((p) => drawPanel(island, p));
+  ].map((p) => drawPanel(island, heightmap, p));
   const ms = performance.now() - started;
   const samples = panels.reduce((n, p) => n + p.width * p.height, 0);
 
@@ -119,20 +125,32 @@ export function withOverrides(settings, overrides) {
 }
 
 // One panel: u (to the right of someone facing the sea) across, o (out to sea) up.
-function drawPanel(island, { name, u: [u0, u1], o: [o0, o1] }) {
+function drawPanel(island, heightmap, { name, u: [u0, u1], o: [o0, o1] }) {
   const scale = PANEL / Math.max(u1 - u0, o1 - o0); // px per metre
   const width = Math.round((u1 - u0) * scale);
   const height = Math.round((o1 - o0) * scale);
   const side = island.settings.cove.headlandSide;
-  const world = (px, py) => island.fromCove(side * (u0 + (px + 0.5) / scale), o1 - (py + 0.5) / scale);
+  const { origin, texel } = heightmap.levels.at(-1);
+  const reach = (heightmap.samples - 1) * texel;
 
-  const samples = new Array(width * height);
+  // Per pixel the height, and the zone: drawn, or beyond the grids the
+  // island's sample, whose zone waits for the slope across the pixels.
+  const zones = new Array(width * height);
   const heights = new Float64Array(width * height);
+  const lush = new Float64Array(width * height).fill(0.5);
+  const ground = {};
   for (let py = 0; py < height; py++) {
     for (let px = 0; px < width; px++) {
-      const s = island.sample(...world(px, py));
-      samples[py * width + px] = s;
-      heights[py * width + px] = s.height;
+      const [a, o] = [side * (u0 + (px + 0.5) / scale), o1 - (py + 0.5) / scale];
+      const i = py * width + px;
+      if (a >= origin[0] && a <= origin[0] + reach && o >= origin[1] && o <= origin[1] + reach) {
+        heights[i] = heightmap.heightAtCove(a, o);
+        zones[i] = heightmap.zoneAtCove(a, o);
+        lush[i] = heightmap.groundAtCove(a, o, ground).lush;
+      } else {
+        zones[i] = island.evaluate(a, o, {});
+        heights[i] = zones[i].height;
+      }
     }
   }
   const data = new Uint8Array(width * height * 4);
@@ -140,12 +158,12 @@ function drawPanel(island, { name, u: [u0, u1], o: [o0, o1] }) {
   for (let py = 0; py < height; py++) {
     for (let px = 0; px < width; px++) {
       const i = py * width + px;
-      const s = samples[i];
       const gx = (at(px + 1, py) - at(px - 1, py)) * scale / 2;
       const gy = (at(px, py - 1) - at(px, py + 1)) * scale / 2; // up the map
-      const slope = Math.hypot(gx, gy);
-      const land = s.height > 0;
-      let colour = land ? ZONE_COLOURS[island.zoneOf(s, slope)] : depthColour(-s.height);
+      const land = heights[i] >= 0;
+      const zone = typeof zones[i] === 'string' ? zones[i] : island.zoneOf(zones[i], Math.hypot(gx, gy));
+      let colour = land ? ZONE_COLOURS[zone] : depthColour(-heights[i]);
+      if (GREEN.has(zone)) colour = colour.map((c) => c * (1.3 - 0.6 * lush[i]));
       // Light from the upper left, 45° up; softer under water.
       const nx = -gx;
       const ny = -gy;

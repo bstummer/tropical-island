@@ -1,11 +1,13 @@
 // The terrain's level of detail (world/lod.js): the nodes it picks cover the
 // ground once, neighbours differ by at most a level, and where a node meets a
 // coarser one its vertices have finished morphing while the coarser side's
-// haven't begun, so there are no cracks, however steep the ground.
+// haven't begun, so there are no cracks, however steep the ground. And the
+// mesh's height (createMeshHeight) is that of the mesh the GPU draws.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { config } from '../src/config.js';
-import { createLod, lodRanges } from '../src/world/lod.js';
+import { createRandom } from '../src/core/random.js';
+import { createLod, createMeshHeight, lodRanges } from '../src/world/lod.js';
 
 const { leaf, grid, morph } = config.world.terrain;
 const levels = 8;
@@ -66,6 +68,117 @@ function* edges() {
   }
 }
 
+// For the mesh's height: a stand-in for heightmap.js's heightAtCove whose levels
+// lie metres apart and wave within a quad, so a vertex at the wrong level, or
+// moved wrongly by the morph, shows.
+const heightLevels = 4;
+const heightAtCove = (a, o, from) => ground(a, o) + 3 * from + (1 + from) * Math.sin(0.9 * a + from) * Math.cos(0.7 * o - from);
+const sideOf = (node) => node.spacing * (node.quarter ? grid / 2 : grid);
+const holds = (node, a, o) => a >= node.a && a <= node.a + sideOf(node) && o >= node.o && o <= node.o + sideOf(node);
+
+// A drawn node as the GPU draws it, built apart from lod.js: its vertices moved
+// and lifted as terrain.vert does, its triangles as terrain.js's gridGeometry.
+// Heights are taken only for the vertices a point needs.
+function drawnNode(node, cam, morphs) {
+  const quads = node.quarter ? grid / 2 : grid;
+  const [start, end] = morphs[node.level];
+  const heightLevel = (level) => Math.min(level, heightLevels - 1);
+  const fract = (x) => x - Math.floor(x);
+  const positions = new Float64Array(2 * (quads + 1) ** 2);
+  const ks = new Float64Array((quads + 1) ** 2);
+  for (let j = 0; j <= quads; j++) {
+    for (let i = 0; i <= quads; i++) {
+      const v = j * (quads + 1) + i;
+      const k = Math.min(Math.max((Math.hypot(node.a + i * node.spacing - cam[0], node.o + j * node.spacing - cam[2]) - start) / (end - start), 0), 1);
+      positions[2 * v] = node.a + (i - fract(i * 0.5) * 2 * k) * node.spacing;
+      positions[2 * v + 1] = node.o + (j - fract(j * 0.5) * 2 * k) * node.spacing;
+      ks[v] = k;
+    }
+  }
+  const height = (v) => {
+    const [a, o, k] = [positions[2 * v], positions[2 * v + 1], ks[v]];
+    if (k === 0) return heightAtCove(a, o, heightLevel(node.level));
+    const coarse = heightAtCove(a, o, heightLevel(node.level + 1));
+    return k < 1 ? heightAtCove(a, o, heightLevel(node.level)) * (1 - k) + coarse * k : coarse;
+  };
+  return { positions, height, spacing: node.spacing, ...gridTriangles(quads) };
+}
+
+// The triangles of a grid of quads, and their areas before the morph, in quads.
+const triangles = new Map();
+function gridTriangles(quads) {
+  if (!triangles.has(quads)) {
+    const index = [];
+    const facing = [];
+    const at = (i, j) => j * (quads + 1) + i;
+    for (let j = 0; j < quads; j++) {
+      for (let i = 0; i < quads; i++) index.push(at(i, j), at(i, j + 1), at(i + 1, j), at(i + 1, j), at(i, j + 1), at(i + 1, j + 1));
+    }
+    const ij = (v) => [v % (quads + 1), Math.floor(v / (quads + 1))];
+    for (let t = 0; t < index.length; t += 3) {
+      const [[i0, j0], [i1, j1], [i2, j2]] = [ij(index[t]), ij(index[t + 1]), ij(index[t + 2])];
+      facing.push((i1 - i0) * (j2 - j0) - (j1 - j0) * (i2 - i0));
+    }
+    triangles.set(quads, { index: Int32Array.from(index), facing: Float64Array.from(facing) });
+  }
+  return triangles.get(quads);
+}
+
+// Adds to `out` the heights drawn at a, o in a drawn node: of every one of its
+// triangles that holds the point and faces up. Near the end of its band the
+// morph turns slivers over, which face down and are culled; front faces
+// overlap there, and either may be drawn.
+function drawnHeights({ positions: p, height, index, facing, spacing }, a, o, out) {
+  const square = spacing ** 2;
+  for (let t = 0; t < index.length; t += 3) {
+    const i0 = 2 * index[t];
+    const i1 = 2 * index[t + 1];
+    const i2 = 2 * index[t + 2];
+    const area = (p[i1] - p[i0]) * (p[i2 + 1] - p[i0 + 1]) - (p[i1 + 1] - p[i0 + 1]) * (p[i2] - p[i0]);
+    if (area / (facing[t / 3] * square) < 1e-9) continue;
+    const w0 = ((p[i1] - a) * (p[i2 + 1] - o) - (p[i1 + 1] - o) * (p[i2] - a)) / area;
+    const w1 = ((p[i2] - a) * (p[i0 + 1] - o) - (p[i2 + 1] - o) * (p[i0] - a)) / area;
+    const w2 = 1 - w0 - w1;
+    if (Math.min(w0, w1, w2) > -1e-9) out.push(w0 * height(i0 / 2) + w1 * height(i1 / 2) + w2 * height(i2 / 2));
+  }
+  return out;
+}
+
+// The middles of the triangles in a drawn node that the morph turned over.
+function turnedOver({ positions: p, index, facing, spacing }) {
+  const middles = [];
+  for (let t = 0; t < index.length; t += 3) {
+    const [i0, i1, i2] = [2 * index[t], 2 * index[t + 1], 2 * index[t + 2]];
+    const area = (p[i1] - p[i0]) * (p[i2 + 1] - p[i0 + 1]) - (p[i1 + 1] - p[i0 + 1]) * (p[i2] - p[i0]);
+    if (area / (facing[t / 3] * spacing ** 2) < -1e-9) middles.push([(p[i0] + p[i1] + p[i2]) / 3, (p[i0 + 1] + p[i1 + 1] + p[i2 + 1]) / 3]);
+  }
+  return middles;
+}
+
+// Points to try for a camera: around it from centimetres to past the coarsest
+// range, in every level's morph, and on some of the drawn nodes (more of the
+// quarters) at and just inside their corners, along their edges and inside.
+function* samplePoints(cam, nodes, ranges, morphs, r) {
+  const far = 1.5 * ranges.at(-1);
+  const around = (d) => {
+    const angle = r.range(0, 2 * Math.PI);
+    return [cam[0] + d * Math.cos(angle), cam[2] + d * Math.sin(angle)];
+  };
+  for (let n = 0; n < 60; n++) yield around(0.05 * (far / 0.05) ** r.next());
+  for (const [start, end] of morphs) for (let n = 0; n < 4; n++) yield around(r.range(start, end));
+  for (const node of nodes) {
+    if (!r.chance(node.quarter ? 0.1 : 0.02)) continue;
+    const side = sideOf(node);
+    for (const [x, y] of [[0, 0], [1, 0], [0, 1], [1, 1]]) {
+      yield [node.a + x * side, node.o + y * side];
+      yield [node.a + x * side + (x ? -1e-3 : 1e-3), node.o + y * side + (y ? -1e-3 : 1e-3)];
+    }
+    for (const [x, y] of [[r.next(), 0], [r.next(), 1], [0, r.next()], [1, r.next()], [r.next(), r.next()]]) {
+      yield [node.a + x * side, node.o + y * side];
+    }
+  }
+}
+
 for (const [preset, { terrainDetail, terrainRatio }] of Object.entries(config.quality.presets)) {
   const { ranges, morphs } = lodRanges(terrainDetail, levels, morph, leaf, terrainRatio);
 
@@ -108,7 +221,74 @@ for (const [preset, { terrainDetail, terrainRatio }] of Object.entries(config.qu
     }
     assert.ok(seams > 100, `only ${seams} seams checked`);
   });
+
+  test(`${preset}: the mesh height is the drawn mesh's, in quarters, in the morph, on seams between levels and where the morph turns slivers over`, () => {
+    const meshHeight = createMeshHeight({ origin, levels, leaf, grid }, { ranges, morphs }, heightAtCove, heightLevels);
+    const r = createRandom(1)(`lod/${preset}`);
+    const tried = { points: 0, off: 0, quarters: 0, morphing: 0, seams: 0, turned: 0 };
+    for (const cam of cameras) {
+      const nodes = lod.select(cam, ranges, () => true, []);
+      const drawn = new Map();
+      const check = (a, o) => {
+        const actual = meshHeight(a, o, cam);
+        const holding = nodes.filter((node) => holds(node, a, o));
+        tried.points++;
+        if (!holding.length) {
+          assert.ok(Number.isNaN(actual), `camera ${cam}: ${actual} at ${a}, ${o}, off the ground`);
+          tried.off++;
+          return;
+        }
+        const heights = [];
+        for (const node of holding) {
+          if (!drawn.has(node)) drawn.set(node, drawnNode(node, cam, morphs));
+          drawnHeights(drawn.get(node), a, o, heights);
+        }
+        const [node] = holding;
+        assert.ok(heights.length, `camera ${cam}: no triangle holds ${a}, ${o}`);
+        const miss = Math.min(...heights.map((h) => Math.abs(actual - h)));
+        assert.ok(miss < 1e-6, `camera ${cam}: ${actual} at ${a}, ${o}, drawn at ${heights} (a level ${node.level} ${node.quarter ? 'quarter' : 'node'})`);
+        const distance = Math.hypot(a - cam[0], o - cam[2]);
+        if (node.quarter) tried.quarters++;
+        if (distance > morphs[node.level][0] && distance < morphs[node.level][1]) tried.morphing++;
+        if (holding.some((other) => other.level !== node.level)) tried.seams++;
+      };
+      for (const [a, o] of samplePoints(cam, nodes, ranges, morphs, r)) check(a, o);
+      // A sliver turned over lies under two front faces: the height is one of theirs.
+      for (const built of [...drawn.values()]) {
+        for (const [a, o] of turnedOver(built)) {
+          check(a, o);
+          tried.turned++;
+        }
+      }
+    }
+    for (const [what, count] of Object.entries(tried)) assert.ok(count > 50, `only ${count} ${what} tried`);
+  });
 }
+
+test('the mesh height is NaN off the ground, and the finest height at vertices near the camera', () => {
+  const { ranges, morphs } = lodRanges(128, levels, morph, leaf);
+  const meshHeight = createMeshHeight({ origin, levels, leaf, grid }, { ranges, morphs }, heightAtCove, heightLevels);
+  const end = origin.map((x) => x + rootSize);
+  for (const [a, o] of [[origin[0] - 0.01, 0], [end[0] + 0.01, 0], [0, origin[1] - 0.01], [0, end[1] + 0.01], [1e6, -1e6], [NaN, 0], [0, NaN]]) {
+    assert.ok(Number.isNaN(meshHeight(a, o, cameras[0])), `${a}, ${o}`);
+  }
+  for (const [a, o] of [origin, end, [origin[0], end[1]], [end[0], origin[1]]]) assert.ok(Number.isFinite(meshHeight(a, o, cameras[0])), `${a}, ${o}`);
+  // The finest level's vertices are whole steps from the origin.
+  const step = leaf / grid;
+  let vertices = 0;
+  for (const cam of cameras.filter(([a, , o]) => a >= origin[0] && a <= end[0] && o >= origin[1] && o <= end[1])) {
+    const [i0, j0] = [Math.round((cam[0] - origin[0]) / step), Math.round((cam[2] - origin[1]) / step)];
+    for (let j = j0 - 60; j <= j0 + 60; j++) {
+      for (let i = i0 - 60; i <= i0 + 60; i++) {
+        const [a, o] = [origin[0] + i * step, origin[1] + j * step];
+        if (Math.hypot(a - cam[0], o - cam[2]) >= morphs[0][0]) continue;
+        assert.ok(Math.abs(meshHeight(a, o, cam) - heightAtCove(a, o, 0)) < 1e-9, `camera ${cam}: at ${a}, ${o}`);
+        vertices++;
+      }
+    }
+  }
+  assert.ok(vertices > 10000, `only ${vertices} vertices tried`);
+});
 
 test('ranges too short for the nodes to close their seams are refused, and so is a ratio under 2', () => {
   for (const ratio of [2, 2.5, 3]) {
@@ -142,4 +322,25 @@ test('culled nodes are left out, and a camera far away still gets the whole grou
   assert.ok(half.length < lod.select([0, 100, 0], ranges, () => true, []).length);
   const far = lod.select([1e6, 100, 1e6], ranges, () => true, []);
   assert.deepEqual(far.map((n) => n.level), [levels - 1]);
+});
+
+test("each node carries the surfaces of the ground under it, and no others", () => {
+  // A strip of beach: leaves whose square reaches into it hold surface bit 1.
+  const beach = (a0, o0, size) => o0 < 200 && o0 + size > 150;
+  const withSurfaces = createLod({ origin, levels, leaf, grid }, (a0, o0, size) => [...bounds(a0, o0, size), beach(a0, o0, size) ? 1 : 0]);
+  const { ranges } = lodRanges(128, levels, morph, leaf);
+  let sandy = 0;
+  for (const cam of cameras) {
+    for (const node of withSurfaces.select(cam, ranges, () => true, [])) {
+      const size = node.spacing * (node.quarter ? grid / 2 : grid);
+      // Its leaves, a leaf apart: the node holds the bit if any of them does.
+      let any = false;
+      for (let o = node.o; o < node.o + size; o += leaf) if (beach(node.a, o, leaf)) any = true;
+      assert.equal(node.surfaces, any ? 1 : 0, `a ${node.quarter ? 'quarter' : 'node'} of ${size} m at ${node.a}, ${node.o}`);
+      if (any) sandy++;
+    }
+  }
+  assert.ok(sandy > 0, 'no node held the beach, so none were tested');
+  // Without surfaces from the bounds, nodes hold none.
+  assert.ok(lod.select(cameras[0], ranges, () => true, []).every((n) => n.surfaces === 0));
 });

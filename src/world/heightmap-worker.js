@@ -4,7 +4,7 @@
 import { config } from '../config.js';
 import { createRandom } from '../core/random.js';
 import { createIsland } from './island.js';
-import { fillRows, layoutLevels } from './heightmap.js';
+import { fillRows, GROUND, layoutLevels } from './heightmap.js';
 
 const settings = config.world.terrain;
 const levels = layoutLevels(settings);
@@ -19,6 +19,7 @@ self.onmessage = ({ data: { seed, level, j0, j1 } }) => {
   const rows = j1 - j0;
   const heights = new Float32Array(settings.samples * rows);
   const info = new Float32Array(4 * settings.samples * rows);
-  fillRows(island, levels[level], settings.samples, j0, j1, heights, info);
-  self.postMessage({ level, j0, j1, heights, info }, [heights.buffer, info.buffer]);
+  const ground = new Uint8Array(GROUND * settings.samples * rows);
+  fillRows(island, levels[level], settings.samples, j0, j1, heights, info, ground);
+  self.postMessage({ level, j0, j1, heights, info, ground }, [heights.buffer, info.buffer, ground.buffer]);
 };

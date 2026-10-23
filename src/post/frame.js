@@ -166,6 +166,9 @@ export function createFrame(ctx, display) {
       uSkySH: { value: Array.from({ length: 9 }, () => new THREE.Vector3()) },
       uLevelLight: { value: new THREE.Vector3() },
       uBounceAlbedo: { value: new THREE.Vector3(...config.sky.atmosphere.groundAlbedo) },
+      // The ground's albedo from above (lighting.glsl groundAlbedo), which world/terrain.js fills.
+      uBounceMap: { value: null },
+      uBounceLayout: { value: new THREE.Vector4() },
       uSkyView: { value: null },
       uSkyViewSize: { value: new THREE.Vector2(1, 1) },
       uSkyViewHeight: { value: 0 },
@@ -180,6 +183,7 @@ export function createFrame(ctx, display) {
       // The terrain's grids (chunks/terrain.glsl), which world/terrain.js fills.
       uTerrainHeight: { value: null },
       uTerrainInfo: { value: null },
+      uTerrainGround: { value: null },
       uTerrainLevels: { value: config.world.terrain.levels.map(() => new THREE.Vector4(0, 0, 1, 0)) },
       uTerrainFrame: { value: new THREE.Vector4(1, 0, 0, 1) },
       uTerrainSamples: { value: 2 },

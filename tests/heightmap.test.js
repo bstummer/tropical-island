@@ -1,13 +1,14 @@
 // The heightmap's grids (world/heightmap.js): how they nest and cover the
-// island, that they hold the island's heights, and that the drawn height has
-// no seams. The GPU's side is checked in the browser (src/fixtures/terrain.js).
+// island, that they hold the island's heights and ground, that the drawn
+// height has no seams, and that the drawn ground keeps the zones' rules. The
+// GPU's side is checked in the browser (src/fixtures/terrain.js).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createRandom } from '../src/core/random.js';
 import { config } from '../src/config.js';
-import { createIsland } from '../src/world/island.js';
-import { buildHeightmap, layoutLevels } from '../src/world/heightmap.js';
+import { createIsland, LAND_ZONES } from '../src/world/island.js';
+import { buildHeightmap, fillRows, GROUND, layoutLevels } from '../src/world/heightmap.js';
 
 const settings = config.world.terrain;
 const SEEDS = Array.from({ length: 20 }, (_, i) => i + 1);
@@ -167,5 +168,190 @@ test("the slopes are the grid's own", () => {
       const out = (heights[n + samples] - heights[n - samples]) / (2 * texel);
       assert.ok(Math.abs(info[4 * n] - along) < 1e-6 && Math.abs(info[4 * n + 1] - out) < 1e-6, `${texel} m level at ${i}, ${j}`);
     }
+  }
+});
+
+test('rows filled in parts, as the workers fill them, are the rows filled whole', () => {
+  const island = createIsland(createRandom(1));
+  const { samples } = small;
+  for (const level of layoutLevels(small)) {
+    const fill = (j0, j1) => {
+      const rows = j1 - j0;
+      const part = { heights: new Float32Array(rows * samples), info: new Float32Array(4 * rows * samples), ground: new Uint8Array(GROUND * rows * samples) };
+      fillRows(island, level, samples, j0, j1, part.heights, part.info, part.ground);
+      return part;
+    };
+    const whole = fill(0, samples);
+    for (let j0 = 0; j0 < samples; j0 += 7) {
+      const j1 = Math.min(j0 + 7, samples);
+      const part = fill(j0, j1);
+      assert.deepEqual(part.heights, whole.heights.subarray(j0 * samples, j1 * samples), `heights of rows ${j0}-${j1}`);
+      assert.deepEqual(part.info, whole.info.subarray(4 * j0 * samples, 4 * j1 * samples), `info of rows ${j0}-${j1}`);
+      assert.deepEqual(part.ground, whole.ground.subarray(GROUND * j0 * samples, GROUND * j1 * samples), `ground of rows ${j0}-${j1}`);
+    }
+  }
+});
+
+test("every sample's ground is the island's there, given the grid's slope", () => {
+  for (const seed of SEEDS.slice(0, 4)) {
+    const island = createIsland(createRandom(seed));
+    const heightmap = buildHeightmap(island, small);
+    const r = createRandom(seed)('test/ground');
+    const out = {};
+    for (const { origin, texel, info, ground } of heightmap.levels) {
+      for (let k = 0; k < 300; k++) {
+        const n = r.int(0, small.samples * small.samples - 1);
+        const [i, j] = [n % small.samples, Math.floor(n / small.samples)];
+        const g = island.groundOf(island.evaluate(origin[0] + i * texel, origin[1] + j * texel, out), Math.hypot(info[4 * n], info[4 * n + 1]));
+        const rock = Math.round(g.rock * 255);
+        assert.deepEqual(
+          [ground[GROUND * n], ground[GROUND * n + 1], ground[GROUND * n + 3], info[4 * n + 2], info[4 * n + 3]],
+          [Math.min(Math.round(g.sand * 255), 255 - rock), rock, Math.round(g.sandy * 255), Math.fround(g.band), Math.fround(g.reef)],
+          `seed ${seed}: sample ${i}, ${j} of the ${texel} m level`,
+        );
+      }
+    }
+  }
+});
+
+test("every sample's lush is the island's there, given the grid's relief: how far it stands above the samples round it", () => {
+  const { radius } = config.world.island.zones.lush;
+  for (const seed of SEEDS.slice(0, 4)) {
+    const island = createIsland(createRandom(seed));
+    const heightmap = buildHeightmap(island, small);
+    const r = createRandom(seed)('test/lush');
+    const last = small.samples - 1;
+    for (const { origin, texel, heights, info, ground } of heightmap.levels) {
+      const reach = Math.max(1, Math.round(radius / texel));
+      for (let k = 0; k < 200; k++) {
+        const n = r.int(0, small.samples * small.samples - 1);
+        const [i, j] = [n % small.samples, Math.floor(n / small.samples)];
+        let sum = 0;
+        let count = 0;
+        for (let y = Math.max(j - reach, 0); y <= Math.min(j + reach, last); y++) {
+          for (let x = Math.max(i - reach, 0); x <= Math.min(i + reach, last); x++) {
+            sum += heights[y * small.samples + x];
+            count++;
+          }
+        }
+        const lush = heights[n] < 0 ? 0 : island.lushOf({ band: info[4 * n + 2] }, heights[n] - sum / count, origin[0] + i * texel, origin[1] + j * texel);
+        assert.ok(Math.abs(ground[GROUND * n + 2] - lush * 255) <= 0.5 + 1e-6, `seed ${seed}: sample ${i}, ${j} of the ${texel} m level: ${ground[GROUND * n + 2]}, not ${(lush * 255).toFixed(2)}`);
+      }
+    }
+  }
+});
+
+// Round the cove, laid out as the game's grids but smaller, quick to build for
+// every seed: 1 m apart over the beach towards the headland, where sand meets rock.
+const cove = { samples: 192, blend: 8, levels: [1, 2, 4, 8].map((texel) => ({ texel, centre: [100, 0] })) };
+const coveMaps = new Map(); // seed -> { island, heightmap }, built once for the tests below
+function coveMap(seed) {
+  if (!coveMaps.has(seed)) {
+    const island = createIsland(createRandom(seed));
+    coveMaps.set(seed, { island, heightmap: buildHeightmap(island, cove) });
+  }
+  return coveMaps.get(seed);
+}
+
+// The drawn ground's slope at a, o, by central differences.
+function drawnSlope(heightmap, a, o, step = 0.25) {
+  const h = (da, dO) => heightmap.heightAtCove(a + da, o + dO);
+  return Math.hypot(h(step, 0) - h(-step, 0), h(0, step) - h(0, -step)) / (2 * step);
+}
+
+test('on the drawn ground the zones keep their order inland, and sand lies no steeper than sand holds', () => {
+  const sandMax = Math.tan((config.world.island.zones.sandSlope[1] * Math.PI) / 180);
+  for (const seed of SEEDS) {
+    const { island, heightmap } = coveMap(seed);
+    // From the waterline, walk up the beach and on inland on the 1 and 2 m
+    // grids: no zone steps back towards the sea.
+    let walks = 0;
+    const out = {};
+    const coast = (a, o) => island.evaluate(a, o, out).coast;
+    for (let a = -60; a <= 260; a += 8) {
+      let o = 160;
+      while (o > -150 && heightmap.heightAtCove(a, o) < 0) o -= 0.5;
+      if (o <= -150) continue;
+      walks++;
+      let last = -1;
+      let behind = -Infinity;
+      let [pa, po] = [a, o];
+      for (let t = 0; t < 150; t++) {
+        const here = coast(pa, po);
+        if (here < behind + 0.5) break; // on a spine: the shore no longer falls behind
+        behind = here;
+        const zone = heightmap.zoneAtCove(pa, po);
+        const index = LAND_ZONES.indexOf(zone);
+        if (index >= 0) {
+          assert.ok(index >= last, `seed ${seed}: ${zone} after ${LAND_ZONES[last]} walking inland from ${a}, ${o}`);
+          last = index;
+        }
+        const [ga, go] = [coast(pa + 0.5, po) - coast(pa - 0.5, po), coast(pa, po + 0.5) - coast(pa, po - 0.5)];
+        const length = Math.hypot(ga, go) || 1;
+        pa += ga / length;
+        po += go / length;
+      }
+    }
+    assert.ok(walks > 30, `seed ${seed}: only ${walks} walks inland`);
+    // Sand where the drawn ground is too steep for it would slide.
+    const r = createRandom(seed)('test/drawn-sand');
+    let sand = 0;
+    for (let k = 0; k < 20_000; k++) {
+      const [a, o] = [r.range(-170, 280), r.range(-170, 170)];
+      const zone = heightmap.zoneAtCove(a, o);
+      if (zone !== 'wet-sand' && zone !== 'dry-sand') continue;
+      sand++;
+      const slope = drawnSlope(heightmap, a, o);
+      assert.ok(slope <= sandMax, `seed ${seed}: ${zone} drawn on a slope of ${((Math.atan(slope) * 180) / Math.PI).toFixed(1)}° at ${a.toFixed(1)}, ${o.toFixed(1)}`);
+    }
+    assert.ok(sand > 1000, `seed ${seed}: only ${sand} points of drawn sand`);
+  }
+});
+
+test("the drawn zones are the island's nearly everywhere, and quick to look up", () => {
+  for (const seed of SEEDS) {
+    const { island, heightmap } = coveMap(seed);
+    const r = createRandom(seed)('test/drawn-zones');
+    let same = 0;
+    const n = 2000;
+    for (let k = 0; k < n; k++) {
+      const [x, z] = island.fromCove(r.range(-170, 280), r.range(-170, 170));
+      if (heightmap.zoneAt(x, z) === island.zone(x, z)) same++;
+    }
+    // They differ only along the zones' edges, where the grid's slope and its
+    // bilinear ground stray from the island's.
+    assert.ok(same / n > 0.99, `seed ${seed}: the drawn zone is the island's at only ${((100 * same) / n).toFixed(1)}% of points`);
+  }
+  // Placing plants by the hundred thousand (PLAN.md Stage 8) takes a blink.
+  const { heightmap } = coveMap(1);
+  const started = performance.now();
+  let jungle = 0;
+  for (let k = 0; k < 100_000; k++) if (heightmap.zoneAt((k % 400) - 200, ((k * 7) % 400) - 200) === 'jungle') jungle++;
+  const ms = performance.now() - started;
+  assert.ok(ms < 1000, `100,000 zones took ${ms.toFixed(0)} ms (${jungle} jungle)`);
+});
+
+test('the green is lusher in hollows and gullies than on ridges and spurs, deeper into the jungle alike', () => {
+  for (const seed of SEEDS) {
+    const { heightmap } = coveMap(seed);
+    const g = {};
+    const [hollows, ridges] = [[], []];
+    // On the 2 m grid behind the beach, inland, where it is jungle: the
+    // ground's relief over twice the lush's radius, from the drawn height.
+    const { radius } = config.world.island.zones.lush;
+    for (let a = -40; a <= 240; a += 6) {
+      for (let o = -170; o <= -60; o += 6) {
+        heightmap.groundAtCove(a, o, g);
+        if (g.band < 2.5 || g.sand + g.rock > 0 || heightmap.heightAtCove(a, o) < 0) continue;
+        let around = 0;
+        for (let k = 0; k < 8; k++) around += heightmap.heightAtCove(a + radius * Math.cos((k * Math.PI) / 4), o + radius * Math.sin((k * Math.PI) / 4));
+        const relief = heightmap.heightAtCove(a, o) - around / 8;
+        if (relief < -1) hollows.push(g.lush);
+        if (relief > 1) ridges.push(g.lush);
+      }
+    }
+    const mean = (list) => list.reduce((sum, v) => sum + v, 0) / list.length;
+    assert.ok(hollows.length > 10 && ridges.length > 10, `seed ${seed}: ${hollows.length} hollows and ${ridges.length} ridges`);
+    assert.ok(mean(hollows) > mean(ridges) + 0.1, `seed ${seed}: hollows ${mean(hollows).toFixed(2)}, ridges ${mean(ridges).toFixed(2)}`);
   }
 });

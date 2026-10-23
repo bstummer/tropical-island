@@ -38,6 +38,11 @@ export const ZONES = [...SEA_ZONES, 'rock', ...LAND_ZONES];
 
 const DEG = Math.PI / 180;
 
+// The ground's band and reef offset (groundOf) are held within these: beyond
+// them they tell nothing more, and on the GPU their half floats stay precise.
+const BAND_RANGE = [-1, 4];
+const REEF_RANGE = 250;
+
 // rng: a seeded random factory (core/random.js createRandom), so the seed shapes
 // the island. sunsetYaw: the view yaw (views.js) looking into the setting sun.
 export function createIsland(rng, settings = config.world.island, sunsetYaw = config.sky.sun.sunsetYaw) {
@@ -56,6 +61,7 @@ export function createIsland(rng, settings = config.world.island, sunsetYaw = co
   const hillNoise = createNoise(rng('island/hills'));
   const seabedNoise = createNoise(rng('island/seabed'));
   const zoneNoise = createNoise(rng('island/zones'));
+  const lushNoise = createNoise(rng('island/lush'));
   const bommieSeed = rng('island/bommies').int(0, 0x7fffffff);
 
   const lobes = makeLobes(rng('island/lobes'), size, coast.lobes);
@@ -351,23 +357,70 @@ export function createIsland(rng, settings = config.world.island, sunsetYaw = co
     return [u * right[0] + o * forward[0], u * right[1] + o * forward[1]];
   }
 
-  // The zone of a sampled point, given the ground's slope there (rise over run).
-  function zoneOf(s, slope) {
-    const { coast: d, height: h, beach: b, reef: y, a, o } = s;
-    if (d < 0) {
-      if (y < -zones.reefBack) return 'lagoon';
-      return h < -zones.reefDeep ? (y < 0 ? 'lagoon' : 'ocean') : 'reef';
-    }
-    if (slope > Math.tan(zones.rockSlope * DEG)) return 'rock';
-    // The band along the shore is sand or rock, as sandy as the shore is; the
-    // edges inland don't depend on it, so the zones keep their order.
+  // What the ground is at a sampled point, given its slope there (rise over
+  // run), into `out`: how much of it is sand and how much rock (the rest is
+  // green), `band`, how far into the green it lies (0 where the shore's band
+  // ends, 1 where the scrub does, 2 where the palm belt does), the reef's
+  // offset, and `sandy`, how much of the soil is sand: behind a beach, whose
+  // sand the wind carries inland, fading over zones.sandy metres. The one definition of the ground: world/heightmap.js keeps it per
+  // sample of its grids, for the GPU and for placement alike, and the zones
+  // follow from it (zoneFrom).
+  const rockSlope = zones.rockSlope.map((deg) => Math.tan(deg * DEG));
+  const sandSlope = zones.sandSlope.map((deg) => Math.tan(deg * DEG));
+  function groundOf(s, slope, out = {}) {
+    const { coast: d, beach: b, a, o } = s;
+    // The bands' edges inland swing with the same slow noise, so they keep their order.
     const n = zoneNoise(a / zones.wavelength + 70.3, o / zones.wavelength - 15.1);
-    const shoreBand = zones.wetSand + zones.drySand + zones.drySandSwing * n;
-    if (d < shoreBand) return b < 0.5 ? 'rock' : d < zones.wetSand ? 'wet-sand' : 'dry-sand';
-    if (d < shoreBand + zones.scrub) return 'scrub';
-    if (d < shoreBand + zones.scrub + zones.palmBelt + zones.palmBeltSwing * n) return 'palm-belt';
-    return 'jungle';
+    const into = d - (zones.shore + zones.shoreSwing * n);
+    const palmBelt = zones.palmBelt + zones.palmBeltSwing * n;
+    const band = into < zones.scrub ? into / zones.scrub : 1 + (into - zones.scrub) / palmBelt;
+    // The shore's band is sand as far as the shore is sandy and the ground
+    // flat enough for sand to lie on, and rock otherwise; inland, ground too
+    // steep for soil is rock.
+    const onShore = 1 - smoothstep(-zones.edge, zones.edge, into);
+    const sand = smoothstep(0.4, 0.6, b) * (1 - smoothstep(sandSlope[0], sandSlope[1], slope));
+    const steep = smoothstep(rockSlope[0], rockSlope[1], slope);
+    out.sand = onShore * sand;
+    out.rock = onShore * (1 - sand) + (1 - onShore) * steep;
+    out.sandy = smoothstep(0.4, 0.6, b) * (1 - smoothstep(0, zones.sandy, into));
+    out.band = Math.min(Math.max(band, BAND_RANGE[0]), BAND_RANGE[1]);
+    out.reef = Math.min(Math.max(s.reef, -REEF_RANGE), REEF_RANGE);
+    return out;
   }
+
+  // How lush the green is at a point, 0 open to 1 lush, given its ground
+  // (groundOf) and its relief: how many metres it stands above (+) or below
+  // (-) the ground round it, within zones.lush.radius (world/heightmap.js
+  // measures it on its grids). Open behind the beach and lusher into the
+  // jungle; lush in hollows and gullies, where water and soil gather, open on
+  // ridges and spurs; and in patches a few hundred metres across. What grows
+  // follows it (Stages 8-9), and the green's look (chunks/green.glsl).
+  function lushOf(g, relief, a, o) {
+    const { bands, relief: perMetre, patches, wavelength } = zones.lush;
+    const palm = smoothstep(0.5, 1.5, g.band);
+    const jungle = smoothstep(1.67, 2.33, g.band);
+    let lush = bands[0] + (bands[1] - bands[0]) * palm;
+    lush += (bands[2] - lush) * jungle;
+    lush -= perMetre * relief;
+    lush += patches * fbm(lushNoise, a / wavelength + 31.7, o / wavelength - 8.9, 2);
+    return Math.min(Math.max(lush, 0), 1);
+  }
+
+  // The zone of a point from its ground (groundOf) and its height: whichever
+  // of sand, rock and green it is most of, ties going to rock.
+  function zoneFrom(g, height) {
+    if (height < 0) {
+      if (g.reef < -zones.reefBack) return 'lagoon';
+      return height < -zones.reefDeep ? (g.reef < 0 ? 'lagoon' : 'ocean') : 'reef';
+    }
+    const green = 1 - g.sand - g.rock;
+    if (g.rock >= g.sand && g.rock >= green) return 'rock';
+    if (g.sand >= green) return height < zones.wetSand ? 'wet-sand' : 'dry-sand';
+    return g.band < 1 ? 'scrub' : g.band < 2 ? 'palm-belt' : 'jungle';
+  }
+
+  // The zone of a sampled point, given the ground's slope there.
+  const zoneOf = (s, slope) => zoneFrom(groundOf(s, slope), s.height);
 
   const scratch = {};
   const heightAt = (x, z) => evaluate(side * (x * right[0] + z * right[1]), x * forward[0] + z * forward[1], scratch).height;
@@ -394,8 +447,14 @@ export function createIsland(rng, settings = config.world.island, sunsetYaw = co
     // shore (positive inland), how sandy the shore is (0 to 1), the distance out
     // to sea from the reef's crest, and the point in the cove's frame.
     sample: (x, z) => sampleCove(...toCove(x, z)),
-    // The zone of a sample, given its slope; and at world x, z (five evaluations,
-    // about 7 µs: too slow to place plants by the hundred thousand).
+    // The ground of a sample, given its slope (groundOf); the zone of a ground
+    // and height; the zone of a sample, given its slope; and at world x, z
+    // (five evaluations, about 7 µs: placement reads the drawn ground's,
+    // world/heightmap.js zoneAt, which is also what the GPU draws).
+    groundOf,
+    // How lush the green is, given the ground and its relief (lushOf).
+    lushOf,
+    zoneFrom,
     zoneOf,
     zone: (x, z) => zoneOf(sampleCove(...toCove(x, z)), slope(x, z)),
     slope,
