@@ -1,12 +1,12 @@
 // The light state's maths, pure and Node-importable: the sky's light as
 // spherical harmonics, the share of the sun's disk above the horizon, and the
-// exposure. sky/probe.frag projects the sky with the same basis.
+// exposure. sky/probe.wgsl projects the sky with the same basis.
 //
 // All light is in units of the sun's illuminance above the atmosphere
 // (config.sky.atmosphere.sunIlluminance).
 
 // The nine real spherical harmonics up to l = 2 at unit direction [x, y, z]:
-// chunks/sh.glsl's shBasis(), in the same order (fixtures/maths.js checks it).
+// chunks/sh.wgsl's shBasis(), in the same order (fixtures/maths.js checks it).
 export function shBasis([x, y, z]) {
   return [
     0.282095,
@@ -59,7 +59,7 @@ export function hazeAmount(elevation, { low, fullAbove }) {
 // with the sun `elevation` radians up and `haze` of the haze there
 // (hazeAmount): through the air towards the sun's centre, kept up to the
 // horizon, which dips as h grows, times the share of the disk above it. A
-// march in doubles, apart from the GPU's (atmosphere.glsl sunAtHeight): the
+// march in doubles, apart from the GPU's (atmosphere.wgsl sunAtHeight): the
 // haze fixture holds the sunlight table to it. `atmosphere`: config.sky.atmosphere.
 export function sunAtHeight(h, elevation, atmosphere, haze, steps = 4000) {
   const { groundRadius: ground, topRadius: top, wavelengths } = atmosphere;
@@ -86,10 +86,10 @@ export function sunAtHeight(h, elevation, atmosphere, haze, steps = 4000) {
   return depth.map((d, c) => atmosphere.sunIlluminance[c] * Math.exp(-d) * disk);
 }
 
-// The light state from the probe (probe.frag, 10 RGBA texels) for the sun at
+// The light state from the probe (probe.wgsl, 10 RGBA texels) for the sun at
 // `sun` (sky/sun.js position()): the sun's radiance as it reaches the scene,
 // the sky's light as SH (the sky alone), the light on level ground in the open,
-// which the ground sends back up (chunks/lighting.glsl), the illuminance the
+// which the ground sends back up (chunks/lighting.wgsl), the illuminance the
 // exposure is set for, and the exposure (config.sky.exposure).
 //
 // The illuminance is the mean of that on level ground and on an upright

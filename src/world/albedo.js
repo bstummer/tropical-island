@@ -1,16 +1,16 @@
 // The ground's albedo seen from above, over one of world/heightmap.js's grids:
-// what sends the light on the ground back up into shade (chunks/lighting.glsl
+// what sends the light on the ground back up into shade (chunks/lighting.wgsl
 // groundAlbedo). The surfaces' albedos (config.world.terrain.albedo) mixed as
 // the ground has them (world/island.js groundOf and lushOf) and as
-// world/terrain.frag mixes them on average: sand wet below the waves' reach,
-// the green as chunks/green.glsl averages it; and the sea's albedo over
+// world/terrain.wgsl mixes them on average: sand wet below the waves' reach,
+// the green as chunks/green.wgsl averages it; and the sea's albedo over
 // water. Pure.
 import { smoothstep } from './island.js';
 import { GROUND } from './heightmap.js';
 import { greenByBand, greenCover } from './green.js';
 
 // How wet sand is at this height above the sea, 1 under a film of water and 0
-// dry: chunks/sand.glsl's sandWetness, with `film` and `dry` from
+// dry: the twin of chunks/wet.wgsl's groundWet, with `film` and `dry` from
 // config.world.terrain.sand.wetness and `wetHeight` the wet sand's zone.
 export function sandWetness(height, { film, dry }, wetHeight) {
   if (height <= film) return 1;
@@ -19,7 +19,7 @@ export function sandWetness(height, { film, dry }, wetHeight) {
 }
 
 // The green's albedo on average at this band, how lush and how sandy
-// (chunks/green.glsl greenAlbedo), into `out`: of its living green and bare
+// (chunks/green.wgsl greenAlbedo), into `out`: of its living green and bare
 // ground (sand, soil, litter), by their shares per band
 // (config.world.terrain.green; world/green.js).
 export function greenAlbedo(band, lush, sandy, { albedo, green }, out = [0, 0, 0]) {
@@ -36,7 +36,7 @@ export function greenAlbedo(band, lush, sandy, { albedo, green }, out = [0, 0, 0
 
 // The albedo of ground with these shares of sand and rock, this band, this
 // height above the sea, this lush and sandy, into `out` (linear RGB). The
-// sand darkens with its wetness as chunks/sand.glsl darkens it.
+// sand darkens with its wetness as chunks/sand.wgsl darkens it.
 export function albedoOf(sand, rock, band, height, lush, sandy, surfaces, out = [0, 0, 0]) {
   const { albedo, wetness, wetHeight, sea } = surfaces;
   if (height < 0) {

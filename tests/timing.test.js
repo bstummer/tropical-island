@@ -21,7 +21,7 @@ test('frame summaries: a hitch shows in p95 and max, not in the median', () => {
 });
 
 const counts = { drawCalls: 4, triangles: 162208, passes: 2 };
-const memory = { programs: 4, renderTargetBytes: 88 * 1024 * 1024, textureBytes: 0 };
+const memory = { pipelines: 4, renderTargetBytes: 88 * 1024 * 1024, textureBytes: 0 };
 
 test('the readout shows timing, GPU time when there is one, counts, memory, and where the camera is', () => {
   const where = [3.111, 2.64, -11.59];
@@ -29,7 +29,7 @@ test('the readout shows timing, GPU time when there is one, counts, memory, and 
   const lines = text.split('\n');
   assert.equal(lines.length, 4);
   assert.match(lines[0], /^16\.5 ms · 61 fps · GPU n\/a$/);
-  assert.match(lines[1], /4 draws · 162\.2k tris · 2 passes · 4 programs/);
+  assert.match(lines[1], /4 draws · 162\.2k tris · 2 passes · 4 pipelines/);
   assert.match(lines[2], /RT 88 MB · tex 0 MB · high 1600×900 · MSAA 4/);
   assert.equal(lines[3], 'at 3.11, 2.64, -11.59 · 1.70 m above the ground');
   const other = { frames: null, gpu: summarizeFrames([2.5]), counts, memory, preset: 'low', size: { width: 1, height: 1 }, msaa: 2, where, aboveGround: null };
@@ -44,19 +44,18 @@ test('the benchmark summary names the machine and has a row per view plus all vi
   ];
   const text = formatBenchmark({
     build: 'abc1234',
-    gpu: 'ANGLE (Test GPU)',
+    gpu: 'nvidia turing',
     browser: 'TestBrowser/1.0',
     screen: { width: 1920, height: 1080, pixelRatio: 1.25, buffer: [2400, 1350] },
     preset: 'high',
     quality: { renderScale: 1, maxPixelRatio: 2 },
     msaa: 4,
-    reversedDepth: true,
     tonemap: 'agx-punchy',
     warmupSeconds: 1,
     seconds: 5,
     results,
   });
-  for (const expected of ['build      abc1234', 'gpu        ANGLE (Test GPU)', 'browser    TestBrowser/1.0', '1920×1080 CSS px × 1.25 → drawing buffer 2400×1350', 'preset     high', 'MSAA 4', 'reversed depth yes']) {
+  for (const expected of ['build      abc1234', 'gpu        nvidia turing', 'browser    TestBrowser/1.0', '1920×1080 CSS px × 1.25 → drawing buffer 2400×1350', 'preset     high', 'MSAA 4', 'tonemap agx-punchy']) {
     assert.ok(text.includes(expected), `missing "${expected}"`);
   }
   const rows = text.split('\n');

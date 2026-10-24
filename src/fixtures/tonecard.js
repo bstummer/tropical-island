@@ -3,19 +3,18 @@
 // a sunset sky with a sun 300 times brighter than paper white, tropical
 // colours at five exposures, a grey ramp and saturated colour ramps over 14
 // stops. Not part of the island.
-import * as THREE from 'three';
-import vertexShader from './tonecard.vert';
-import fragmentShader from './tonecard.frag';
+import { MathUtils } from 'three';
+import shader from './tonecard.wgsl';
+import { Material } from '../gpu/material.js';
+import { plane } from '../gpu/geometry.js';
+import { Mesh } from '../gpu/scene.js';
 
 const DISTANCE = 10; // m
 
 export function create(ctx) {
   const { scene, camera, frame } = ctx;
-  const height = 2 * DISTANCE * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
-  const card = new THREE.Mesh(
-    new THREE.PlaneGeometry(height * (frame.size.width / frame.size.height), height),
-    new THREE.ShaderMaterial({ name: 'fixture-tonecard', vertexShader, fragmentShader, uniforms: { ...frame.uniforms } }),
-  );
+  const height = 2 * DISTANCE * Math.tan(MathUtils.degToRad(camera.fov / 2));
+  const card = new Mesh(plane(height * (frame.size.width / frame.size.height), height), new Material({ name: 'fixture-tonecard', shader }));
   card.position.copy(camera.position);
   card.quaternion.copy(camera.quaternion);
   card.translateZ(-DISTANCE);

@@ -19,7 +19,7 @@ function sphere(rings = 90, azimuths = 180) {
   return out;
 }
 
-// Projects radiance(dir) -> [r, g, b] onto the basis, as probe.frag does.
+// Projects radiance(dir) -> [r, g, b] onto the basis, as probe.wgsl does.
 function project(radiance) {
   const c = Array.from({ length: 9 }, () => [0, 0, 0]);
   for (const { dir, weight } of sphere()) {
@@ -73,7 +73,7 @@ test('diskAbove: none of the sun below the horizon, half on it, all above', () =
   }
 });
 
-// A probe as probe.frag reads it back: the sun's radiance, then a uniform sky.
+// A probe as probe.wgsl reads it back: the sun's radiance, then a uniform sky.
 function probe(sun, sky) {
   const coefficients = project(() => sky);
   return Float32Array.from([...sun, 1, ...coefficients.flatMap((c) => [...c, 1])]);

@@ -97,7 +97,7 @@ test('source lint flags forbidden time and randomness APIs', (t) => {
     'a.js': 'export const x = Math.random();\n',
     'b.js': 'export const now = () => Date.now() + new Date().getTime();\n',
     'c.js': 'export const t = performance.now();\n',
-    'd.js': "import * as THREE from 'three';\nexport const c = new THREE.Clock();\nexport const r = THREE.MathUtils.randFloat(0, 1);\n",
+    'd.js': "import { MathUtils } from 'three';\nexport const c = new Clock();\nexport const r = MathUtils.randFloat(0, 1);\n",
   });
   assert.deepEqual(ids(checkSources(dir)), ['date', 'math-random', 'performance-now', 'three-clock', 'three-random']);
   assert.equal(checkSources(dir).filter((f) => f.rule === 'date').length, 2);
@@ -106,18 +106,19 @@ test('source lint flags forbidden time and randomness APIs', (t) => {
 test('source lint flags three.js methods that call Math.random internally', (t) => {
   const dir = tempDir(t, {
     'scatter.js': [
-      "import * as THREE from 'three';",
-      'export const tilt = new THREE.Vector3().randomDirection();',
-      'export const spin = new THREE.Quaternion().random();',
-      'export const offset = new THREE.Vector2().random ();',
+      "import { Quaternion, Vector2, Vector3 } from 'three';",
+      'export const tilt = new Vector3().randomDirection();',
+      'export const spin = new Quaternion().random();',
+      'export const offset = new Vector2().random ();',
+      'export const id = MathUtils.generateUUID();',
       'export const once = Math.random(); // reported by its own rule only',
       'export const fine = { randomize: () => 1 }.randomize();',
     ].join('\n'),
   });
   const failures = checkSources(dir);
-  assert.equal(failures.filter((f) => f.rule === 'three-random').length, 3);
+  assert.equal(failures.filter((f) => f.rule === 'three-random').length, 4);
   assert.equal(failures.filter((f) => f.rule === 'math-random').length, 1);
-  assert.equal(failures.length, 4);
+  assert.equal(failures.length, 5);
 });
 
 test('source lint allows performance.now only in core/clock.js', (t) => {
@@ -133,7 +134,7 @@ test('source lint allows performance.now only in core/clock.js', (t) => {
 test('source lint ignores comments and non-JS files', (t) => {
   const dir = tempDir(t, {
     'doc.js': '// Never call Math.random() or Date.now() here.\n/* performance.now() is for clock.js */\nexport {};\n',
-    'shader.glsl': 'float r = Math.random();',
+    'shader.wgsl': 'float r = Math.random();',
   });
   assert.deepEqual(checkSources(dir), []);
 });
@@ -147,6 +148,32 @@ test('source lint sees code after comment markers inside strings and regexes', (
     'template.js': 'const path = `src/*`;\nexport const d = new THREE.Clock();\n/* the end */\n',
   });
   assert.deepEqual(ids(checkSources(dir)), ['date', 'math-random', 'performance-now', 'three-clock']);
+});
+
+test('source lint takes only maths from three.js, by name', (t) => {
+  const dir = tempDir(t, {
+    'ok.js': "import { Vector3, Matrix4 as M, MathUtils } from 'three';\n// import { WebGLRenderer } from 'three';\nexport { Color } from 'three';\n",
+    'lines.js': "import {\n  Vector2,\n  Frustum,\n} from 'three';\n",
+    'renderer.js': "import { Vector3, WebGLRenderer } from 'three';\n",
+    'namespace.js': "import * as THREE from 'three';\n",
+    'addons.js': "import { OrbitControls } from 'three/addons/controls/OrbitControls.js';\n",
+    'webgpu.js': "import { Vector3 } from 'three/webgpu';\nimport 'three';\n",
+    'reexport.js': "export * from 'three';\n",
+    'tight.js': "import{WebGLRenderer}from'three';\nexport*from\"three\";\n",
+    'dynamic.js': "export const load = () => import('three');\nexport const later = async () => await import( `three/webgpu` );\n",
+    'path.js': "import { Mesh } from '../node_modules/three/build/three.module.js';\nimport { Scene } from '/node_modules/three/src/Three.js';\n",
+    'typed.ts': "import { WebGLRenderer } from 'three';\n",
+    'others.js': "import { three } from './three.js';\nimport { a } from './threejs-like.js';\nexport { b } from './x.js';\n",
+  });
+  const failures = checkSources(dir);
+  assert.deepEqual(ids(failures), ['three-maths']);
+  assert.deepEqual(
+    failures.map((f) => f.message.match(/src\/(\S+)/)[1]).sort(),
+    [
+      ...['addons.js', 'dynamic.js', 'dynamic.js', 'namespace.js', 'path.js', 'path.js', 'reexport.js', 'renderer.js'],
+      ...['tight.js', 'tight.js', 'typed.ts', 'webgpu.js', 'webgpu.js'],
+    ],
+  );
 });
 
 test('blankComments keeps offsets and leaves divisions alone', () => {

@@ -13,7 +13,7 @@
 // points would give many small facets of one size; planes give a few large
 // faces, straight edges and facets of every size, and keep the shape closed.
 // The rock shader adds cracks, pits and grain in world space
-// (chunks/rock.glsl), so the meshes carry only the form.
+// (chunks/rock.wgsl), so the meshes carry only the form.
 //
 // Each prototype lies in its resting pose: a block on its bottom, a column on
 // its broadest side with its axis along x. y runs from 0, its lowest point,

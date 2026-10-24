@@ -17,9 +17,14 @@
 // changed in the page), and the game runs for a few frames in player mode (no
 // ?capture) and as the benchmark.
 // Compare writes screenshots/compare/<A>_vs_<B>.png: A | B | diff for every view.
-// Exits non-zero on console errors, page errors, shader and WebGL errors, a lost
-// context, network requests, capture errors, timeouts or a failed check, in
+// Exits non-zero on console errors, page errors, shader and WebGPU errors, a lost
+// device, network requests, capture errors, timeouts or a failed check, in
 // either mode. Limits only warn.
+//
+// --gl picks the WebGPU adapter: hardware (the machine's GPU) or swiftshader
+// (Chromium's software GPU, which CI uses; only Linux has it: on Windows, run
+// the tool in a Linux container with node tools/linux.js); auto takes the
+// hardware and falls back to SwiftShader.
 // The pure helpers are exported for tests/screenshot.test.js.
 import { chromium } from 'playwright';
 import { execFileSync } from 'node:child_process';
@@ -30,7 +35,7 @@ import { views as allViews } from '../src/views.js';
 import { config } from '../src/config.js';
 import { sunPath } from '../src/sky/sun.js';
 import { measureCost, measureShimmer, measureView, renderFrame, stopAnalysis } from './measure.js';
-import { decodeDataUrl, encodePng } from './png.js';
+import { decodeDataUrl, decodePng, encodePng } from './png.js';
 import { bandedShare, bandingView, brightestNear, meanColor, overdrawImage } from './image.js';
 import { blendLayout, cardSpan } from '../src/fixtures/blend-layout.js';
 import { coefficients, directions, texels } from '../src/fixtures/maths-cases.js';
@@ -43,25 +48,31 @@ const SHOTS = join(ROOT, 'screenshots');
 const READY_TIMEOUT_MS = 60_000;
 // Player mode and the benchmark draw in the same browser as the checks running
 // beside them, whose full-size frames take seconds each on SwiftShader: they
-// fail only once a page draws no frame for this long (untilDone), however
-// long they take.
+// fail once a page draws no frame for this long (untilDone), not when slow.
 const STALL_MS = 60_000;
+// And what they wait for must happen within this, frames or not: a game that
+// never starts drawing (its loop waits for the sky's light) fails, not hangs.
+const DONE_MS = 600_000;
 // Player mode and the benchmark only have to work: small, as SwiftShader draws every pixel on the CPU.
-const PLAYER_MODE = { frames: 30, viewport: { width: 320, height: 180 } };
+// meanLevels: how far the canvas's mean colour may be from the capture's of the same view.
+const PLAYER_MODE = { frames: 30, viewport: { width: 320, height: 180 }, meanLevels: 4 };
 const BENCH_SECONDS = 0.25; // per view: enough to prove the benchmark works
 const CHECKS_AT_ONCE = 2; // see runChecks()
 const SHEET_ORIGIN = 'http://contact-sheet.local';
 
+// WebGPU in the headless shell needs --enable-unsafe-webgpu. On Windows its real
+// GPU (D3D12) needs Dawn to compile with FXC: the shell ships without DXC.
 const HARDWARE_ARGS = {
-  win32: ['--use-angle=d3d11'],
-  darwin: ['--use-angle=metal'],
-  linux: ['--use-angle=vulkan', '--enable-features=Vulkan'],
+  win32: ['--disable-dawn-features=use_dxc'],
+  darwin: [],
+  linux: ['--enable-features=Vulkan'],
 };
 const BACKENDS = {
-  hardware: ['--enable-gpu', '--ignore-gpu-blocklist', ...(HARDWARE_ARGS[process.platform] ?? [])],
-  swiftshader: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'],
+  hardware: ['--enable-unsafe-webgpu', '--enable-gpu', '--ignore-gpu-blocklist', ...(HARDWARE_ARGS[process.platform] ?? [])],
+  // The compositor shows a WebGPU canvas through GL: without ANGLE on SwiftShader too, presenting loses the device.
+  swiftshader: ['--enable-unsafe-webgpu', '--enable-features=Vulkan', '--use-vulkan=swiftshader', '--use-webgpu-adapter=swiftshader', '--use-angle=swiftshader'],
 };
-const SOFTWARE_GL = /swiftshader|llvmpipe|softpipe|software|basic render/i;
+const SOFTWARE_GPU = /swiftshader|llvmpipe|softpipe|software|basic render|warp/i;
 
 const OPTIONS = new Set(['views', 'label', 'size', 't', 'time', 'seed', 'quality', 'tonemap', 'exposure', 'fixture', 'gl']);
 const FLAGS = new Set(['checks']);
@@ -94,7 +105,7 @@ async function capture(args) {
   }
 
   const { browser, kind, gl } = await launch(args.gl ?? 'auto');
-  console.log(`screenshot: WebGL2 backend = ${kind} (${gl}), Chromium ${browser.version()}`);
+  console.log(`screenshot: WebGPU adapter = ${kind} (${gl}), Chromium ${browser.version()}`);
   console.log(`screenshot: ${views.length} view(s) at ${width}x${height} -> ${rel(outDir)}${args.checks ? ', then the checks' : ''}`);
 
   const started = Date.now();
@@ -133,7 +144,8 @@ async function capture(args) {
         delete check.consoleWarnings;
       }
       outputs.push(join(outDir, 'tool-check', '*.png'));
-      report('player mode', player.ms, `${views[0].name}, real-time loop without ?capture`, player.problems, player.consoleWarnings);
+      const canvas = player.canvasOff === null ? '' : `, its canvas ${player.canvasOff.toFixed(1)} levels off the capture's mean colour`;
+      report('player mode', player.ms, `${views[0].name}, real-time loop without ?capture${canvas}`, player.problems, player.consoleWarnings);
       report('benchmark', bench.ms, bench.detail, bench.problems, bench.consoleWarnings);
     }
 
@@ -278,7 +290,7 @@ function summarize(result) {
   const gpu = m.gpuMs == null ? '' : ` · GPU ${m.gpuMs.toFixed(2)} ms`;
   return (
     `shimmer ${percent(m.shimmerPercent, 2)} · banding ${percent(m.bandingPercent, 2)} · motion ${percent(m.motionPercent, 1)} · ` +
-    `${count(m.drawCalls, 'draw')} · ${tris(m.triangles)} tris · ${count(m.passes, 'pass', 'passes')} · ${count(m.programs, 'program')} · ` +
+    `${count(m.drawCalls, 'draw')} · ${tris(m.triangles)} tris · ${count(m.passes, 'pass', 'passes')} · ${count(m.pipelines, 'pipeline')} · ` +
     `overdraw ${m.overdraw.toFixed(2)} · tex ${megabytes(m.textureMB)} · RT ${megabytes(m.renderTargetMB)}${gpu} · ` +
     `${Math.round(result.timing.frameMs)} ms/frame`
   );
@@ -320,10 +332,18 @@ function shoot(page, path) {
 async function runChecks(context, fileUrl, query, view, outDir) {
   const tasks = [
     () => checkBenchmark(context, fileUrl, query, outDir),
-    () => checkPlayerMode(context, fileUrl, query, view),
+    () => checkPlayerMode(context, fileUrl, query, view, outDir),
     ...toolCheckTasks(context, fileUrl, query, view, outDir),
   ];
-  const [bench, player, ...tools] = await inParallel(tasks, CHECKS_AT_ONCE);
+  // SCREENSHOT_PROGRESS=1 says when each check is done, for finding one that hangs.
+  const progress = process.env.SCREENSHOT_PROGRESS
+    ? tasks.map((task, i) => async () => {
+        const result = await task();
+        console.log(`  … ${result.name ?? ['benchmark', 'player mode'][i]} done in ${result.ms} ms`);
+        return result;
+      })
+    : tasks;
+  const [bench, player, ...tools] = await inParallel(progress, CHECKS_AT_ONCE);
   return { toolChecks: tools, player, bench };
 }
 
@@ -382,14 +402,6 @@ function toolCheckTasks(context, fileUrl, query, view, outDir) {
     // 0.13% of the frame as built (SwiftShader lets a few far pixels of the lower
     // plane through; hardware GL shows none), 42% without reversed depth.
     () => checkClean(context, fileUrl, { ...params, fixture: 'depth' }, dir, 'two planes 5 cm apart, from a hilltop'),
-    // Browsers without EXT_clip_control (Firefox) get the fallback depth set-up,
-    // which no other run exercises. Its far z-fighting is known (PLAN.md Stage
-    // 18), so only errors fail this check, and the share is reported.
-    () => checkFixture(context, fileUrl, { ...params, fixture: 'depth', depth: 'fallback', name: 'depth fallback' }, async (page, info, problems) => {
-      const { percent } = await measureShimmer(page, info, join(dir, 'depth-fallback.png'));
-      if (info.reversedDepth) problems.push({ kind: 'tool check', text: 'depth=fallback still renders with reversed depth' });
-      return `the depth fixture without EXT_clip_control (Firefox): ${percent.toFixed(2)}% of the frame shimmers, not limited yet`;
-    }),
     () => checkErrors(context, fileUrl, params),
     // Slow gradients must come out dithered, without bands.
     () => checkFixture(context, fileUrl, { ...params, fixture: 'gradient' }, async (page, info, problems) => {
@@ -524,8 +536,8 @@ function toolCheckTasks(context, fileUrl, query, view, outDir) {
     ),
     () => checkFixture(context, fileUrl, { ...params, fixture: 'leaky' }, async (page, info, problems) => {
       const { leaks, trip } = await qualityRoundTrip(page, query);
-      // It forgets a texture, a render target (a framebuffer), a mesh in the scene and the scene's fog.
-      const expected = ['Texture', 'Framebuffer', 'left in the scene', 'scene.fog'];
+      // It forgets a texture, a render target and a mesh in the scene.
+      const expected = ['Texture', 'RenderTarget', 'left in the scene'];
       if (!expected.every((what) => leaks.some((leak) => leak.includes(what)))) {
         problems.push({ kind: 'tool check', text: `leaky fixture: ${trip} reports only ${leaks.join(', ') || 'nothing'}` });
       }
@@ -568,7 +580,7 @@ async function changeTime(context, fileUrl, params, page, time) {
 // that would pass every measurement, must still fail a capture: a shader that
 // doesn't compile, a material without sceneOutput() and one that blends outside
 // the translucent pass, all out of sight
-// (src/fixtures/broken.js), then a bad WebGL call and a lost context. Those
+// (src/fixtures/broken.js), then a validation error and a lost device. Those
 // problems are expected here; anything else on the page still fails the check.
 async function checkErrors(context, fileUrl, params) {
   const started = Date.now();
@@ -577,16 +589,19 @@ async function checkErrors(context, fileUrl, params) {
     ['a hidden shader that fails to compile', (p) => p.kind === 'shader error' && /fixture-broken/.test(p.text)],
     ['a material without sceneOutput()', (p) => /without sceneOutput\(\): fixture-unwrapped/.test(p.text)],
     ['a material that blends outside the translucent pass', (p) => /blend outside the translucent pass.*: fixture-blended/.test(p.text)],
-    ['a bad WebGL call', (p) => p.kind === 'webgl error' && /INVALID_ENUM/.test(p.text)],
-    ['a lost context', (p) => p.kind === 'context lost'],
+    ['a validation error', (p) => p.kind === 'webgpu error' && /MAP_WRITE|MapWrite|usage/i.test(p.text)],
+    // The browser reports it too, as a console warning: proves GPU_ERROR still knows its words.
+    ["the browser's warning of it", (p) => p.kind === 'webgpu warning' && /MAP_WRITE|MapWrite|usage/i.test(p.text)],
+    ['a lost device', (p) => p.kind === 'device lost'],
   ];
   try {
-    await page.evaluate(() => {
-      const gl = document.getElementById('view').getContext('webgl2');
-      gl.bindTexture(0x1234, null); // no such target: INVALID_ENUM
-      gl.getExtension('WEBGL_lose_context').loseContext();
+    await page.evaluate(async () => {
+      const { device } = document.getElementById('view').getContext('webgpu').getConfiguration();
+      device.createBuffer({ size: 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.MAP_WRITE }); // not allowed together
+      await new Promise((resolve) => setTimeout(resolve, 100)); // the error arrives on its own
+      device.destroy();
+      await device.lost;
     });
-    await page.waitForFunction(() => document.getElementById('view').getContext('webgl2').isContextLost());
     await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 100))); // for the console messages to arrive
   } catch (err) {
     problems.push(classify(err.message.split('\n')[0], 'capture error'));
@@ -630,7 +645,6 @@ async function qualityRoundTrip(page, query) {
   const left = await page.evaluate(() => window.__CAPTURE__.teardown());
   const leaks = resourceLeaks(before, after);
   if (left.sceneObjects) leaks.push(`${left.sceneObjects} object(s) left in the scene`);
-  for (const setting of left.sceneSettings) leaks.push(`scene.${setting} left set`);
   return { leaks, samePicture, trip: `${home} → ${away} (and a resize) → ${home}` };
 }
 
@@ -710,7 +724,7 @@ export function rockProblems(r, { offsets, vertices, pixels }) {
   const problems = [];
   if (!(r?.offsets?.gpu <= offsets)) problems.push(`the GPU's offsets vs their JS twin off by ${r?.offsets?.gpu?.toExponential(1)} m (limit ${offsets})`);
   if (!(r?.offsets?.mistaken > offsets)) problems.push(`offsets read from the next rock's block are only ${r?.offsets?.mistaken?.toExponential(1)} m off, within the limit: the check misses it`);
-  if (!(r?.vertices?.gpu <= vertices)) problems.push(`world/rocks.vert draws rocks ${r?.vertices?.gpu?.toExponential(1)} m off their twin's surface (limit ${vertices})`);
+  if (!(r?.vertices?.gpu <= vertices)) problems.push(`world/rocks.wgsl draws rocks ${r?.vertices?.gpu?.toExponential(1)} m off their twin's surface (limit ${vertices})`);
   if (!(r?.vertices?.mistaken > vertices)) problems.push(`rocks turned the wrong way are only ${r?.vertices?.mistaken?.toExponential(1)} m off, within the limit: the check misses it`);
   if (!(r?.vertices?.pixels >= pixels)) problems.push(`only ${r?.vertices?.pixels} pixels of rocks drawn (at least ${pixels}): the check measures too little`);
   return problems;
@@ -762,7 +776,7 @@ export function hazeProblems(haze, limit, { high = false, sunOnly = false } = {}
   return problems;
 }
 
-// What grew between two __CAPTURE__.resources() snapshots: live WebGL objects
+// What grew between two __CAPTURE__.resources() snapshots: live GPU objects
 // by kind and memory, as short phrases ("+2 Texture", "+0.2 MB textures").
 export function resourceLeaks(before, after) {
   const leaks = [];
@@ -835,7 +849,7 @@ const METRIC_LABELS = {
   drawCalls: ['draw calls', String],
   triangles: ['triangles', (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(2)} M` : `${(n / 1e3).toFixed(1)} k`)],
   passes: ['render passes', String],
-  programs: ['shader programs', String],
+  pipelines: ['pipelines', String],
   overdraw: ['overdraw', (n) => `${n.toFixed(2)} fragments/pixel`],
   textureMB: ['texture memory', megabytes],
   renderTargetMB: ['render-target memory', megabytes],
@@ -851,7 +865,7 @@ export function describeWarning({ metric, value, limit }) {
 // Capture mode freezes time and skips input, so it never runs the game the way
 // players get it. Run it that way for a few frames: no errors or requests, and
 // the start screen must be up.
-async function checkPlayerMode(context, fileUrl, query, view) {
+async function checkPlayerMode(context, fileUrl, query, view, outDir) {
   const page = await context.newPage();
   await page.setViewportSize(PLAYER_MODE.viewport);
   await stubPointerLock(page);
@@ -860,6 +874,7 @@ async function checkPlayerMode(context, fileUrl, query, view) {
   const params = new URLSearchParams({ ...query, view: view.name, stats: '1' }); // with the frame readout
   params.delete('capture');
   const started = Date.now();
+  let canvasOff = null; // how far the canvas's mean colour is from the capture's
   try {
     await page.goto(`${fileUrl}?${params}`);
     await untilDone(page, (frames) => window.__FRAMES__ >= frames, PLAYER_MODE.frames);
@@ -873,6 +888,20 @@ async function checkPlayerMode(context, fileUrl, query, view) {
     await page.keyboard.press(config.readout.key); // a synthetic key event in the page, not the OS keyboard
     if (await page.evaluate(() => document.getElementById('readout').checkVisibility())) {
       problems.push({ kind: 'player mode', text: `${config.readout.key} does not hide the frame readout` });
+    }
+    // What the player sees, the canvas without the overlays, against the capture of
+    // the same view (the same framing, more pixels): the game draws its output
+    // straight onto the canvas, captures into a texture of their own (post/frame.js).
+    const reference = join(outDir, `${view.name}.png`);
+    if (existsSync(reference)) {
+      const shown = await canvasMean(page);
+      const captured = decodePng(readFileSync(reference));
+      const expected = meanColor(captured, 0, 0, captured.width, captured.height);
+      const off = (canvasOff = Math.max(...shown.map((v, c) => Math.abs(v - expected[c]))));
+      if (!(off <= PLAYER_MODE.meanLevels)) {
+        const levels = (c) => c.map((v) => v.toFixed(1)).join(', ');
+        problems.push({ kind: 'player mode', text: `the canvas's mean colour (${levels(shown)}) is ${off.toFixed(1)} levels off the capture's (${levels(expected)}; limit ${PLAYER_MODE.meanLevels})` });
+      }
     }
     // Start, walk on the ground for a few frames, and fly again. The pointer
     // lock is stubbed (stubPointerLock), so no real mouse is captured. The
@@ -910,7 +939,19 @@ async function checkPlayerMode(context, fileUrl, query, view) {
     problems.push({ kind: 'player mode', text: err.message.split('\n')[0] });
   }
   await page.close();
-  return { problems, consoleWarnings, ms: Date.now() - started };
+  return { problems, consoleWarnings, ms: Date.now() - started, canvasOff };
+}
+
+// The mean colour of the page's canvas as shown, with everything over it hidden for the shot.
+async function canvasMean(page) {
+  await page.evaluate(() => {
+    for (const el of document.body.children) if (el.id !== 'view') el.style.visibility = 'hidden';
+  });
+  const image = decodePng(await page.locator('#view').screenshot());
+  await page.evaluate(() => {
+    for (const el of document.body.children) el.style.visibility = '';
+  });
+  return meanColor(image, 0, 0, image.width, image.height);
 }
 
 // Counts the page's animation frames into window.__FRAMES__ from its start:
@@ -927,14 +968,16 @@ function countFrames(page) {
 }
 
 // Resolves to what done(arg) returns in the page once it is truthy (it must
-// be serializable). Fails only if the page draws no frame for STALL_MS
-// (countFrames), or closes.
+// be serializable). Fails if the page draws no frame for STALL_MS
+// (countFrames), if it isn't done within DONE_MS, or if it closes.
 async function untilDone(page, done, arg) {
   let frames = -1;
   let since = Date.now();
+  const deadline = since + DONE_MS;
   for (;;) {
     const value = await page.evaluate(done, arg);
     if (value) return value;
+    if (Date.now() > deadline) throw new Error(`not done in ${DONE_MS / 1000} s`);
     const now = await page.evaluate(() => window.__FRAMES__);
     if (now !== frames) {
       frames = now;
@@ -1008,18 +1051,19 @@ export function benchmarkProblems(summary, results, viewNames) {
   return problems.map((text) => ({ kind: 'benchmark', text }));
 }
 
-// WebGL errors, which the browser reports as console warnings. Its performance
-// notes ("GPU stall due to ReadPixels") stay warnings.
-const WEBGL_ERROR = /^WebGL: (INVALID_|CONTEXT_LOST|too many errors)|\bGL_INVALID_[A-Z_]+|RENDER WARNING/;
+// WebGPU errors the browser reports as console warnings (the game reports the
+// ones it hears of as errors itself, gpu/device.js). Dawn ends each with what it
+// was doing: "While calling [Device].CreateBuffer(...)".
+const GPU_ERROR = /^WebGPU|\[Invalid [A-Z]|GPUValidationError|validation error|While (calling|encoding|validating) \[/i;
 
-// Turns console errors, WebGL errors, page errors and requests for anything but
+// Turns console errors, WebGPU errors, page errors and requests for anything but
 // the built file into problems.
 function watchPage(page, fileUrl) {
   const problems = [];
   const consoleWarnings = [];
   page.on('console', (msg) => {
     if (msg.type() === 'error') problems.push(classify(msg.text()));
-    else if (msg.type() === 'warning' && WEBGL_ERROR.test(msg.text())) problems.push({ kind: 'webgl error', text: msg.text() });
+    else if (msg.type() === 'warning' && GPU_ERROR.test(msg.text())) problems.push({ kind: 'webgpu warning', text: msg.text() });
     else if (msg.type() === 'warning') consoleWarnings.push(msg.text());
   });
   page.on('pageerror', (err) => problems.push({ kind: 'page error', text: err.stack ?? err.message }));
@@ -1048,8 +1092,9 @@ function report(name, ms, detail, problems, consoleWarnings, warnings = []) {
 }
 
 function classify(text, fallback = 'console error') {
-  if (/WebGL context was lost/.test(text)) return { kind: 'context lost', text };
-  if (/shader (error|compile)|WebGLProgram|ERROR: \d+:\d+/i.test(text)) return { kind: 'shader error', text };
+  if (/GPU device was lost/.test(text)) return { kind: 'device lost', text };
+  if (/shader (error|compile)/i.test(text)) return { kind: 'shader error', text };
+  if (/WebGPU error/.test(text)) return { kind: 'webgpu error', text };
   return { kind: fallback, text };
 }
 
@@ -1144,18 +1189,22 @@ async function launch(mode) {
     let browser;
     try {
       // Headless shell only: no `channel:`, never headed. Other modes can clip the user's real mouse on Windows.
+      if (kind === 'swiftshader' && process.platform !== 'linux') {
+        throw new Error('WebGPU has a SwiftShader adapter on Linux only: run this in a Linux container (node tools/linux.js node tools/screenshot.js ...)');
+      }
       browser = await chromium.launch({ headless: true, args: BACKENDS[kind] });
-      const gl = await probeWebGL2(browser);
-      if (!gl) throw new Error('no WebGL2 context');
-      if (kind === 'hardware' && SOFTWARE_GL.test(gl)) throw new Error(`got a software renderer instead (${gl})`);
+      const { gl, fallback } = (await probeWebGPU(browser)) ?? {};
+      if (!gl) throw new Error('no WebGPU adapter');
+      if (kind === 'hardware' && (SOFTWARE_GPU.test(gl) || fallback)) throw new Error(`got a software adapter instead (${gl})`);
+      if (kind === 'swiftshader' && !/swiftshader/i.test(gl)) throw new Error(`got another adapter instead (${gl})`);
       return { browser, kind, gl };
     } catch (err) {
       await browser?.close();
       tried.push(`${kind}: ${explainLaunchError(err.message)}`);
-      if (order.length > 1 && kind === 'hardware') console.log(`screenshot: hardware GL unavailable (${tried.at(-1)}), trying SwiftShader`);
+      if (order.length > 1 && kind === 'hardware') console.log(`screenshot: hardware WebGPU unavailable (${tried.at(-1)}), trying SwiftShader`);
     }
   }
-  throw new Error(`could not start headless Chromium with WebGL2.\n  ${tried.join('\n  ')}`);
+  throw new Error(`could not start headless Chromium with WebGPU.\n  ${tried.join('\n  ')}`);
 }
 
 // Playwright's first error line can be generic ("Target page, context or browser has
@@ -1167,14 +1216,18 @@ export function explainLaunchError(message) {
   return message.split('\n')[0];
 }
 
-async function probeWebGL2(browser) {
+// { gl: the adapter as gpu/device.js describes it ("google swiftshader"),
+// fallback: whether it is a fallback (software) one }, or null without one.
+// WebGPU needs a secure context: the page is the built game's own file:// URL.
+async function probeWebGPU(browser) {
   const page = await browser.newPage();
   try {
-    return await page.evaluate(() => {
-      const gl = document.createElement('canvas').getContext('webgl2');
-      if (!gl) return null;
-      const ext = gl.getExtension('WEBGL_debug_renderer_info');
-      return String(ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER));
+    await page.goto(pathToFileURL(BUILT_HTML).href + '?probe');
+    return await page.evaluate(async () => {
+      const adapter = await navigator.gpu?.requestAdapter({ powerPreference: 'high-performance' });
+      if (!adapter) return null;
+      const { vendor, architecture, device, description, isFallbackAdapter } = adapter.info ?? {};
+      return { gl: [vendor, architecture, device, description].filter(Boolean).join(' ') || 'unknown adapter', fallback: Boolean(isFallbackAdapter) };
     });
   } finally {
     await page.close();

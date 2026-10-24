@@ -1,7 +1,7 @@
 // Seeded 2D gradient noise for the island's shape (world/island.js), and a
 // hash for things scattered one per cell of a grid. The island's noise is JS
 // only: the GPU gets the island as a heightmap. The hash's noise
-// (seededNoise) is chunks/noise.glsl seededNoiseD's twin, bit for bit in its
+// (seededNoise) is chunks/noise.wgsl seededNoiseD's twin, bit for bit in its
 // lattice, for what the GPU draws and placement has to know (world/green.js).
 // Pure and Node-importable.
 
@@ -82,7 +82,7 @@ export function cellBits(i, j, seed) {
 }
 
 // Gradient noise in about [-1, 1] whose lattice's gradients are cellBits of
-// each point and the seed, its halves in [-1, 1]: chunks/noise.glsl
+// each point and the seed, its halves in [-1, 1]: chunks/noise.wgsl
 // seededNoiseD's value.
 export function seededNoise(x, y, seed) {
   const i = Math.floor(x);

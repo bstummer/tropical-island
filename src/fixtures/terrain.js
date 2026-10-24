@@ -1,6 +1,6 @@
 // Tool fixture (?fixture=terrain): the heights and the ground the GPU draws must
 // be the ones JS knows (CLAUDE.md §5). Once the terrain's grids are in, it has
-// the GPU sample them (chunks/terrain.glsl) at seeded points on every level: well
+// the GPU sample them (chunks/terrain.wgsl) at seeded points on every level: well
 // inside each grid, in the bands along all four edges where one fades into
 // the next, and exactly on samples. The points go in as world positions, so
 // the cove's frame is checked too, and some are read from a coarser level, as
@@ -9,22 +9,22 @@
 // differences in window.__TERRAIN__ for tools/screenshot.js: the ground's as
 // shares of its limits (config.capture.terrain.ground), per field and the worst. It also samples half a metre
 // off, a deliberate mistake the comparison has to catch. And the mesh's own
-// height as drawn (chunks/terrain-mesh.glsl) against its JS twin
+// height as drawn (chunks/terrain-mesh.wgsl) against its JS twin
 // (ctx.terrain.meshHeightAtCove), for cameras where the views stand and
 // seeded ones, at points out to the island's far side, where the levels and
 // their morphs change; its deliberate mistake: a camera 30 m off. And the
-// ground's albedo the light from below reads (chunks/lighting.glsl
+// ground's albedo the light from below reads (chunks/lighting.wgsl
 // groundAlbedo, from world/terrain.js's map and its layout) against
 // world/albedo.js's map of the coarsest grid, filtered as the GPU filters it;
 // its deliberate mistake: the map's layout half a texel off. The terrain
 // draws as usual meanwhile. Not part of the island.
-import * as THREE from 'three';
-import vertexShader from '../post/output.vert';
-import fragmentShader from './terrain.frag';
-import meshShader from './terrain-mesh.frag';
-import bounceShader from './terrain-bounce.frag';
+import { DataUtils } from 'three';
+import shader from './terrain.wgsl';
+import meshShader from './terrain-mesh.wgsl';
+import bounceShader from './terrain-bounce.wgsl';
 import { views } from '../views.js';
-import { createFullscreen } from '../post/fullscreen.js';
+import { Material } from '../gpu/material.js';
+import { createTarget, Texture } from '../gpu/texture.js';
 import { albedoMap } from '../world/albedo.js';
 
 const PER_LEVEL = { inside: 48, edge: 32, samples: 16, coarser: 8 };
@@ -32,11 +32,11 @@ const MESH = { cameras: 6, points: 400, reach: 2500, off: 30 }; // seeded camera
 const BOUNCE = { points: 1024, off: 0.5 }; // seeded points over the island; the mistake, in texels
 
 export function create(ctx) {
-  const { renderer, frame, config } = ctx;
+  const { renderer, config } = ctx;
   const { blend, samples } = config.world.terrain;
   const { offset, ground: groundLimits } = config.capture.terrain;
 
-  const ready = ctx.terrain.ready.then(() => {
+  const ready = ctx.terrain.ready.then(async () => {
     const { heightmap, island } = ctx.terrain;
     const r = ctx.rng('fixtures/terrain');
     const points = []; // [a, o, level, from]: from 0 unless read from a coarser level
@@ -65,46 +65,37 @@ export function create(ctx) {
       data.set([x, z, from, 0], 4 * i);
       return [x, z];
     });
-    const pointTexture = new THREE.DataTexture(data, count, 1, THREE.RGBAFormat, THREE.FloatType);
-    pointTexture.needsUpdate = true;
-    const pass = createFullscreen(
-      new THREE.ShaderMaterial({
-        name: 'fixture-terrain',
-        vertexShader,
-        fragmentShader,
-        uniforms: { ...frame.uniforms, uPoints: { value: pointTexture }, uOffset: { value: 0 }, uRead: { value: 0 } },
-      }),
+    const pointTexture = floats(ctx, data, count, 1);
+    const pass = renderer.fullscreen(
+      new Material({ name: 'fixture-terrain', shader, uniforms: { uPoints: { value: pointTexture }, uOffset: { value: 0 }, uRead: { value: 0 } } }),
     );
-    const target = new THREE.WebGLRenderTarget(count, 1, { type: THREE.FloatType, depthBuffer: false });
+    const target = createTarget(renderer.gpu, { name: 'fixture-terrain', width: count, height: 1, format: 'rgba32float' });
     // Per point, the height, or with `ground` the ground: [sand, rock, band,
     // reef, lush, sandy], from two reads.
-    const read = (shift, ground = false) => {
+    const read = async (shift, ground = false) => {
       pass.uniforms.uOffset.value = shift;
       const once = (what) => {
         pass.uniforms.uRead.value = what;
-        pass.render(renderer, target);
-        const pixels = new Float32Array(4 * count);
-        renderer.readRenderTargetPixels(target, 0, 0, count, 1, pixels);
-        renderer.setRenderTarget(null);
-        return pixels;
+        pass.render(target);
+        return target.color.read();
       };
       if (!ground) {
-        const pixels = once(0);
+        const pixels = await once(0);
         return points.map((_, i) => pixels[4 * i]);
       }
-      const first = once(1);
-      const second = once(2);
+      const first = await once(1);
+      const second = await once(2);
       return points.map((_, i) => [...first.slice(4 * i, 4 * i + 4), ...second.slice(4 * i, 4 * i + 2)]);
     };
-    const gpu = read(0);
-    const mistaken = read(offset);
-    const gpuGround = read(0, true);
-    const mistakenGround = read(offset, true);
+    const gpu = await read(0);
+    const mistaken = await read(offset);
+    const gpuGround = await read(0, true);
+    const mistakenGround = await read(offset, true);
     target.dispose();
     pass.dispose();
-    pointTexture.dispose();
-    const mesh = meshCheck(ctx, r);
-    const bounce = bounceCheck(ctx, ctx.rng('fixtures/terrain/bounce'));
+    pointTexture.destroy();
+    const mesh = await meshCheck(ctx, r);
+    const bounce = await bounceCheck(ctx, ctx.rng('fixtures/terrain/bounce'));
 
     const out = {};
     const ground = {};
@@ -152,8 +143,8 @@ export function create(ctx) {
 // The mesh's height as the GPU works it out, against its JS twin: for each
 // camera (cove frame) and point, both; the worst difference in metres, and
 // the worst with the twin's camera MESH.off metres away, which must show.
-function meshCheck(ctx, r) {
-  const { renderer, frame, terrain } = ctx;
+async function meshCheck(ctx, r) {
+  const { renderer, terrain } = ctx;
   const { island } = terrain;
   const cameras = views.map((v) => island.toCove(v.position[0], v.position[2]));
   for (let i = 0; i < MESH.cameras; i++) cameras.push([r.range(-300, 600), r.range(-900, 300)]);
@@ -171,25 +162,16 @@ function meshCheck(ctx, r) {
   const side = Math.ceil(Math.sqrt(count));
   const data = new Float32Array(4 * side * side);
   cases.forEach((c, i) => data.set(c, 4 * i));
-  const input = new THREE.DataTexture(data, side, side, THREE.RGBAFormat, THREE.FloatType);
-  input.needsUpdate = true;
-  const pass = createFullscreen(
-    new THREE.ShaderMaterial({
-      name: 'fixture-terrain-mesh',
-      vertexShader,
-      fragmentShader: meshShader,
-      uniforms: { ...frame.uniforms, ...terrain.mesh.uniforms, uCases: { value: input } },
-      defines: terrain.mesh.defines,
-    }),
+  const input = floats(ctx, data, side, side);
+  const pass = renderer.fullscreen(
+    new Material({ name: 'fixture-terrain-mesh', shader: meshShader, uniforms: { ...terrain.mesh.uniforms, uCases: { value: input } }, overrides: terrain.mesh.overrides }),
   );
-  const target = new THREE.WebGLRenderTarget(side, side, { type: THREE.FloatType, depthBuffer: false });
-  pass.render(renderer, target);
-  const pixels = new Float32Array(4 * side * side);
-  renderer.readRenderTargetPixels(target, 0, 0, side, side, pixels);
-  renderer.setRenderTarget(null);
+  const target = createTarget(renderer.gpu, { name: 'fixture-terrain-mesh', width: side, height: side, format: 'rgba32float' });
+  pass.render(target);
+  const pixels = await target.color.read();
   target.dispose();
   pass.dispose();
-  input.dispose();
+  input.destroy();
 
   let gpu = 0;
   let mistaken = 0;
@@ -210,7 +192,7 @@ function meshCheck(ctx, r) {
 // mip level config.world.terrain.bounceReach asks for. For seeded points over
 // the island: the worst difference over the three channels, and the worst
 // with the map's layout BOUNCE.off texels off along both axes, which must show.
-function bounceCheck(ctx, r) {
+async function bounceCheck(ctx, r) {
   const { renderer, frame, config, terrain } = ctx;
   const { heightmap, island } = terrain;
   const { samples, bounceReach, albedo, green, sand } = config.world.terrain;
@@ -229,28 +211,22 @@ function bounceCheck(ctx, r) {
   );
   const data = new Float32Array(4 * BOUNCE.points);
   world.forEach(([x, z], i) => data.set([x, z, 0, 0], 4 * i));
-  const input = new THREE.DataTexture(data, BOUNCE.points, 1, THREE.RGBAFormat, THREE.FloatType);
-  input.needsUpdate = true;
-  const pass = createFullscreen(
-    new THREE.ShaderMaterial({ name: 'fixture-terrain-bounce', vertexShader, fragmentShader: bounceShader, uniforms: { ...frame.uniforms, uPoints: { value: input } } }),
-  );
-  const target = new THREE.WebGLRenderTarget(BOUNCE.points, 1, { type: THREE.FloatType, depthBuffer: false });
-  const read = () => {
-    pass.render(renderer, target);
-    const pixels = new Float32Array(4 * BOUNCE.points);
-    renderer.readRenderTargetPixels(target, 0, 0, BOUNCE.points, 1, pixels);
-    renderer.setRenderTarget(null);
-    return pixels;
-  };
-  const gpu = read();
-  const off = frame.uniforms.uBounceLayout.value.clone();
-  off.x -= BOUNCE.off * texel;
-  off.y -= BOUNCE.off * texel;
-  pass.uniforms.uBounceLayout = { value: off };
-  const mistaken = read();
+  const input = floats(ctx, data, BOUNCE.points, 1);
+  const pass = renderer.fullscreen(new Material({ name: 'fixture-terrain-bounce', shader: bounceShader, uniforms: { uPoints: { value: input } } }));
+  const target = createTarget(renderer.gpu, { name: 'fixture-terrain-bounce', width: BOUNCE.points, height: 1, format: 'rgba32float' });
+  pass.render(target);
+  const gpu = await target.color.read();
+  // The layout is the frame's (chunks/frame.wgsl): moved for this one pass, then put back.
+  const layout = frame.uniforms.uBounceLayout.value;
+  const kept = layout.clone();
+  layout.x -= BOUNCE.off * texel;
+  layout.y -= BOUNCE.off * texel;
+  pass.render(target);
+  layout.copy(kept);
+  const mistaken = await target.color.read();
   target.dispose();
   pass.dispose();
-  input.dispose();
+  input.destroy();
 
   let worst = 0;
   let worstMistaken = 0;
@@ -267,7 +243,7 @@ function bounceCheck(ctx, r) {
 // An RGBA map of size x size texels as the GPU keeps it: half floats, and
 // `count` levels of mips, each texel of one the mean of four of the one before.
 function halfMips(map, size, count) {
-  const half = (v) => THREE.DataUtils.fromHalfFloat(THREE.DataUtils.toHalfFloat(v));
+  const half = (v) => DataUtils.fromHalfFloat(DataUtils.toHalfFloat(v));
   const mips = [{ size, texels: map.map(half) }];
   while (mips.length < count) {
     const { size: from, texels } = mips.at(-1);
@@ -304,3 +280,8 @@ function sampleMips(mips, u, v, lod) {
   });
 }
 
+
+// RGBA floats as a texture the fixtures' passes read texel by texel.
+function floats(ctx, data, width, height) {
+  return new Texture(ctx.gpu, { name: 'fixture-terrain input', width, height, format: 'rgba32float', data: true }).upload(data);
+}

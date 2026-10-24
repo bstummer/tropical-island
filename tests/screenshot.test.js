@@ -341,10 +341,10 @@ test('rock problems: offsets and vertices that agree with their twins pass', () 
 test('rock problems: GPU offsets or vertices off, mistakes the check misses, too few pixels or no answer fail', () => {
   assert.match(rockProblems({ ...goodRocks, offsets: { ...goodRocks.offsets, gpu: 0.05 } }, rockLimits).join(), /offsets vs their JS twin/);
   assert.match(rockProblems({ ...goodRocks, offsets: { ...goodRocks.offsets, mistaken: 0.001 } }, rockLimits).join(), /next rock's .* misses it/);
-  assert.match(rockProblems({ ...goodRocks, vertices: { ...goodRocks.vertices, gpu: 0.02 } }, rockLimits).join(), /rocks\.vert draws rocks/);
+  assert.match(rockProblems({ ...goodRocks, vertices: { ...goodRocks.vertices, gpu: 0.02 } }, rockLimits).join(), /rocks.wgsl draws rocks/);
   assert.match(rockProblems({ ...goodRocks, vertices: { ...goodRocks.vertices, mistaken: 0.002 } }, rockLimits).join(), /wrong way .* misses it/);
   assert.match(rockProblems({ ...goodRocks, vertices: { ...goodRocks.vertices, pixels: 100 } }, rockLimits).join(), /measures too little/);
-  assert.match(rockProblems({ ...goodRocks, vertices: { ...goodRocks.vertices, gpu: NaN } }, rockLimits).join(), /rocks\.vert/);
+  assert.match(rockProblems({ ...goodRocks, vertices: { ...goodRocks.vertices, gpu: NaN } }, rockLimits).join(), /rocks.wgsl/);
   assert.equal(rockProblems(undefined, rockLimits).length, 5);
 });
 

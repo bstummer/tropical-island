@@ -12,7 +12,7 @@ import { applyView } from './camera.js';
 import { formatBenchmark } from './timing.js';
 
 export function create(ctx, ready) {
-  const { config, params, camera, stats, renderer } = ctx;
+  const { config, params, camera, stats, gpu, canvas } = ctx;
   const panel = document.getElementById('bench');
   const text = panel.querySelector('pre');
   const copy = panel.querySelector('button');
@@ -51,18 +51,15 @@ export function create(ctx, ready) {
 
   function finish() {
     stopGpu?.();
-    const gl = renderer.getContext();
-    const debug = gl.getExtension('WEBGL_debug_renderer_info');
     const presets = config.quality.presets;
     const summary = formatBenchmark({
       build: __BUILD__,
-      gpu: debug ? gl.getParameter(debug.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER),
+      gpu: gpu.describe(),
       browser: navigator.userAgent,
-      screen: { width: window.innerWidth, height: window.innerHeight, pixelRatio: window.devicePixelRatio, buffer: [gl.drawingBufferWidth, gl.drawingBufferHeight] },
+      screen: { width: window.innerWidth, height: window.innerHeight, pixelRatio: window.devicePixelRatio, buffer: [canvas.width, canvas.height] },
       preset: Object.keys(presets).find((name) => presets[name] === ctx.quality),
       quality: ctx.quality,
       msaa: ctx.frame.sceneTarget.samples,
-      reversedDepth: renderer.capabilities.reversedDepthBuffer,
       tonemap: ctx.frame.tonemap,
       warmupSeconds,
       seconds,

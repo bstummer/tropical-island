@@ -77,7 +77,7 @@ const sideOf = (node) => node.spacing * (node.quarter ? grid / 2 : grid);
 const holds = (node, a, o) => a >= node.a && a <= node.a + sideOf(node) && o >= node.o && o <= node.o + sideOf(node);
 
 // A drawn node as the GPU draws it, built apart from lod.js: its vertices moved
-// and lifted as terrain.vert does, its triangles as terrain.js's gridGeometry.
+// and lifted as world/terrain.wgsl does, its triangles as terrain.js's gridGeometry.
 // Heights are taken only for the vertices a point needs.
 function drawnNode(node, cam, morphs) {
   const quads = node.quarter ? grid / 2 : grid;
@@ -203,7 +203,7 @@ for (const [preset, { terrainDetail, terrainRatio }] of Object.entries(config.qu
         const at = nodes[cover[Math.floor((cam[2] - origin[1]) / leaf) * cells + Math.floor((cam[0] - origin[0]) / leaf)]];
         if (at) assert.equal(at.level, 0, `camera ${cam}`);
       }
-      // Along the edge, as terrain.vert measures: across the ground.
+      // Along the edge, as world/terrain.wgsl measures: across the ground.
       for (const [c1, c2, a0, o0, alongA] of edges()) {
         const [fine, coarse] = [nodes[cover[c1]], nodes[cover[c2]]].sort((x, y) => x.level - y.level);
         if (fine.level === coarse.level) continue;

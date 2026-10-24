@@ -1,4 +1,4 @@
-// The atmosphere's lookup tables, rendered on the GPU (atmosphere.glsl has the
+// The atmosphere's lookup tables, rendered on the GPU (atmosphere.wgsl has the
 // maths, after Hillaire 2020):
 //   transmittance  how much light gets through from any height and angle; with the haze
 //   multiscatter   light scattered twice and more; with the haze
@@ -9,38 +9,125 @@
 //   probe          the light at sea level for one sun, read back for light.js; on demand
 // They are small and nothing here runs every frame: the sky changes only when
 // the time (and with it the haze) or the camera's height does.
-import * as THREE from 'three';
-import vertexShader from '../post/output.vert';
-import transmittanceShader from './transmittance.frag';
-import multiscatterShader from './multiscatter.frag';
-import skyViewShader from './sky-view.frag';
-import aerialShader from './aerial.frag';
-import aerialTransmittanceShader from './aerial-transmittance.frag';
-import sunlightShader from './sunlight.frag';
-import probeShader from './probe.frag';
-import { createFullscreen } from '../post/fullscreen.js';
+//
+// The transmittance and multiple-scattering tables come in two sets: the
+// light for a new time is read back from the GPU, which takes some frames, and
+// meanwhile the frame goes on drawing with the current set (sky.js). Every
+// call takes the set to use and the haze (0 to 1) to render with.
+import { Vector2, Vector3 } from 'three';
+import transmittanceShader from './transmittance.wgsl';
+import multiscatterShader from './multiscatter.wgsl';
+import skyViewShader from './sky-view.wgsl';
+import aerialShader from './aerial.wgsl';
+import aerialTransmittanceShader from './aerial-transmittance.wgsl';
+import sunlightShader from './sunlight.wgsl';
+import probeShader from './probe.wgsl';
+import { Material } from '../gpu/material.js';
+import { createTarget } from '../gpu/texture.js';
 
 const PROBE_TEXELS = 10;
 
 // For config.sky.
-export function createAtmosphere(renderer, { atmosphere: settings, tables, aerialRange, samples, sunlightTop }) {
-  const target = ([width, height], type = THREE.HalfFloatType) => new THREE.WebGLRenderTarget(width, height, { type, depthBuffer: false });
+export function createAtmosphere(renderer, { atmosphere: settings, tables, samples }) {
+  const { gpu } = renderer;
+  const target = (name, [width, height], format = 'rgba16float') => createTarget(gpu, { name: `sky ${name}`, width, height, format });
+  const sets = [0, 1].map(() => ({ transmittance: target('transmittance', tables.transmittance), multiscatter: target('multiscatter', tables.multiscatter) }));
   const targets = {
-    transmittance: target(tables.transmittance),
-    multiscatter: target(tables.multiscatter),
-    skyView: target(tables.skyView),
-    aerialTransmittance: target(tables.aerial.slice(1)), // the aerial table's rows and slices
-    sunlight: target(tables.sunlight),
-    probe: target([PROBE_TEXELS, 1], THREE.FloatType), // read back: full precision
-    aerial: new THREE.WebGL3DRenderTarget(...tables.aerial, { type: THREE.HalfFloatType, depthBuffer: false }),
+    skyView: target('view', tables.skyView),
+    aerialTransmittance: target('aerial transmittance', tables.aerial.slice(1)), // the aerial table's rows and slices
+    sunlight: target('sunlight', tables.sunlight),
+    probe: target('probe', [PROBE_TEXELS, 1], 'rgba32float'), // read back: full precision
+    aerial: createTarget(gpu, { name: 'sky aerial', width: tables.aerial[0], height: tables.aerial[1], layers: tables.aerial[2], dimension: '3d', format: 'rgba16float' }),
   };
-  Object.assign(targets.aerial.texture, { minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter });
 
-  const vec3 = (v) => new THREE.Vector3(...v);
+  const uniforms = atmosphereUniforms(settings, tables);
+  // Each pass reads the frame's numbers (chunks/frame-values.wgsl) but none of
+  // its textures, and never the table it draws into.
+  const pass = (name, shader, overrides, own = {}) =>
+    renderer.fullscreen(new Material({ name, shader, overrides, uniforms: { ...renderer.globals, ...uniforms, ...own } }));
+  const passes = {
+    transmittance: pass('sky-transmittance', transmittanceShader, { STEPS: samples.transmittance }, { uTransmittance: { value: null } }),
+    multiscatter: pass('sky-multiscatter', multiscatterShader, { SQRT_DIRECTIONS: samples.multiscatter.directions, STEPS: samples.multiscatter.steps }, {
+      uMultiscatter: { value: null },
+    }),
+    skyView: pass('sky-view', skyViewShader, { STEPS: samples.skyView }, {
+      uHeight: { value: 0 },
+      uSunMu: { value: 1 },
+      uSize: { value: new Vector2(...tables.skyView) },
+    }),
+    aerial: pass('sky-aerial', aerialShader, { STEPS: samples.aerial }, { uHeight: { value: 0 }, uSunMu: { value: 1 }, uSlice: { value: 0 } }),
+    aerialTransmittance: pass('sky-aerial-transmittance', aerialTransmittanceShader, { STEPS: samples.aerial }, { uHeight: { value: 0 } }),
+    sunlight: pass('sky-sunlight', sunlightShader, { STEPS: samples.sunlight }, { uSunMu: { value: 1 } }),
+    probe: pass('sky-probe', probeShader, { AZIMUTHS: samples.probe.azimuths, RINGS: samples.probe.rings, STEPS: samples.probe.steps }, {
+      uSun: { value: new Vector3(0, 1, 0) },
+    }),
+  };
+
+  // Points the shared uniforms at set `k`'s tables and the haze, for the passes that follow.
+  function use(k, hazeAmount) {
+    uniforms.uHazeAmount.value = hazeAmount;
+    uniforms.uTransmittance.value = sets[k].transmittance.color;
+    uniforms.uMultiscatter.value = sets[k].multiscatter.color;
+  }
+
+  return {
+    uniforms, // for materials that include atmosphere.wgsl: point uTransmittance and uMultiscatter at a set's tables()
+    skyView: targets.skyView.color,
+    aerial: targets.aerial.color,
+    aerialTransmittance: targets.aerialTransmittance.color,
+    sunlight: targets.sunlight.color,
+    // Set k's transmittance and multiple-scattering tables.
+    tables: (k) => ({ transmittance: sets[k].transmittance.color, multiscatter: sets[k].multiscatter.color }),
+    // Set k's transmittance and multiple-scattering tables for this much haze (0 to 1).
+    renderTables(k, hazeAmount) {
+      use(k, hazeAmount);
+      passes.transmittance.render(sets[k].transmittance);
+      passes.multiscatter.render(sets[k].multiscatter);
+    },
+    // The sky-view and aerial-perspective tables for a camera `height` km up and
+    // the sun at zenith cosine sunMu, from set k.
+    renderView(k, hazeAmount, height, sunMu) {
+      use(k, hazeAmount);
+      for (const p of [passes.skyView, passes.aerial]) {
+        p.uniforms.uHeight.value = height;
+        p.uniforms.uSunMu.value = sunMu;
+      }
+      passes.aerialTransmittance.uniforms.uHeight.value = height;
+      passes.skyView.render(targets.skyView);
+      passes.aerialTransmittance.render(targets.aerialTransmittance);
+      for (let slice = 0; slice < tables.aerial[2]; slice++) {
+        passes.aerial.uniforms.uSlice.value = slice;
+        passes.aerial.render(targets.aerial, { layer: slice });
+      }
+    },
+    // The sunlight table for the sun at zenith cosine sunMu.
+    renderSunlight(k, hazeAmount, sunMu) {
+      use(k, hazeAmount);
+      passes.sunlight.uniforms.uSunMu.value = sunMu;
+      passes.sunlight.render(targets.sunlight);
+    },
+    // The probe for the sun towards `sun` ([x, y, z], a world direction, y up), from set
+    // k: a promise of RGBA floats per texel.
+    probe(k, hazeAmount, sun) {
+      use(k, hazeAmount);
+      passes.probe.uniforms.uSun.value.fromArray(sun);
+      passes.probe.render(targets.probe);
+      return targets.probe.color.read();
+    },
+    dispose() {
+      for (const p of Object.values(passes)) p.dispose();
+      for (const t of [...Object.values(targets), ...sets.flatMap((s) => [s.transmittance, s.multiscatter])]) t.dispose();
+    },
+  };
+}
+
+// The uniforms of atmosphere.wgsl for config.sky's atmosphere and tables, with
+// no tables yet: for materials and passes that include it.
+export function atmosphereUniforms(settings, tables) {
+  const vec3 = (v) => new Vector3(...v);
   // Haze scatters short wavelengths a little more (its Angstrom exponent).
   const haze = (perKm) => vec3(settings.wavelengths.map((nm) => perKm * (nm / 550) ** -settings.hazeAngstrom));
-  const uniforms = {
-    uGroundRadius: { value: settings.groundRadius },
+  return {
     uTopRadius: { value: settings.topRadius },
     uRayleighScattering: { value: vec3(settings.rayleighScattering) },
     uRayleighHeight: { value: settings.rayleighHeight },
@@ -57,82 +144,9 @@ export function createAtmosphere(renderer, { atmosphere: settings, tables, aeria
     uGroundAlbedo: { value: vec3(settings.groundAlbedo) },
     uSunIlluminance: { value: vec3(settings.sunIlluminance) },
     uSunRadius: { value: (settings.sunRadius * Math.PI) / 180 },
-    uTransmittance: { value: targets.transmittance.texture },
-    uTransmittanceSize: { value: new THREE.Vector2(...tables.transmittance) },
-    uMultiscatter: { value: targets.multiscatter.texture },
-    uMultiscatterSize: { value: new THREE.Vector2(...tables.multiscatter) },
-    uAerialSize: { value: new THREE.Vector3(...tables.aerial) },
-    uAerialRange: { value: aerialRange },
-    uSunlightSize: { value: tables.sunlight[0] },
-    uSunlightTop: { value: sunlightTop },
-  };
-  const pass = (name, fragmentShader, defines, own = {}) =>
-    createFullscreen(new THREE.ShaderMaterial({ name, vertexShader, fragmentShader, defines, uniforms: { ...uniforms, ...own } }));
-  const passes = {
-    transmittance: pass('sky-transmittance', transmittanceShader, { STEPS: samples.transmittance }),
-    multiscatter: pass('sky-multiscatter', multiscatterShader, { SQRT_DIRECTIONS: samples.multiscatter.directions, STEPS: samples.multiscatter.steps }),
-    skyView: pass('sky-view', skyViewShader, { STEPS: samples.skyView }, {
-      uHeight: { value: 0 },
-      uSunMu: { value: 1 },
-      uSize: { value: new THREE.Vector2(...tables.skyView) },
-    }),
-    aerial: pass('sky-aerial', aerialShader, { STEPS: samples.aerial }, { uHeight: { value: 0 }, uSunMu: { value: 1 }, uSlice: { value: 0 } }),
-    aerialTransmittance: pass('sky-aerial-transmittance', aerialTransmittanceShader, { STEPS: samples.aerial }, { uHeight: { value: 0 } }),
-    sunlight: pass('sky-sunlight', sunlightShader, { STEPS: samples.sunlight }, { uSunMu: { value: 1 } }),
-    probe: pass('sky-probe', probeShader, { AZIMUTHS: samples.probe.azimuths, RINGS: samples.probe.rings, STEPS: samples.probe.steps }, {
-      uSun: { value: new THREE.Vector3(0, 1, 0) },
-    }),
-  };
-
-  const readback = new Float32Array(4 * PROBE_TEXELS);
-
-  return {
-    uniforms, // for materials that include atmosphere.glsl
-    skyView: targets.skyView.texture,
-    aerial: targets.aerial.texture,
-    aerialTransmittance: targets.aerialTransmittance.texture,
-    sunlight: targets.sunlight.texture,
-    // The transmittance and multiple-scattering tables for this much haze (0 to 1).
-    renderTables(haze) {
-      uniforms.uHazeAmount.value = haze;
-      passes.transmittance.render(renderer, targets.transmittance);
-      passes.multiscatter.render(renderer, targets.multiscatter);
-      renderer.setRenderTarget(null);
-    },
-    // The sky-view and aerial-perspective tables for a camera `height` km up and
-    // the sun at zenith cosine sunMu.
-    renderView(height, sunMu) {
-      for (const p of [passes.skyView, passes.aerial]) {
-        p.uniforms.uHeight.value = height;
-        p.uniforms.uSunMu.value = sunMu;
-      }
-      passes.aerialTransmittance.uniforms.uHeight.value = height;
-      passes.skyView.render(renderer, targets.skyView);
-      passes.aerialTransmittance.render(renderer, targets.aerialTransmittance);
-      for (let slice = 0; slice < tables.aerial[2]; slice++) {
-        passes.aerial.uniforms.uSlice.value = slice;
-        passes.aerial.render(renderer, targets.aerial, slice);
-      }
-      renderer.setRenderTarget(null);
-    },
-    // The sunlight table for the sun at zenith cosine sunMu, with the haze of
-    // the last renderTables().
-    renderSunlight(sunMu) {
-      passes.sunlight.uniforms.uSunMu.value = sunMu;
-      passes.sunlight.render(renderer, targets.sunlight);
-      renderer.setRenderTarget(null);
-    },
-    // The probe for the sun towards `sun` (a world direction, y up), as RGBA floats per texel.
-    probe(sun) {
-      passes.probe.uniforms.uSun.value.copy(sun);
-      passes.probe.render(renderer, targets.probe);
-      renderer.readRenderTargetPixels(targets.probe, 0, 0, PROBE_TEXELS, 1, readback);
-      renderer.setRenderTarget(null);
-      return readback;
-    },
-    dispose() {
-      for (const p of Object.values(passes)) p.dispose();
-      for (const t of Object.values(targets)) t.dispose();
-    },
+    uTransmittance: { value: null },
+    uTransmittanceSize: { value: new Vector2(...tables.transmittance) },
+    uMultiscatter: { value: null },
+    uMultiscatterSize: { value: new Vector2(...tables.multiscatter) },
   };
 }

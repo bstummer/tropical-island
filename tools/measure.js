@@ -23,22 +23,22 @@ const settings = config.capture;
 
 // Renders a frame ({ t, turn }) in the capture page; returns the canvas as a PNG data URL.
 export function renderFrame(page, options = {}) {
-  return page.evaluate((o) => {
-    window.__CAPTURE__.render(o);
+  return page.evaluate(async (o) => {
+    await window.__CAPTURE__.render(o);
     return window.__CAPTURE__.image();
   }, options);
 }
 
 // Renders one frame per option set in a single call and resolves to their data URLs.
 export function renderFrames(page, list) {
-  return page.evaluate(
-    (all) =>
-      all.map((o) => {
-        window.__CAPTURE__.render(o);
-        return window.__CAPTURE__.image();
-      }),
-    list,
-  );
+  return page.evaluate(async (all) => {
+    const urls = [];
+    for (const o of all) {
+      await window.__CAPTURE__.render(o);
+      urls.push(await window.__CAPTURE__.image());
+    }
+    return urls;
+  }, list);
 }
 
 // Everything the page renders for one view. `first` is the start frame's data
@@ -70,7 +70,7 @@ function panTurns(pan) {
 // Cost of the start frame, so call it while the page still shows that frame:
 // the GPU counts of the last frame rendered, live memory, GPU time (when asked)
 // and mean overdraw as `cost`, plus the fragments per pixel as `overdraw`
-// ({ width, height, counts }). Overdraw goes last: it compiles programs of its own.
+// ({ width, height, counts }). Overdraw goes last: it makes pipelines of its own.
 export async function measureCost(page, { gpuTime = false } = {}) {
   const stats = await page.evaluate(() => window.__CAPTURE__.stats());
   const gpuMs = gpuTime ? await page.evaluate(() => window.__CAPTURE__.gpuTime(10)) : null;
@@ -82,8 +82,8 @@ export async function measureCost(page, { gpuTime = false } = {}) {
     triangles: stats.triangles,
     passes: stats.passes,
     blits: stats.blits,
-    programs: stats.programs,
-    programsUsed: stats.programsUsed,
+    pipelines: stats.pipelines,
+    pipelinesUsed: stats.pipelinesUsed,
     overdraw: mean,
     overdrawMax: max,
     textureMB: stats.textureBytes / MB,

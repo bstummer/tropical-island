@@ -6,13 +6,19 @@
 // worst misses in window.__HAZE__ (haze-cases.js) for tools/screenshot.js, with
 // the sunlight at a few heights against the sea level's. Draws nothing. Not
 // part of the island.
-import * as THREE from 'three';
-import vertexShader from '../post/output.vert';
-import fragmentShader from './haze.frag';
+import { Vector3, Vector4 } from 'three';
+import shader from './haze.wgsl';
+import { Material } from '../gpu/material.js';
+import { Geometry } from '../gpu/geometry.js';
+import { Mesh } from '../gpu/scene.js';
+import { createTarget } from '../gpu/texture.js';
 import { createAtmosphere } from '../sky/atmosphere.js';
 import { hazeAmount, sunAtHeight } from '../sky/light.js';
 import { sunPath } from '../sky/sun.js';
 import { answers, sunHeights, sunlightHeights } from './haze-cases.js';
+
+// haze.wgsl's array sizes.
+if (sunlightHeights.length !== 8 || sunHeights.length !== 2) throw new Error('haze fixture: haze.wgsl takes 8 sunlight heights and 2 heights to report');
 
 export function create(ctx) {
   const { renderer, camera, frame, config } = ctx;
@@ -22,48 +28,51 @@ export function create(ctx) {
   const atmosphere = createAtmosphere(renderer, settings);
   const sun = sunPath.position(ctx.timeOfDay);
   const haze = hazeAmount(sun.elevation, settings.haze);
-  atmosphere.renderTables(haze);
-  const sunlight = sunlightHeights.map((h) => new THREE.Vector3(...sunAtHeight(h / 1000, sun.elevation, settings.atmosphere, haze)));
+  atmosphere.renderTables(0, haze);
+  const sunlight = sunlightHeights.map((h) => new Vector3(...sunAtHeight(h / 1000, sun.elevation, settings.atmosphere, haze)));
 
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.Float32BufferAttribute([-1, -1, 0, 3, -1, 0, -1, 3, 0], 3));
-  const material = new THREE.ShaderMaterial({
+  const triangle = new Geometry();
+  triangle.vertexCount = 3;
+  const material = new Material({
     name: 'fixture-haze',
-    vertexShader,
-    fragmentShader,
-    defines: { TONEMAP: config.post.tonemaps[frame.tonemap], ANSWERS: answers.length, SUN_AT: sunlightHeights.length, RATIOS: sunHeights.length },
+    shader,
+    overrides: { TONEMAP: config.post.tonemaps[frame.tonemap], ANSWERS: answers.length },
     uniforms: {
       ...atmosphere.uniforms,
-      ...frame.uniforms,
-      uSunAt: { value: sunlightHeights },
+      uTransmittance: { value: atmosphere.tables(0).transmittance },
+      uMultiscatter: { value: atmosphere.tables(0).multiscatter },
+      uSunAt: { value: sunlightHeights.map((h) => new Vector4(h, 0, 0, 0)) },
       uSunTruth: { value: sunlight },
-      uSunHeights: { value: sunHeights },
+      uSunHeights: { value: sunHeights.map((h) => new Vector4(h, 0, 0, 0)) },
     },
     depthTest: false,
     depthWrite: false,
   });
   // Drawn with the game's camera, so cameraPosition is the view's.
-  const mesh = new THREE.Mesh(geometry, material);
+  const mesh = new Mesh(triangle, material);
   mesh.frustumCulled = false;
-  const scene = new THREE.Scene();
-  scene.add(mesh);
   const texels = answers.length + sunHeights.length;
-  const target = new THREE.WebGLRenderTarget(texels, 1, { type: THREE.FloatType, depthBuffer: false });
-  renderer.setRenderTarget(target);
-  renderer.render(scene, camera);
-  const pixels = new Float32Array(4 * texels);
-  renderer.readRenderTargetPixels(target, 0, 0, texels, 1, pixels);
-  renderer.setRenderTarget(null);
-  target.dispose();
-  geometry.dispose();
-  material.dispose();
-  atmosphere.dispose();
-  window.__HAZE__ = {
-    ...Object.fromEntries(answers.map((name, i) => [name, pixels[4 * i]])),
-    sun: Object.fromEntries(sunHeights.map((h, i) => [h, pixels[4 * (answers.length + i)]])),
-  };
+  const target = createTarget(renderer.gpu, { name: 'fixture-haze', width: texels, height: 1, format: 'rgba32float' });
+  // Once the sky's first light is in: the tables the fixture checks.
+  const ready = ctx.sky.ready
+    .then(() => {
+      renderer.render([mesh], camera, target);
+      return target.color.read();
+    })
+    .then((pixels) => {
+      window.__HAZE__ = {
+        ...Object.fromEntries(answers.map((name, i) => [name, pixels[4 * i]])),
+        sun: Object.fromEntries(sunHeights.map((h, i) => [h, pixels[4 * (answers.length + i)]])),
+      };
+    })
+    .finally(() => {
+      target.dispose();
+      material.dispose();
+      atmosphere.dispose();
+    });
 
   return {
+    ready,
     update() {},
     dispose() {
       delete window.__HAZE__;

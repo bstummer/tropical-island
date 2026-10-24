@@ -1,5 +1,6 @@
-// Verifies that dist/ is a single, self-contained HTML file, and that src/
-// only gets time and randomness through core/clock.js and core/random.js.
+// Verifies that dist/ is a single, self-contained HTML file, that src/ only
+// gets time and randomness through core/clock.js and core/random.js, and that
+// it takes only maths from three.js.
 // Usage: node tools/check-build.js   (exits non-zero on any failure)
 // The individual checks are exported for tests/check-build.test.js; vite.config.js
 // uses checkOutputFiles() to fail any build that would emit more than index.html.
@@ -34,15 +35,51 @@ export const HTML_RULES = [
   { id: 'dynamic-import', name: 'dynamic import()', re: /(?<![\w$.])import\s*\(/g },
 ];
 
-// Sources of non-determinism that must go through clock.js / random.js instead.
+// Sources of non-determinism that must go through clock.js / random.js instead,
+// and imports of three.js beyond its maths.
 export const SOURCE_RULES = [
   { id: 'math-random', name: 'Math.random', re: /\bMath\.random\b/g },
   { id: 'date', name: 'Date.now / new Date()', re: /\bDate\.now\b|\bnew\s+Date\b/g },
   { id: 'performance-now', name: 'performance.now', re: /\bperformance\.now\b/g, except: ['core/clock.js'] },
   { id: 'three-clock', name: 'three.js Clock/Timer', re: /\bnew\s+(THREE\.)?(Clock|Timer)\b/g },
   // MathUtils helpers, and the .random()/.randomDirection() of three's vectors and quaternions.
-  { id: 'three-random', name: 'three.js random helper', re: /\b(randInt|randFloat|randFloatSpread|seededRandom)\b|(?<!\bMath)\.random(Direction)?\s*\(/g },
+  { id: 'three-random', name: 'three.js random helper', re: /\b(randInt|randFloat|randFloatSpread|seededRandom|generateUUID)\b|(?<!\bMath)\.random(Direction)?\s*\(/g },
+  // gpu/ draws; three.js is there for its maths only (CLAUDE.md §2). Every
+  // import or export from a module, and every import('...'), is matched; one
+  // that names three.js passes only as named imports from 'three' of THREE_MATHS.
+  {
+    id: 'three-maths',
+    name: 'three.js beyond its maths',
+    re: /\b(?:import|export)\b\s*(?<clause>[^;'"`()]*?)\s*\bfrom\s*(['"])(?<from>[^'"]*)\2|\bimport\s*(?:\(\s*)?(['"`])(?<bare>[^'"`]*)\4/g,
+    allow: ({ groups: { clause, from, bare } }) => {
+      if (!namesThree(from ?? bare)) return true;
+      return from === 'three' && /^\{[^}]*\}$/.test(clause) && importedNames(clause).every((name) => THREE_MATHS.has(name));
+    },
+    hint: 'import only its maths (THREE_MATHS), by name',
+  },
 ];
+
+// Whether a module specifier is three.js: the package, a path into it, or its builds by path.
+function namesThree(specifier) {
+  return /^three(\/|$)|(^|\/)node_modules\/three(\/|$)|(^|\/)three\/(build|src)\//.test(specifier);
+}
+
+// What src/ may import from three.js: its maths (src/math/), DataUtils for
+// half floats, and the WebGPU clip space for the camera's projection.
+export const THREE_MATHS = new Set([
+  ...['Box2', 'Box3', 'Color', 'Cylindrical', 'Euler', 'Frustum', 'Line3', 'MathUtils', 'Matrix2', 'Matrix3', 'Matrix4', 'Plane'],
+  ...['Quaternion', 'Ray', 'Sphere', 'Spherical', 'SphericalHarmonics3', 'Triangle', 'Vector2', 'Vector3', 'Vector4'],
+  ...['DataUtils', 'WebGPUCoordinateSystem'],
+]);
+
+// The names `{ A, B as C }` imports from its module: A and B.
+function importedNames(braces) {
+  return braces
+    .slice(1, -1)
+    .split(',')
+    .map((s) => s.trim().split(/\s+as\s+/)[0])
+    .filter(Boolean);
+}
 
 // Content rules for the built HTML.
 // Returns { failures: [{ rule, message }], allowed: Map<url, count> }.
@@ -76,18 +113,20 @@ export function checkSize(bytes, budget) {
   return { level: 'ok', message: '' };
 }
 
-// Determinism lint over every .js file under srcDir. Comments are ignored.
+// Source lint (SOURCE_RULES) over every script under srcDir (.js, and the
+// other extensions Vite would compile). Comments are ignored.
 export function checkSources(srcDir) {
   const failures = [];
   for (const name of readdirSync(srcDir, { recursive: true })) {
-    if (!/\.(js|mjs)$/.test(name)) continue;
+    if (!/\.(js|mjs|cjs|jsx|ts|tsx|mts|cts)$/.test(name)) continue;
     const path = relative(srcDir, join(srcDir, name)).replaceAll('\\', '/');
     // Without comments, so docs may mention the forbidden APIs.
     const code = blankComments(readFileSync(join(srcDir, name), 'utf8'));
     for (const rule of SOURCE_RULES) {
       if (rule.except?.includes(path)) continue;
       for (const match of code.matchAll(rule.re)) {
-        failures.push({ rule: rule.id, message: `${rule.name} in src/${path} (${position(code, match.index)}); use ctx.clock / ctx.rng` });
+        if (rule.allow?.(match)) continue;
+        failures.push({ rule: rule.id, message: `${rule.name} in src/${path} (${position(code, match.index)}); ${rule.hint ?? 'use ctx.clock / ctx.rng'}` });
       }
     }
   }

@@ -1,14 +1,22 @@
 // The sky: the atmosphere and the sun's disk, drawn behind everything, and the
 // light state every lit material reads (ctx.frame.uniforms, see
-// chunks/lighting.glsl). When the time changes it renders the light probe and
+// chunks/lighting.wgsl). When the time changes it renders the light probe and
 // sets the sun, the sky's light and the exposure from it (light.js), and
 // renders the sunlight by height; when the time or the camera's height changes
 // it renders the sky-view and aerial-perspective tables again (atmosphere.js).
 // They depend on nothing else, so a time set at runtime renders as it would set
 // at boot, and a quality change brings back the same light.
-import * as THREE from 'three';
-import vertexShader from './sky.vert';
-import fragmentShader from './sky.frag';
+//
+// The probe is read back from the GPU, which takes a few frames. Meanwhile the
+// frame goes on with the light of the time before; then the new time lands
+// whole between two frames, tables and light at once, so no frame mixes two
+// times. ready resolves once the first light is in; settled() returns a
+// promise while a time change is on its way (core/capture.js waits for it).
+// Puts ctx.sky on the context, { ready }, for what needs the first light.
+import { Mesh } from '../gpu/scene.js';
+import { Geometry } from '../gpu/geometry.js';
+import { Material } from '../gpu/material.js';
+import shader from './sky.wgsl';
 import { createAtmosphere } from './atmosphere.js';
 import { hazeAmount, lightFromProbe } from './light.js';
 import { sunPath } from './sun.js';
@@ -25,15 +33,16 @@ export function create(ctx) {
   light.uAerialSize.value.fromArray(settings.tables.aerial);
   light.uSunlight.value = atmosphere.sunlight;
 
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.Float32BufferAttribute([-1, -1, 0, 3, -1, 0, -1, 3, 0], 3));
-  const material = new THREE.ShaderMaterial({
+  const triangle = new Geometry();
+  triangle.vertexCount = 3; // made in the vertex shader
+  const material = new Material({
     name: 'sky',
-    vertexShader,
-    fragmentShader,
+    shader,
     uniforms: {
       ...atmosphere.uniforms,
-      ...frame.uniforms,
+      // The current set of tables (atmosphere.js): its own, as the passes point the shared ones elsewhere.
+      uTransmittance: { value: null },
+      uMultiscatter: { value: null },
       uSunCeiling: { value: settings.sunCeiling },
       uLimbDarkening: { value: settings.limbDarkening },
       uAureoleG: { value: settings.aureole.g },
@@ -41,45 +50,86 @@ export function create(ctx) {
     },
     depthWrite: false,
   });
-  const mesh = new THREE.Mesh(geometry, material);
+  const mesh = new Mesh(triangle, material);
   mesh.name = 'sky';
   mesh.frustumCulled = false;
   mesh.renderOrder = frame.skyOrder;
   scene.add(mesh);
 
   const baseExposure = params.exposure ?? config.post.exposure;
-  let time = null;
-  let height = null;
-  // Once now, so the first frame costs what every other does.
-  follow();
+  let current = 0; // the set of tables the light in use came from
+  let applied = { time: null, height: null, haze: 1 };
+  let coming = null; // a time on its way: { time, set, sun, haze, probe: promise }
+  let failed = null;
+  let disposed = false;
 
-  function follow() {
-    const timeChanged = ctx.timeOfDay !== time;
-    const h = (Math.max(0, Math.round(camera.position.y / settings.heightStep)) * settings.heightStep) / 1000;
-    if (timeChanged) {
-      time = ctx.timeOfDay;
-      const sun = sunPath.position(time);
-      atmosphere.renderTables(hazeAmount(sun.elevation, settings.haze));
-      light.uSunDirection.value.fromArray(sun.direction);
-      atmosphere.renderSunlight(sun.direction[1]);
-      const state = lightFromProbe(atmosphere.probe(light.uSunDirection.value), sun, settings);
-      light.uSunRadiance.value.fromArray(state.sunRadiance);
-      state.sky.forEach((c, k) => light.uSkySH.value[k].fromArray(c));
-      light.uLevelLight.value.fromArray(state.levelLight);
-      light.uExposure.value = baseExposure * state.exposure;
-    }
-    if (timeChanged || h !== height) {
-      height = h;
-      atmosphere.renderView(h, light.uSunDirection.value.y);
-      light.uSkyViewHeight.value = h;
-    }
+  // Renders the probe for `time` into the spare set, from which it lands later.
+  function start(time) {
+    const sun = sunPath.position(time);
+    const haze = hazeAmount(sun.elevation, settings.haze);
+    const set = 1 - current;
+    atmosphere.renderTables(set, haze);
+    const next = { time, set, sun, haze };
+    // A failure, in the readback or in landing it, is thrown by the next update.
+    next.probe = atmosphere
+      .probe(set, haze, sun.direction)
+      .then((probe) => {
+        if (disposed) return;
+        land(next, probe);
+        coming = null;
+      })
+      .catch((err) => (failed = err));
+    coming = next;
   }
 
+  // The light of a time whose probe came back, all of it at once.
+  function land({ time, set, sun, haze }, probe) {
+    current = set;
+    material.uniforms.uTransmittance.value = atmosphere.tables(set).transmittance;
+    material.uniforms.uMultiscatter.value = atmosphere.tables(set).multiscatter;
+    light.uSunDirection.value.fromArray(sun.direction);
+    atmosphere.renderSunlight(set, haze, sun.direction[1]);
+    const state = lightFromProbe(probe, sun, settings);
+    light.uSunRadiance.value.fromArray(state.sunRadiance);
+    state.sky.forEach((c, k) => light.uSkySH.value[k].fromArray(c));
+    light.uLevelLight.value.fromArray(state.levelLight);
+    light.uExposure.value = baseExposure * state.exposure;
+    applied = { time, height: null, haze };
+    view();
+  }
+
+  // The sky-view and aerial tables for the camera's height, when it changed.
+  function view() {
+    const h = (Math.max(0, Math.round(camera.position.y / settings.heightStep)) * settings.heightStep) / 1000;
+    if (h === applied.height) return;
+    applied.height = h;
+    atmosphere.renderView(current, applied.haze, h, light.uSunDirection.value.y);
+    light.uSkyViewHeight.value = h;
+  }
+
+  function follow() {
+    if (failed) throw failed;
+    if (!coming && ctx.timeOfDay !== applied.time) start(ctx.timeOfDay);
+    if (applied.time !== null) view();
+  }
+  // The first light, so the first frame costs what every other does.
+  start(ctx.timeOfDay);
+  const ready = coming.probe.then(() => {
+    if (failed) throw failed;
+  });
+  ctx.sky = { ready };
+
   return {
+    ready,
     update: follow,
+    settled() {
+      if (coming) return coming.probe;
+      return ctx.timeOfDay !== applied.time ? Promise.resolve() : null;
+    },
     dispose() {
+      disposed = true;
+      delete ctx.sky;
       scene.remove(mesh);
-      geometry.dispose();
       material.dispose();
       atmosphere.dispose();
     },

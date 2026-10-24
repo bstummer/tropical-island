@@ -1,15 +1,16 @@
 // Boot sequence: params -> renderer, scene, camera, frame -> systems -> loop.
 // With ?capture=1, core/capture.js takes over the loop for tools/screenshot.js.
-import * as THREE from 'three';
 import { config } from './config.js';
 import { findView } from './views.js';
 import { parseParams } from './core/params.js';
 import { createClock } from './core/clock.js';
 import { createRandom } from './core/random.js';
 import { createRenderer } from './core/renderer.js';
-import { applyView } from './core/camera.js';
+import { applyView, Camera } from './core/camera.js';
 import { runCapture } from './core/capture.js';
 import { createFrame } from './post/frame.js';
+import { Scene } from './gpu/scene.js';
+import { NeedsWebGPU } from './gpu/device.js';
 import * as input from './core/input.js';
 import * as readout from './core/readout.js';
 import * as benchmark from './core/benchmark.js';
@@ -69,13 +70,9 @@ let captureMode = false;
 window.addEventListener('error', (e) => captureFail(e.error ?? e.message));
 window.addEventListener('unhandledrejection', (e) => captureFail(e.reason));
 
-try {
-  boot();
-} catch (err) {
-  fail(err);
-}
+boot().catch((err) => fail(err));
 
-function boot() {
+async function boot() {
   const params = parseParams(window.location.search);
   captureMode = params.capture;
 
@@ -83,18 +80,23 @@ function boot() {
   const view = findView(params.view ?? config.defaults.view);
 
   const canvas = document.getElementById('view');
-  const display = createRenderer({ canvas, quality, capture: params.capture, fallbackDepth: params.depth === 'fallback' });
-  const { renderer } = display;
-  // Restoring a lost context comes later (PLAN.md Stage 18). Until then, stop
-  // and say so: a capture must not pass on the blank frames that follow.
-  canvas.addEventListener('webglcontextlost', () => {
-    renderer.setAnimationLoop(null);
-    fail(new Error('The WebGL context was lost (the GPU was reset or ran out of memory).'), 'Stopped.');
+  // Errors on the GPU that nothing caught, and a lost device: restoring one
+  // comes later (PLAN.md Stage 18). Until then, stop and say so: a capture must
+  // not pass on the blank frames that follow.
+  let stopped = false;
+  const display = await createRenderer({
+    canvas,
+    quality,
+    capture: params.capture,
+    onError: (err) => {
+      stopped = true;
+      fail(err, 'Stopped.');
+    },
   });
+  const { renderer, gpu } = display;
 
-  const scene = new THREE.Scene();
-  const near = renderer.capabilities.reversedDepthBuffer ? config.camera.near : config.camera.nearFallback;
-  const camera = new THREE.PerspectiveCamera(view.fov ?? config.camera.fov, 1, near, config.camera.far);
+  const scene = new Scene();
+  const camera = new Camera(view.fov ?? config.camera.fov, 1, config.camera.near, config.camera.far);
   applyView(camera, view);
   display.onResize(({ width, height }) => {
     camera.aspect = width / height;
@@ -102,7 +104,9 @@ function boot() {
   });
 
   const ctx = {
+    gpu,
     renderer,
+    canvas,
     scene,
     camera,
     config,
@@ -120,14 +124,26 @@ function boot() {
   // Changing the preset tears it all down and builds it again.
   let world = [];
   let ready = null;
+  let lit = false; // the sky's first light is in: a frame before it would be black
   function build() {
     ctx.frame = createFrame(ctx, display);
-    world = worldSystems(params.fixture).map((system) => system.create(ctx));
-    // In the game, every shader compiles once the world is in, rather than
+    const built = (world = worldSystems(params.fixture).map((system) => system.create(ctx)));
+    // The light arrives a few frames late (sky.js reads it back from the GPU).
+    // A sky that fails throws in its update, so that opens the gate too.
+    lit = !ctx.sky;
+    const light = () => (lit = lit || world === built);
+    ctx.sky?.ready.then(light, light);
+    // In the game, every pipeline is made once the world is in, rather than
     // the first time something draws with it, mid-walk. Capture mode
-    // compiles and checks them itself (core/capture.js).
+    // makes and checks them itself (core/capture.js).
     const { frame } = ctx;
-    ready = Promise.all(world.map((system) => system.ready)).then(() => params.capture || frame.compileAsync());
+    ready = Promise.all(world.map((system) => system.ready)).then(async () => {
+      if (params.capture || world !== built) return; // or torn down already
+      const problems = await frame.compile();
+      if (!problems.length) return;
+      stopped = true;
+      fail(new Error(`shader compile failed: ${problems.join('; ')}`), 'Stopped.');
+    });
     ready.catch(() => {}); // a system that fails says so itself
   }
   function teardown() {
@@ -167,22 +183,33 @@ function boot() {
     ctx.stats.endFrame();
   }
 
-  if (import.meta.env.DEV) installShaderHotSwap(() => [scene, ctx.frame.outputScene]);
-
+  let resume = () => {};
   if (params.capture) {
     runCapture(ctx, display, app, frame).catch(fail);
   } else {
-    // three.js schedules the next frame before running this one, so an error
-    // would otherwise repeat every frame behind a frozen image.
-    renderer.setAnimationLoop(() => {
+    // The next frame is asked for only after this one ran, so an error stops the loop.
+    let next = 0;
+    const loop = () => {
+      next = 0;
+      if (stopped) return;
       try {
-        frame();
+        if (lit) frame();
+        next = requestAnimationFrame(loop);
       } catch (err) {
-        renderer.setAnimationLoop(null);
         fail(err, 'Stopped.');
       }
-    });
+    };
+    next = requestAnimationFrame(loop);
+    // Dev: a shader fixed and swapped in after an error gets another go.
+    resume = () => {
+      if (next) return;
+      stopped = false;
+      document.getElementById('error').hidden = true;
+      next = requestAnimationFrame(loop);
+    };
   }
+
+  if (import.meta.env.DEV) installShaderHotSwap(() => [...scene.meshes(undefined, [], true).map((m) => m.material), ...ctx.frame.outputMaterials], () => resume());
 }
 
 function preset(name) {
@@ -204,6 +231,7 @@ function captureFail(err) {
 
 function fail(err, title = 'Could not start.') {
   console.error(err);
+  if (err instanceof NeedsWebGPU) title = 'This browser has no WebGPU.';
   captureMode = captureMode || new URLSearchParams(window.location.search).get('capture') === '1';
   if (captureMode) {
     captureFail(err);
@@ -215,26 +243,24 @@ function fail(err, title = 'Could not start.') {
   box.hidden = false;
 }
 
-// Dev only: when a .glsl/.vert/.frag module hot-updates (see vite.config.js),
-// swap the source into every material that uses it. Falls back to a reload
-// when the shader isn't found on a material in the scenes.
-function installShaderHotSwap(scenes) {
+// Dev only: when a .wgsl module hot-updates (see vite.config.js), swap the
+// source into every material that uses it, and restart a game an error
+// stopped (a typo saved a moment ago, say). Falls back to a reload when the
+// shader isn't found on a material in the scene or the frame's passes.
+function installShaderHotSwap(materials, resume) {
   window.addEventListener('shader-hot-swap', ({ detail: { prev, next } }) => {
     let swapped = 0;
-    for (const scene of scenes()) {
-      scene.traverse((obj) => {
-        for (const material of [].concat(obj.material ?? [])) {
-          for (const key of ['vertexShader', 'fragmentShader']) {
-            if (material[key] === prev) {
-              material[key] = next;
-              material.needsUpdate = true;
-              swapped++;
-            }
-          }
-        }
-      });
+    for (const material of new Set(materials())) {
+      if (material.shader !== prev) continue;
+      material.shader = next;
+      material.needsUpdate = true;
+      swapped++;
     }
-    if (swapped) console.info(`[hmr] shader updated in ${swapped} material(s)`);
-    else window.location.reload();
+    if (!swapped) {
+      window.location.reload();
+      return;
+    }
+    console.info(`[hmr] shader updated in ${swapped} material(s)`);
+    resume();
   });
 }

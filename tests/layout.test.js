@@ -29,7 +29,7 @@ test('the pattern matches what node --test runs, and not other names', () => {
   for (const name of ['a.test.js', 'src/plants/alpha-test.js', 'b_test.mjs', 'test-c.js', 'tools/test.js', 'src/test/d.js']) {
     assert.match(name, RUNS_AS_TEST, name);
   }
-  for (const name of ['src/contest.js', 'tools/testing.js', 'src/latest.js', 'tools/check-build.js', 'src/tested/x.glsl']) {
+  for (const name of ['src/contest.js', 'tools/testing.js', 'src/latest.js', 'tools/check-build.js', 'src/tested/x.wgsl']) {
     assert.doesNotMatch(name, RUNS_AS_TEST, name);
   }
 });

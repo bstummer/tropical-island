@@ -1,7 +1,7 @@
 // The island as the GPU draws it: nested grids of samples of world/island.js,
 // finest around the cove, in the cove's frame (island.js). Pure and
 // Node-importable; world/terrain.js uploads the grids as textures, and
-// chunks/terrain.glsl samples them exactly as heightAt() does here, so JS
+// chunks/terrain.wgsl samples them exactly as heightAt() does here, so JS
 // knows the height the camera sees.
 //
 // Level k is a grid of `samples` x `samples` points, `texel` metres apart,
