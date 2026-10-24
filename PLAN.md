@@ -704,7 +704,10 @@ baseline: on the branch nothing runs it any more, and `adee91b` keeps it for sid
     - Some of that was the timer, not the GPU. WebGPU's timer ran from the frame's first pass to its
       last, so it counted the GPU waiting for the CPU between passes: headless on that GPU, a quarter of
       the span (5.6 ms busy in 7.5). WebGL's timer saw the frame as one stream.
-    - The timer now sums the passes' own durations (`core/gpu-stats.js`); a rerun is to compare.
+    - The timer now sums the passes' own durations (`core/gpu-stats.js`). Rerun on `02249b2`: 5.05 ms
+      across all views in both runs, 21% less than WebGL's. Every view takes less GPU time (horizon
+      −48%, sand −5%), and so do the slowest frames (p95 6.7 against 8.4 ms). WebGL's timer may count
+      some idle time too, so WebGPU is at least as fast, not exactly 21% faster.
 
 **Known flaws** (for review):
 - WebGL stored its targets bottom-up, WebGPU top-down, and two things follow. Edges and detail differ
@@ -1129,9 +1132,10 @@ open, next step. Details belong in code comments.
 - **2026-10-24, Stage 4b planned in detail and built (W.1–W.5), on branch `webgpu`:** raw WebGPU with
   a renderer of the project's own (`src/gpu/`), every shader in WGSL, three for maths only (linted).
   Views and named times match `webgl-final` within float noise, every check passes and catches its bad
-  case, and frames take as long as WebGL's (CI's runners vary twofold). Two rounds of outside reviews
-  found no shader port error; their findings are fixed or listed as known flaws. Open: the user's hand-over (benchmark on real
-  hardware against the last WebGL build, the four browsers, merge). Next: 4.8.
+  case. On SwiftShader frames take as long as WebGL's; on the user's GTX 1660 Ti, about a fifth less
+  GPU time, once the GPU timer stopped counting waits between passes. Two rounds of outside reviews
+  found no shader port error; their findings are fixed or listed as known flaws. Open: the user's
+  hand-over (the four browsers, merge). Next: 4.8.
 - **2026-10-24, Stage 4b planned: the WebGPU port.** The user moved the game to raw WebGPU and WGSL
   (Decisions); the port runs on a branch before 4.8. W.0 done: CI green on `adee91b`, baseline
   `webgl-final` captured there. Probed headless Chromium 156: on Windows WebGPU gets the real GPU only
