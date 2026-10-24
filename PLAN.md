@@ -508,8 +508,39 @@ WebGL fallback; MSAA 4 samples on every preset; reversed 32-bit float depth ever
 - **Not yet known:** whether GitHub's runners have the Vulkan loader WebGPU needs (prove it in W.1),
   and whether a Linux container on Windows gives the same bytes as CI.
 
+**Found in the code** (a survey of `adee91b` while planning, 2026-10-24):
+- **Waits on the GPU.** The game reads the GPU back and waits in two places: the sky's light probe on
+  every time change, and the ground tiles' averages at boot. WebGPU readbacks are async, so the time
+  change becomes async: it lands a few frames late, all of it in one frame. No frame mixes two times'
+  light, and a capture's frame at another time still waits for it. The tiles' averages go behind
+  `ready`. Today's stall on a time change (Stage 12's note) goes with it.
+- **GLSL and WGSL differ where a port looks the same:**
+  - `mod` floors, but WGSL's `%` truncates. It has 4 uses, in tile wrapping, with negative cells.
+  - A float converted to an int saturates in WGSL.
+  - `atan(y, x)` becomes `atan2`.
+  - `dpdy` has the opposite sign to `dFdy`, because y points down. It has 6 uses, tangent frames
+    among them.
+  - Fragment positions count from the top. That matters for the output's dither and the readback
+    passes. Tables written and read by fragment position need no flip; fullscreen passes that work
+    from clip space do.
+  - A uniform array can't be sized by an override (`LOD_LEVELS`, the maths fixture's `DIRECTIONS`).
+- **three does more than draw.** It handles the scene graph and its layers, and the draw order
+  (renderOrder, then program and material; the overdraw counts follow it). It also caches programs,
+  generates mipmaps, resolves MSAA depth and copies it into the translucent pass. It provides a basic
+  material, which six fixtures use, and `withSceneOutput()` builds on it. Each needs a counterpart of
+  the project's own, or goes. Mipmaps made another way change the texture detail far off: they must
+  filter as WebGL's did.
+- **Some checks test things that go.** The leaky fixture's `scene.fog` has no scene left to sit in.
+  The depth fallback has no fallback left. "A bad WebGL call" and "a lost context" become a validation
+  error and a lost device. Each check is replaced by its WebGPU counterpart, which doesn't loosen it.
+- **Noise level.** Different shader compilers round differently. The hash avoids `sin()`
+  (`chunks/noise.glsl`), so its patterns can't jump. "Matches `webgl-final`" means: no difference
+  visible in the compare sheet, and every view within a few levels, measured. Anything above that is
+  explained or fixed.
+
 Sub-steps, in order. Each ends with tests, build and check green, plus the checks named. The full
-`verify` is green from W.4 on.
+`verify` is green from W.4 on. Each system's GLSL goes in the step whose WGSL port matches the
+baseline: on the branch nothing runs it any more, and `adee91b` keeps it for side-by-side reading.
 
 - [x] **W.0 Baseline.**
   - Fix CI first: since "Add more beaches" `verify` has failed because the benchmark check times out at
@@ -525,54 +556,79 @@ Sub-steps, in order. Each ends with tests, build and check green, plus the check
     `--exposure 2` as its check takes it). `screenshots/` isn't committed: a machine without them
     recreates them byte for byte from `adee91b` (a git worktree) with the same args and Chromium build
     (CLAUDE.md §4).
-- [ ] **W.1 Device and frame.**
-  - WebGPU device setup, and the "needs WebGPU" note.
-  - Errors: shader compile messages, validation errors, `device.lost`, uncaptured errors. All reach the
-    error overlay and fail a capture.
-  - The HDR target (4× MSAA `rgba16float`, reversed `depth32float`), the output pass (tonemap, sRGB,
-    dither) and the fullscreen pass helper.
-  - The frame's passes: opaque, after-opaque, translucent in linear light, composite, the post chain.
-  - Shader loading with includes and overrides; the uniform buffer for the light state; a small draw
-    list in place of three's scene.
+- [ ] **W.1 Device, frame and tools.** The foundation every later step is checked with.
+  - WebGPU device setup, and the "needs WebGPU" note. The game still opens from `file://`.
+  - Errors: shader compile messages, validation errors, a lost device and uncaptured errors. All reach
+    the error overlay and fail a capture.
+  - A renderer of the project's own in place of three's:
+    - shaders with includes and overrides, hot-swapped in dev as today;
+    - the light state in one uniform buffer that every scene pipeline binds;
+    - a draw list with the frame's passes and three's draw order;
+    - textures with mipmaps;
+    - readbacks.
+  - The frame:
+    - the HDR target (4× MSAA `rgba16float`, reversed `depth32float`);
+    - its passes: opaque, after-opaque, translucent in linear light, composite, the post chain;
+    - the output pass (tonemap, sRGB, dither) and the fullscreen pass.
+
+    The depth fallback and MSAA 2 are never ported.
   - The capture contract (`ready`, extra frames, readback), and the screenshot tool's launch flags and
     backend detection.
-  - Resource tracking for counts, memory and live objects.
+  - A Windows session can make SwiftShader captures that match CI's bytes, so every step compares with
+    `webgl-final` without waiting for CI.
+  - The compare sheet gives, per view, how many pixels differ by how many levels.
+  - The fixtures that need no world, on a basic material of the project's own: `tonecard`, `gradient`,
+    `blend`, `broken`, `shimmer`, `silhouette`, `depth`.
   - Check:
-    - the `tonecard`, `gradient` and `blend` fixtures match `webgl-final` and pass;
-    - the errors check catches a broken shader, a validation error, a lost device and blending outside
-      the translucent pass;
-    - a push of the branch shows WebGPU working in CI.
+    - `tonecard`, `gradient` and `blend` match `webgl-final` and pass;
+    - the `shimmer`, `silhouette` and `depth` checks pass;
+    - the errors check catches a broken shader out of sight, a validation error, a lost device and
+      blending outside the translucent pass;
+    - a push of the branch shows WebGPU working in CI, and a capture there is byte-identical to the
+      same capture made locally.
 - [ ] **W.2 Sky and light.**
-  - The atmosphere tables (transmittance, multiple scattering, sky view, the 3D aerial table, sunlight by
-    height) and the probe readback to SH.
-  - The sky drawing last on the far plane, the light state, time changes, and the placeholder water.
+  - The atmosphere's tables:
+    - transmittance;
+    - multiple scattering;
+    - sky view;
+    - the 3D aerial table;
+    - sunlight by height.
+  - The probe and the light state from it, and the shared lighting chunks.
+  - The sky drawing last on the far plane, and the placeholder water.
+  - A time change lands whole (see above).
   - Check:
     - the `maths`, `haze` and `light` checks pass at their current limits and still catch their
       deliberate mistakes;
-    - the runtime time check passes;
+    - the runtime time check passes, and `stale-time` is still caught;
     - the `horizon` view matches the baseline at every named time.
 - [ ] **W.3 Ground.**
-  - Heightmap and ground textures, the LOD mesh with instancing, terrain variants as overrides.
-  - The generated textures (sand, rock, green) with mipmaps, and the bounce map.
+  - The heightmap's and the ground's textures, the LOD mesh with instancing, and the terrain's
+    variants as overrides.
+  - The generated tiles (sand, rock, green) with mipmaps, their averages behind `ready`, and the
+    bounce map.
   - Check:
-    - the `terrain`, `surfaces` and `depth` checks pass;
+    - the `terrain`, `surfaces` and `patches` checks pass and still catch their deliberate mistakes;
     - the `beach`, `shoreline`, `jungle-edge`, `overview`, `into-the-sun` and `sand` views match
-      `webgl-final` in the compare sheet;
-    - captures stay within the time budget.
-- [ ] **W.4 Rocks and measurements.**
+      `webgl-final`, far ground included;
+    - captures take no longer than `webgl-final`'s.
+- [ ] **W.4 Rocks, measurements and teardown.**
   - Rocks and their offsets pass.
   - Cost counts (draws, triangles, passes, pipelines, memory) and overdraw.
-  - GPU time via timestamp queries, the readout (F3) and the benchmark, which names the adapter.
-  - Teardown, with the leaky and stale-time fixtures.
+  - GPU time via timestamp queries.
+  - The readout (F3), and the benchmark, which names the adapter.
+  - Teardown, with the `leaky` and `heavy` fixtures in WebGPU's terms.
   - Check:
-    - full `npm run verify` green on SwiftShader, locally and in CI;
-    - every view and named time matches `webgl-final` (differences only at noise level, a few levels);
+    - the full `npm run verify` is green on SwiftShader, locally and in CI, and CI's build job takes no
+      longer than on `adee91b`;
+    - every view and named time matches `webgl-final`;
+    - the cost numbers match `webgl-final`'s, or each difference is explained;
     - every tool check still catches its bad case;
     - the quality change (high → low → high) leaks nothing and gives the same picture.
 - [ ] **W.5 Cut-over.**
-  - Delete the GLSL, three's renderer use, the depth fallback (its fixture, check and `nearFallback`) and
-    MSAA 2.
+  - Delete what's left of three's renderer and of WebGL: the depth fallback's fixture, check and
+    `nearFallback`, `?depth=`, and the MSAA knob.
   - Add a lint to `npm run check` so three is imported for maths only.
+  - Review the port from outside: a reader who hasn't seen it compares the WGSL with `adee91b`'s GLSL.
   - Update CLAUDE.md:
     - §2: three for maths only;
     - §3: flags, `--gl`;
@@ -995,6 +1051,10 @@ Not part of the plan. Build one only if the user asks for it: a passing rain sho
 Newest first. One short entry per session, only a few lines: date, stage, what changed, what is still
 open, next step. Details belong in code comments.
 
+- **2026-10-24, Stage 4b planned in detail** from a survey of the code. Two things wait on GPU
+  readbacks (a time change, the tiles' averages) and become async. The survey also found traps where
+  WGSL reads like GLSL, what three does besides drawing, and four checks whose subject goes. W.1–W.5
+  are sharpened, and each system's GLSL goes once its port matches. Next: W.1 on a branch.
 - **2026-10-24, Stage 4b planned: the WebGPU port.** The user moved the game to raw WebGPU and WGSL
   (Decisions); the port runs on a branch before 4.8. W.0 done: CI green on `adee91b`, baseline
   `webgl-final` captured there. Probed headless Chromium 156: on Windows WebGPU gets the real GPU only
