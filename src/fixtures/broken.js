@@ -1,23 +1,24 @@
 // Tool fixture (?fixture=broken): mistakes that only a check of every material
 // catches, on meshes behind the camera, so nothing ever draws them: a shader
-// that doesn't compile, a built-in material that skips sceneOutput(), and one
-// that blends outside the translucent pass (post/frame.js).
-// tools/screenshot.js requires that the capture fails on both, then breaks the
-// page's WebGL further (a bad call, a lost context) and requires that each
-// shows. Not part of the island.
-import * as THREE from 'three';
-import vertexShader from './gradient.vert';
-import fragmentShader from './broken.frag';
-import { withSceneOutput } from '../post/scene-output.js';
+// that doesn't compile, a material that skips sceneOutput(), and one that
+// blends outside the translucent pass (post/frame.js).
+// tools/screenshot.js requires that the capture fails on all three, then breaks
+// the page's GPU further (a validation error, a lost device) and requires that
+// each shows. Not part of the island.
+import shader from './broken.wgsl';
+import { basicMaterial } from './basic.js';
+import { Material, TRANSLUCENT_BLEND } from '../gpu/material.js';
+import { plane } from '../gpu/geometry.js';
+import { Mesh } from '../gpu/scene.js';
 
 export function create(ctx) {
-  const { scene, camera, frame } = ctx;
+  const { scene, camera } = ctx;
   const meshes = [
-    new THREE.ShaderMaterial({ name: 'fixture-broken', vertexShader, fragmentShader, uniforms: { ...frame.uniforms } }),
-    new THREE.MeshBasicMaterial({ name: 'fixture-unwrapped' }),
-    withSceneOutput(new THREE.MeshBasicMaterial({ name: 'fixture-blended', transparent: true, opacity: 0.5 }), frame),
+    new Material({ name: 'fixture-broken', shader }),
+    basicMaterial({ name: 'fixture-unwrapped', raw: true }),
+    basicMaterial({ name: 'fixture-blended', transparent: true, opacity: 0.5, blend: TRANSLUCENT_BLEND }),
   ].map((material, i) => {
-    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), material);
+    const mesh = new Mesh(plane(1, 1), material);
     mesh.position.copy(camera.position);
     mesh.quaternion.copy(camera.quaternion);
     mesh.translateX(2 * i).translateZ(10); // behind the camera

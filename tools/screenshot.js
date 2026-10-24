@@ -17,9 +17,14 @@
 // changed in the page), and the game runs for a few frames in player mode (no
 // ?capture) and as the benchmark.
 // Compare writes screenshots/compare/<A>_vs_<B>.png: A | B | diff for every view.
-// Exits non-zero on console errors, page errors, shader and WebGL errors, a lost
-// context, network requests, capture errors, timeouts or a failed check, in
+// Exits non-zero on console errors, page errors, shader and WebGPU errors, a lost
+// device, network requests, capture errors, timeouts or a failed check, in
 // either mode. Limits only warn.
+//
+// --gl picks the WebGPU adapter: hardware (the machine's GPU) or swiftshader
+// (Chromium's software GPU, which CI uses; only Linux has it: on Windows, run
+// the tool in a Linux container with node tools/linux.js); auto takes the
+// hardware and falls back to SwiftShader.
 // The pure helpers are exported for tests/screenshot.test.js.
 import { chromium } from 'playwright';
 import { execFileSync } from 'node:child_process';
@@ -52,16 +57,19 @@ const BENCH_SECONDS = 0.25; // per view: enough to prove the benchmark works
 const CHECKS_AT_ONCE = 2; // see runChecks()
 const SHEET_ORIGIN = 'http://contact-sheet.local';
 
+// WebGPU in the headless shell needs --enable-unsafe-webgpu. On Windows its real
+// GPU (D3D12) needs Dawn to compile with FXC: the shell ships without DXC.
 const HARDWARE_ARGS = {
-  win32: ['--use-angle=d3d11'],
-  darwin: ['--use-angle=metal'],
-  linux: ['--use-angle=vulkan', '--enable-features=Vulkan'],
+  win32: ['--disable-dawn-features=use_dxc'],
+  darwin: [],
+  linux: ['--enable-features=Vulkan'],
 };
 const BACKENDS = {
-  hardware: ['--enable-gpu', '--ignore-gpu-blocklist', ...(HARDWARE_ARGS[process.platform] ?? [])],
-  swiftshader: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'],
+  hardware: ['--enable-unsafe-webgpu', '--enable-gpu', '--ignore-gpu-blocklist', ...(HARDWARE_ARGS[process.platform] ?? [])],
+  // The compositor shows a WebGPU canvas through GL: without ANGLE on SwiftShader too, presenting loses the device.
+  swiftshader: ['--enable-unsafe-webgpu', '--enable-features=Vulkan', '--use-vulkan=swiftshader', '--use-webgpu-adapter=swiftshader', '--use-angle=swiftshader'],
 };
-const SOFTWARE_GL = /swiftshader|llvmpipe|softpipe|software|basic render/i;
+const SOFTWARE_GPU = /swiftshader|llvmpipe|softpipe|software|basic render|warp/i;
 
 const OPTIONS = new Set(['views', 'label', 'size', 't', 'time', 'seed', 'quality', 'tonemap', 'exposure', 'fixture', 'gl']);
 const FLAGS = new Set(['checks']);
@@ -94,7 +102,7 @@ async function capture(args) {
   }
 
   const { browser, kind, gl } = await launch(args.gl ?? 'auto');
-  console.log(`screenshot: WebGL2 backend = ${kind} (${gl}), Chromium ${browser.version()}`);
+  console.log(`screenshot: WebGPU adapter = ${kind} (${gl}), Chromium ${browser.version()}`);
   console.log(`screenshot: ${views.length} view(s) at ${width}x${height} -> ${rel(outDir)}${args.checks ? ', then the checks' : ''}`);
 
   const started = Date.now();
@@ -278,7 +286,7 @@ function summarize(result) {
   const gpu = m.gpuMs == null ? '' : ` · GPU ${m.gpuMs.toFixed(2)} ms`;
   return (
     `shimmer ${percent(m.shimmerPercent, 2)} · banding ${percent(m.bandingPercent, 2)} · motion ${percent(m.motionPercent, 1)} · ` +
-    `${count(m.drawCalls, 'draw')} · ${tris(m.triangles)} tris · ${count(m.passes, 'pass', 'passes')} · ${count(m.programs, 'program')} · ` +
+    `${count(m.drawCalls, 'draw')} · ${tris(m.triangles)} tris · ${count(m.passes, 'pass', 'passes')} · ${count(m.pipelines, 'pipeline')} · ` +
     `overdraw ${m.overdraw.toFixed(2)} · tex ${megabytes(m.textureMB)} · RT ${megabytes(m.renderTargetMB)}${gpu} · ` +
     `${Math.round(result.timing.frameMs)} ms/frame`
   );
@@ -382,14 +390,6 @@ function toolCheckTasks(context, fileUrl, query, view, outDir) {
     // 0.13% of the frame as built (SwiftShader lets a few far pixels of the lower
     // plane through; hardware GL shows none), 42% without reversed depth.
     () => checkClean(context, fileUrl, { ...params, fixture: 'depth' }, dir, 'two planes 5 cm apart, from a hilltop'),
-    // Browsers without EXT_clip_control (Firefox) get the fallback depth set-up,
-    // which no other run exercises. Its far z-fighting is known (PLAN.md Stage
-    // 18), so only errors fail this check, and the share is reported.
-    () => checkFixture(context, fileUrl, { ...params, fixture: 'depth', depth: 'fallback', name: 'depth fallback' }, async (page, info, problems) => {
-      const { percent } = await measureShimmer(page, info, join(dir, 'depth-fallback.png'));
-      if (info.reversedDepth) problems.push({ kind: 'tool check', text: 'depth=fallback still renders with reversed depth' });
-      return `the depth fixture without EXT_clip_control (Firefox): ${percent.toFixed(2)}% of the frame shimmers, not limited yet`;
-    }),
     () => checkErrors(context, fileUrl, params),
     // Slow gradients must come out dithered, without bands.
     () => checkFixture(context, fileUrl, { ...params, fixture: 'gradient' }, async (page, info, problems) => {
@@ -524,8 +524,8 @@ function toolCheckTasks(context, fileUrl, query, view, outDir) {
     ),
     () => checkFixture(context, fileUrl, { ...params, fixture: 'leaky' }, async (page, info, problems) => {
       const { leaks, trip } = await qualityRoundTrip(page, query);
-      // It forgets a texture, a render target (a framebuffer), a mesh in the scene and the scene's fog.
-      const expected = ['Texture', 'Framebuffer', 'left in the scene', 'scene.fog'];
+      // It forgets a texture, a render target and a mesh in the scene.
+      const expected = ['Texture', 'RenderTarget', 'left in the scene'];
       if (!expected.every((what) => leaks.some((leak) => leak.includes(what)))) {
         problems.push({ kind: 'tool check', text: `leaky fixture: ${trip} reports only ${leaks.join(', ') || 'nothing'}` });
       }
@@ -568,7 +568,7 @@ async function changeTime(context, fileUrl, params, page, time) {
 // that would pass every measurement, must still fail a capture: a shader that
 // doesn't compile, a material without sceneOutput() and one that blends outside
 // the translucent pass, all out of sight
-// (src/fixtures/broken.js), then a bad WebGL call and a lost context. Those
+// (src/fixtures/broken.js), then a validation error and a lost device. Those
 // problems are expected here; anything else on the page still fails the check.
 async function checkErrors(context, fileUrl, params) {
   const started = Date.now();
@@ -577,16 +577,17 @@ async function checkErrors(context, fileUrl, params) {
     ['a hidden shader that fails to compile', (p) => p.kind === 'shader error' && /fixture-broken/.test(p.text)],
     ['a material without sceneOutput()', (p) => /without sceneOutput\(\): fixture-unwrapped/.test(p.text)],
     ['a material that blends outside the translucent pass', (p) => /blend outside the translucent pass.*: fixture-blended/.test(p.text)],
-    ['a bad WebGL call', (p) => p.kind === 'webgl error' && /INVALID_ENUM/.test(p.text)],
-    ['a lost context', (p) => p.kind === 'context lost'],
+    ['a validation error', (p) => p.kind === 'webgpu error' && /MAP_WRITE|MapWrite|usage/i.test(p.text)],
+    ['a lost device', (p) => p.kind === 'device lost'],
   ];
   try {
-    await page.evaluate(() => {
-      const gl = document.getElementById('view').getContext('webgl2');
-      gl.bindTexture(0x1234, null); // no such target: INVALID_ENUM
-      gl.getExtension('WEBGL_lose_context').loseContext();
+    await page.evaluate(async () => {
+      const { device } = document.getElementById('view').getContext('webgpu').getConfiguration();
+      device.createBuffer({ size: 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.MAP_WRITE }); // not allowed together
+      await new Promise((resolve) => setTimeout(resolve, 100)); // the error arrives on its own
+      device.destroy();
+      await device.lost;
     });
-    await page.waitForFunction(() => document.getElementById('view').getContext('webgl2').isContextLost());
     await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 100))); // for the console messages to arrive
   } catch (err) {
     problems.push(classify(err.message.split('\n')[0], 'capture error'));
@@ -630,7 +631,6 @@ async function qualityRoundTrip(page, query) {
   const left = await page.evaluate(() => window.__CAPTURE__.teardown());
   const leaks = resourceLeaks(before, after);
   if (left.sceneObjects) leaks.push(`${left.sceneObjects} object(s) left in the scene`);
-  for (const setting of left.sceneSettings) leaks.push(`scene.${setting} left set`);
   return { leaks, samePicture, trip: `${home} → ${away} (and a resize) → ${home}` };
 }
 
@@ -762,7 +762,7 @@ export function hazeProblems(haze, limit, { high = false, sunOnly = false } = {}
   return problems;
 }
 
-// What grew between two __CAPTURE__.resources() snapshots: live WebGL objects
+// What grew between two __CAPTURE__.resources() snapshots: live GPU objects
 // by kind and memory, as short phrases ("+2 Texture", "+0.2 MB textures").
 export function resourceLeaks(before, after) {
   const leaks = [];
@@ -835,7 +835,7 @@ const METRIC_LABELS = {
   drawCalls: ['draw calls', String],
   triangles: ['triangles', (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(2)} M` : `${(n / 1e3).toFixed(1)} k`)],
   passes: ['render passes', String],
-  programs: ['shader programs', String],
+  pipelines: ['pipelines', String],
   overdraw: ['overdraw', (n) => `${n.toFixed(2)} fragments/pixel`],
   textureMB: ['texture memory', megabytes],
   renderTargetMB: ['render-target memory', megabytes],
@@ -1008,18 +1008,18 @@ export function benchmarkProblems(summary, results, viewNames) {
   return problems.map((text) => ({ kind: 'benchmark', text }));
 }
 
-// WebGL errors, which the browser reports as console warnings. Its performance
-// notes ("GPU stall due to ReadPixels") stay warnings.
-const WEBGL_ERROR = /^WebGL: (INVALID_|CONTEXT_LOST|too many errors)|\bGL_INVALID_[A-Z_]+|RENDER WARNING/;
+// WebGPU errors the browser reports as console warnings (the game reports the
+// ones it hears of as errors itself, gpu/device.js).
+const GPU_ERROR = /^WebGPU|\[Invalid [A-Z]|GPUValidationError|validation error/i;
 
-// Turns console errors, WebGL errors, page errors and requests for anything but
+// Turns console errors, WebGPU errors, page errors and requests for anything but
 // the built file into problems.
 function watchPage(page, fileUrl) {
   const problems = [];
   const consoleWarnings = [];
   page.on('console', (msg) => {
     if (msg.type() === 'error') problems.push(classify(msg.text()));
-    else if (msg.type() === 'warning' && WEBGL_ERROR.test(msg.text())) problems.push({ kind: 'webgl error', text: msg.text() });
+    else if (msg.type() === 'warning' && GPU_ERROR.test(msg.text())) problems.push({ kind: 'webgpu error', text: msg.text() });
     else if (msg.type() === 'warning') consoleWarnings.push(msg.text());
   });
   page.on('pageerror', (err) => problems.push({ kind: 'page error', text: err.stack ?? err.message }));
@@ -1048,8 +1048,9 @@ function report(name, ms, detail, problems, consoleWarnings, warnings = []) {
 }
 
 function classify(text, fallback = 'console error') {
-  if (/WebGL context was lost/.test(text)) return { kind: 'context lost', text };
-  if (/shader (error|compile)|WebGLProgram|ERROR: \d+:\d+/i.test(text)) return { kind: 'shader error', text };
+  if (/GPU device was lost/.test(text)) return { kind: 'device lost', text };
+  if (/shader (error|compile)/i.test(text)) return { kind: 'shader error', text };
+  if (/WebGPU error/.test(text)) return { kind: 'webgpu error', text };
   return { kind: fallback, text };
 }
 
@@ -1144,18 +1145,22 @@ async function launch(mode) {
     let browser;
     try {
       // Headless shell only: no `channel:`, never headed. Other modes can clip the user's real mouse on Windows.
+      if (kind === 'swiftshader' && process.platform !== 'linux') {
+        throw new Error('WebGPU has a SwiftShader adapter on Linux only: run this in a Linux container (node tools/linux.js node tools/screenshot.js ...)');
+      }
       browser = await chromium.launch({ headless: true, args: BACKENDS[kind] });
-      const gl = await probeWebGL2(browser);
-      if (!gl) throw new Error('no WebGL2 context');
-      if (kind === 'hardware' && SOFTWARE_GL.test(gl)) throw new Error(`got a software renderer instead (${gl})`);
+      const gl = await probeWebGPU(browser);
+      if (!gl) throw new Error('no WebGPU adapter');
+      if (kind === 'hardware' && SOFTWARE_GPU.test(gl)) throw new Error(`got a software adapter instead (${gl})`);
+      if (kind === 'swiftshader' && !/swiftshader/i.test(gl)) throw new Error(`got another adapter instead (${gl})`);
       return { browser, kind, gl };
     } catch (err) {
       await browser?.close();
       tried.push(`${kind}: ${explainLaunchError(err.message)}`);
-      if (order.length > 1 && kind === 'hardware') console.log(`screenshot: hardware GL unavailable (${tried.at(-1)}), trying SwiftShader`);
+      if (order.length > 1 && kind === 'hardware') console.log(`screenshot: hardware WebGPU unavailable (${tried.at(-1)}), trying SwiftShader`);
     }
   }
-  throw new Error(`could not start headless Chromium with WebGL2.\n  ${tried.join('\n  ')}`);
+  throw new Error(`could not start headless Chromium with WebGPU.\n  ${tried.join('\n  ')}`);
 }
 
 // Playwright's first error line can be generic ("Target page, context or browser has
@@ -1167,14 +1172,17 @@ export function explainLaunchError(message) {
   return message.split('\n')[0];
 }
 
-async function probeWebGL2(browser) {
+// The adapter as gpu/device.js describes it ("google swiftshader"), or null without one.
+// WebGPU needs a secure context: the page is the built game's own file:// URL.
+async function probeWebGPU(browser) {
   const page = await browser.newPage();
   try {
-    return await page.evaluate(() => {
-      const gl = document.createElement('canvas').getContext('webgl2');
-      if (!gl) return null;
-      const ext = gl.getExtension('WEBGL_debug_renderer_info');
-      return String(ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER));
+    await page.goto(pathToFileURL(BUILT_HTML).href + '?probe');
+    return await page.evaluate(async () => {
+      const adapter = await navigator.gpu?.requestAdapter({ powerPreference: 'high-performance' });
+      if (!adapter) return null;
+      const { vendor, architecture, device, description } = adapter.info ?? {};
+      return [vendor, architecture, device, description].filter(Boolean).join(' ') || 'unknown adapter';
     });
   } finally {
     await page.close();

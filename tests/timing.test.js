@@ -44,19 +44,18 @@ test('the benchmark summary names the machine and has a row per view plus all vi
   ];
   const text = formatBenchmark({
     build: 'abc1234',
-    gpu: 'ANGLE (Test GPU)',
+    gpu: 'nvidia turing',
     browser: 'TestBrowser/1.0',
     screen: { width: 1920, height: 1080, pixelRatio: 1.25, buffer: [2400, 1350] },
     preset: 'high',
     quality: { renderScale: 1, maxPixelRatio: 2 },
     msaa: 4,
-    reversedDepth: true,
     tonemap: 'agx-punchy',
     warmupSeconds: 1,
     seconds: 5,
     results,
   });
-  for (const expected of ['build      abc1234', 'gpu        ANGLE (Test GPU)', 'browser    TestBrowser/1.0', '1920×1080 CSS px × 1.25 → drawing buffer 2400×1350', 'preset     high', 'MSAA 4', 'reversed depth yes']) {
+  for (const expected of ['build      abc1234', 'gpu        nvidia turing', 'browser    TestBrowser/1.0', '1920×1080 CSS px × 1.25 → drawing buffer 2400×1350', 'preset     high', 'MSAA 4', 'tonemap agx-punchy']) {
     assert.ok(text.includes(expected), `missing "${expected}"`);
   }
   const rows = text.split('\n');

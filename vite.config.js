@@ -4,7 +4,7 @@ import glsl from 'vite-plugin-glsl';
 import { viteSingleFile } from 'vite-plugin-singlefile';
 import { checkOutputFiles } from './tools/check-build.js';
 
-const SHADER_ID = /\.(glsl|vert|frag)(\?.*)?$/;
+const SHADER_ID = /\.(glsl|vert|frag|wgsl)(\?.*)?$/;
 
 // The commit the game is built from, shown in the benchmark summary
 // (src/core/benchmark.js) so numbers from other machines name their build.

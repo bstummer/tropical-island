@@ -594,15 +594,15 @@ export const capture = {
 // and warns above them. Guesses until PLAN.md Stage 11 calibrates them on real
 // machines; the counts are the same on every GPU, so they work in CI too.
 //   drawCalls, triangles   per frame, all passes
-//   passes                 runs of drawing into one framebuffer, per frame
-//   programs               linked shader programs
+//   passes                 render passes that draw or clear, per frame
+//   pipelines              render pipelines alive
 //   overdraw               fragments shaded per pixel of the main view, on average
 //   textureMB              textures, mipmaps included
-//   renderTargetMB         render targets, renderbuffers and the canvas
+//   renderTargetMB         render targets (textures drawn into) and the canvas
 export const budget = {
-  high: { drawCalls: 1500, triangles: 3e6, passes: 16, programs: 64, overdraw: 5, textureMB: 512, renderTargetMB: 256 },
-  medium: { drawCalls: 1000, triangles: 1.5e6, passes: 12, programs: 64, overdraw: 4, textureMB: 384, renderTargetMB: 160 },
-  low: { drawCalls: 600, triangles: 7.5e5, passes: 8, programs: 64, overdraw: 3, textureMB: 128, renderTargetMB: 96 },
+  high: { drawCalls: 1500, triangles: 3e6, passes: 16, pipelines: 64, overdraw: 5, textureMB: 512, renderTargetMB: 256 },
+  medium: { drawCalls: 1000, triangles: 1.5e6, passes: 12, pipelines: 64, overdraw: 4, textureMB: 384, renderTargetMB: 160 },
+  low: { drawCalls: 600, triangles: 7.5e5, passes: 8, pipelines: 64, overdraw: 3, textureMB: 128, renderTargetMB: 96 },
 };
 
 export const build = {

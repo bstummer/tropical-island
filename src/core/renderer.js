@@ -1,45 +1,16 @@
-import * as THREE from 'three';
-import { instrument } from './gl-stats.js';
+import { createDevice } from '../gpu/device.js';
+import { createRenderer as createGpuRenderer } from '../gpu/renderer.js';
+import { instrument } from './gpu-stats.js';
 
-// WebGL2 renderer setup. Drawing-buffer size = CSS size x pixel ratio, where
-// pixel ratio = min(devicePixelRatio, preset.maxPixelRatio) x preset.renderScale.
-// The context is created here, not by three.js, so gl-stats.js can count every
-// call from the first one on.
-export function createRenderer({ canvas, quality: preset, capture, fallbackDepth = false }) {
+// The display: the WebGPU device, the renderer (gpu/renderer.js) and the
+// canvas's size. Drawing-buffer size = CSS size x pixel ratio, where pixel
+// ratio = min(devicePixelRatio, preset.maxPixelRatio) x preset.renderScale.
+// onError(err) hears of errors on the GPU that nothing caught (gpu/device.js).
+export async function createRenderer({ canvas, quality: preset, capture, onError }) {
   let quality = preset;
-  // The canvas only receives post's output pass (post/frame.js), so it needs no
-  // depth and no MSAA. Alpha as three.js would request it.
-  const gl = canvas.getContext('webgl2', {
-    alpha: true,
-    depth: false,
-    stencil: false,
-    antialias: false,
-    premultipliedAlpha: true,
-    powerPreference: 'high-performance',
-    // Capture mode stops rendering once ready; keep the last frame readable.
-    preserveDrawingBuffer: capture,
-  });
-  if (!gl) throw new Error('WebGL2 is not available.');
-  // Every render target holds floats (the HDR scene, the sky's tables); without
-  // this, drawing into them fails silently.
-  if (!gl.getExtension('EXT_color_buffer_float')) throw new Error('This browser cannot render to float textures (EXT_color_buffer_float).');
-  const stats = instrument(gl);
-
-  let renderer;
-  try {
-    // Reversed depth needs EXT_clip_control; three.js falls back to normal depth
-    // without it (renderer.capabilities.reversedDepthBuffer says which), as it
-    // does with fallbackDepth.
-    renderer = new THREE.WebGLRenderer({ canvas, context: gl, reversedDepthBuffer: !fallbackDepth });
-  } catch (err) {
-    throw new Error(`WebGL2 is not available: ${err.message}`);
-  }
-  // three.js clears transparent when the context has alpha; the frame is opaque.
-  renderer.setClearAlpha(1);
-
-  // Linear workflow, sRGB output. Tonemapping belongs to the post pass, not here.
-  renderer.outputColorSpace = THREE.SRGBColorSpace;
-  renderer.toneMapping = THREE.NoToneMapping;
+  const gpu = await createDevice(canvas, { capture, onError, instrument });
+  const renderer = createGpuRenderer(gpu);
+  const { stats } = gpu;
 
   const listeners = new Set();
   const size = { width: 1, height: 1, pixelRatio: 1 };
@@ -48,8 +19,10 @@ export function createRenderer({ canvas, quality: preset, capture, fallbackDepth
     size.width = Math.max(1, canvas.clientWidth || window.innerWidth);
     size.height = Math.max(1, canvas.clientHeight || window.innerHeight);
     size.pixelRatio = Math.min(window.devicePixelRatio || 1, quality.maxPixelRatio) * quality.renderScale;
-    renderer.setPixelRatio(size.pixelRatio);
-    renderer.setSize(size.width, size.height, false);
+    // As three.js sized it: the drawing buffer rounds down.
+    canvas.width = Math.floor(size.width * size.pixelRatio);
+    canvas.height = Math.floor(size.height * size.pixelRatio);
+    stats.setCanvas(canvas.width, canvas.height, gpu.canvasFormat);
     for (const fn of listeners) fn(size);
   }
 
@@ -57,9 +30,14 @@ export function createRenderer({ canvas, quality: preset, capture, fallbackDepth
   resize();
 
   return {
+    gpu,
     renderer,
-    stats, // see gl-stats.js
+    stats, // see gpu-stats.js
     size,
+    // The drawing buffer in pixels.
+    get buffer() {
+      return { width: canvas.width, height: canvas.height };
+    },
     // fn(size) runs now and after every resize.
     onResize(fn) {
       listeners.add(fn);
@@ -71,16 +49,15 @@ export function createRenderer({ canvas, quality: preset, capture, fallbackDepth
       quality = preset;
       resize();
     },
-    // Human-readable GL backend, e.g. "ANGLE (NVIDIA, ... Direct3D11 ...)" or "... SwiftShader ...".
+    // The adapter, e.g. "google swiftshader" or "nvidia turing".
     backend() {
-      const gl = renderer.getContext();
-      const ext = gl.getExtension('WEBGL_debug_renderer_info');
-      return ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER);
+      return gpu.describe();
     },
     dispose() {
       window.removeEventListener('resize', resize);
       listeners.clear();
       renderer.dispose();
+      gpu.destroy();
     },
   };
 }

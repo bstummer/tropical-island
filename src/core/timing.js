@@ -36,7 +36,7 @@ export function formatReadout({ frames, gpu, counts, memory, preset, size, msaa,
 // The benchmark summary, meant to be pasted into a session. `results` has one
 // entry per view: { view, frameMs: [...], gpuMs: [...], counts } (gpuMs empty
 // when the browser has no timer queries).
-export function formatBenchmark({ build, gpu, browser, screen, preset, quality, msaa, reversedDepth, tonemap, warmupSeconds, seconds, results }) {
+export function formatBenchmark({ build, gpu, browser, screen, preset, quality, msaa, tonemap, warmupSeconds, seconds, results }) {
   const widths = [13, 7, 7, 7, 7, 8, 8, 7, 10, 7];
   const line = (cells) =>
     cells
@@ -66,7 +66,7 @@ export function formatBenchmark({ build, gpu, browser, screen, preset, quality, 
     `browser    ${browser}`,
     `screen     ${screen.width}×${screen.height} CSS px × ${screen.pixelRatio} → drawing buffer ${screen.buffer[0]}×${screen.buffer[1]}`,
     `preset     ${preset} (render scale ${quality.renderScale}, max pixel ratio ${quality.maxPixelRatio}, MSAA ${msaa}), ` +
-      `reversed depth ${reversedDepth ? 'yes' : 'no'}, tonemap ${tonemap}`,
+      `tonemap ${tonemap}`,
     `measured   ${seconds} s per view after ${warmupSeconds} s to settle`,
     '',
     line(['', 'frame ms', '', '', '', 'GPU ms', '', '', '', '']),

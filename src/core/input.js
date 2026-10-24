@@ -6,9 +6,8 @@ import * as THREE from 'three';
 //   G: walk on the ground at eye height (Shift runs), or fly again; in deep water the eye floats
 //   P (dev builds only): log the camera as a views.js entry and copy it to the clipboard
 export function create(ctx) {
-  const { camera, renderer, config } = ctx;
+  const { camera, canvas, config } = ctx;
   const { movement } = config;
-  const canvas = renderer.domElement;
   const overlay = document.getElementById('start');
 
   const pressed = new Set();
