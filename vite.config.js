@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { defineConfig } from 'vite';
 import glsl from 'vite-plugin-glsl';
 import { viteSingleFile } from 'vite-plugin-singlefile';
-import { checkOutputFiles } from './tools/check-build.js';
+import { checkModules, checkOutputFiles } from './tools/check-build.js';
 
 const SHADER_ID = /\.wgsl(\?.*)?$/;
 
@@ -59,18 +59,22 @@ function shaderHotSwap() {
   };
 }
 
-// The build must emit index.html and nothing else. Runs after
-// vite-plugin-singlefile has dropped the inlined chunks, and fails the build
-// before anything is written.
+// The build must emit index.html and nothing else, made of index.html and
+// src/ alone (no module from a package). Runs after vite-plugin-singlefile has
+// dropped the inlined chunks, and fails the build before anything is written.
 function singleFileOutput() {
+  let root = '';
   return {
     name: 'single-file-output',
     apply: 'build',
     enforce: 'post',
+    configResolved(config) {
+      root = config.root;
+    },
     generateBundle: {
       order: 'post',
       handler(_options, bundle) {
-        const failures = checkOutputFiles(Object.keys(bundle));
+        const failures = [...checkOutputFiles(Object.keys(bundle)), ...checkModules([...this.getModuleIds()], root)];
         if (failures.length) this.error(failures.map((f) => f.message).join('\n'));
       },
     },
@@ -102,7 +106,7 @@ export default defineConfig({
     // tools/check-build.js reports raw and gzip size against the budget instead.
     reportCompressedSize: false,
     chunkSizeWarningLimit: 8192,
-    // Keep license comments (three.js's MIT notice), which minifying would drop.
+    // Keep license comments (three.js's MIT notice in src/maths/index.js), which minifying would drop.
     rolldownOptions: { output: { comments: { legal: true } } },
   },
 });

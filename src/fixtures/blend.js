@@ -8,7 +8,7 @@
 // puts the scene beyond the bands). tools/screenshot.js compares the two halves. It
 // also routes the frame through a post pass that changes nothing, so the post
 // chain runs. Not part of the island.
-import { MathUtils, Vector3 } from 'three';
+import { Vector3, degToRad } from '../maths/index.js';
 import shader from './blend.wgsl';
 import copyShader from './copy.wgsl';
 import { Material } from '../gpu/material.js';
@@ -50,7 +50,7 @@ export function create(ctx) {
   // [bottom, top] of its height (all of it, with a margin, by default).
   const meshes = [];
   const card = (distance, [left, right], m, [bottom, top] = [-0.01, 1.01]) => {
-    const height = 2 * distance * Math.tan(MathUtils.degToRad(camera.fov / 2));
+    const height = 2 * distance * Math.tan(degToRad(camera.fov / 2));
     const width = height * camera.aspect;
     const mesh = new Mesh(plane((right - left) * width, (top - bottom) * height), m);
     mesh.position.set(((left + right) / 2 - 0.5) * width, ((top + bottom) / 2 - 0.5) * height, -distance);

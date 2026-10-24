@@ -6,7 +6,7 @@
 // A render target (createTarget) is the textures one pass draws into: colour
 // (with samples > 1, drawn multisampled and resolved into `color`, which is
 // what others read) and optionally depth.
-import { DataUtils } from 'three';
+import { fromHalfFloat } from '../maths/index.js';
 import { bytesPerTexel } from '../core/gpu-stats.js';
 import mipmapShader from './mipmap.wgsl';
 
@@ -113,7 +113,7 @@ export class Texture {
       for (let row = 0; row < height; row++) packed.set(mapped.subarray(row * bytesPerRow, row * bytesPerRow + rowBytes), row * rowBytes);
       buffer.unmap();
       if (texel === 4 && this.format.endsWith('8unorm')) return packed;
-      if (this.format.includes('16float')) return Float32Array.from(new Uint16Array(packed.buffer), (h) => DataUtils.fromHalfFloat(h));
+      if (this.format.includes('16float')) return Float32Array.from(new Uint16Array(packed.buffer), fromHalfFloat);
       return new Float32Array(packed.buffer);
     } finally {
       buffer.destroy();

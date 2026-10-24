@@ -23,7 +23,7 @@
 // once ready), shapes, clearance }. clearance (world/scatter.js) holds the
 // rocks' footprints once ready: later placement (Stages 8–9) passes it to
 // scatter, which keeps what it places clear of the rocks and adds it.
-import { Frustum, Matrix4, Sphere, Vector2, WebGPUCoordinateSystem } from 'three';
+import { Frustum, Matrix4, Sphere, Vector2 } from '../maths/index.js';
 import shader from './rocks.wgsl';
 import offsetsShader from './rock-offsets.wgsl';
 import { Material } from '../gpu/material.js';
@@ -100,7 +100,7 @@ export function create(ctx) {
     offsetsPass.uniforms.uCamera.value.fromArray(ctx.terrain.island.toCove(camera.position.x, camera.position.z));
     offsetsPass.render(offsets);
     viewProjection.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
-    frustum.setFromProjectionMatrix(viewProjection, WebGPUCoordinateSystem, camera.reversedDepth);
+    frustum.setFromProjectionMatrix(viewProjection);
     // Something h tall at distance d stands about h / d x pixelsPerRadian pixels.
     const pixelsPerRadian = frame.size.height / ((camera.fov * Math.PI) / 180);
     for (const mesh of meshes) mesh.geometry.instanceCount = 0;

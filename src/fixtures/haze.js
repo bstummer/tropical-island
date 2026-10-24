@@ -6,7 +6,7 @@
 // worst misses in window.__HAZE__ (haze-cases.js) for tools/screenshot.js, with
 // the sunlight at a few heights against the sea level's. Draws nothing. Not
 // part of the island.
-import { Vector3, Vector4 } from 'three';
+import { Vector3, Vector4 } from '../maths/index.js';
 import shader from './haze.wgsl';
 import { Material } from '../gpu/material.js';
 import { Geometry } from '../gpu/geometry.js';

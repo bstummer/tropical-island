@@ -12,7 +12,7 @@
 // the next rock's block, and rocks turned the wrong way. It leaves the worst
 // differences in window.__ROCKS__ for tools/screenshot.js. The island draws as
 // usual meanwhile. Not part of the island.
-import { Quaternion, Vector3 } from 'three';
+import { Quaternion, Vector3 } from '../maths/index.js';
 import rocksShader from '../world/rocks.wgsl';
 import fragmentShader from './rocks.wgsl';
 import { views } from '../views.js';

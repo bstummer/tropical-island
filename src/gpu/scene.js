@@ -3,7 +3,7 @@
 // frame's passes (post/frame.js): 'opaque', 'afterOpaque' or 'translucent'.
 // Draw order follows three.js's: by renderOrder, then material, then distance;
 // transparent ones back to front (drawOrder).
-import { Euler, Matrix4, Quaternion, Vector3 } from 'three';
+import { Euler, Matrix4, Quaternion, Vector3 } from '../maths/index.js';
 
 let nextId = 0;
 const scratch = new Vector3();
@@ -20,8 +20,8 @@ export class Node {
     // Kept in step with each other, as three.js's Object3D keeps them.
     this.rotation = new Euler();
     this.quaternion = new Quaternion();
-    this.rotation._onChange(() => this.quaternion.setFromEuler(this.rotation, false));
-    this.quaternion._onChange(() => this.rotation.setFromQuaternion(this.quaternion, undefined, false));
+    this.rotation.onChange(() => this.quaternion.setFromEuler(this.rotation, false));
+    this.quaternion.onChange(() => this.rotation.setFromQuaternion(this.quaternion, undefined, false));
     this.scale = new Vector3(1, 1, 1);
     this.visible = true;
     this.matrixWorld = new Matrix4();
@@ -110,9 +110,10 @@ export class Mesh extends Node {
 // renderOrder, material, then near to far; transparent ones by renderOrder,
 // then far to near. entries: [{ mesh, z }], z the clip-space depth of the
 // mesh's bounding sphere's centre, which shrinks with distance under reversed
-// depth (so three negates it then).
-export function drawOrder(entries, reversedDepth) {
-  const far = (e) => (reversedDepth ? -e.z : e.z);
+// depth, the only depth there is (so three negated it), and is 0 for every
+// entry of a pass drawn without a camera.
+export function drawOrder(entries) {
+  const far = (e) => -e.z;
   const [opaque, transparent] = [entries.filter((e) => !e.mesh.material.transparent), entries.filter((e) => e.mesh.material.transparent)];
   opaque.sort((a, b) => a.mesh.renderOrder - b.mesh.renderOrder || a.mesh.material.id - b.mesh.material.id || far(a) - far(b) || a.mesh.id - b.mesh.id);
   transparent.sort((a, b) => a.mesh.renderOrder - b.mesh.renderOrder || far(b) - far(a) || a.mesh.id - b.mesh.id);

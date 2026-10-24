@@ -1,4 +1,4 @@
-import { Euler, MathUtils, Vector3 } from 'three';
+import { Euler, Vector3, clamp, degToRad, radToDeg } from '../maths/index.js';
 
 // Pointer-lock mouse look + free-fly camera, and rough walking (Stage 14 builds the real thing).
 //   Mouse: look · W/A/S/D: move along the view direction · Space: up · Shift: down
@@ -12,7 +12,7 @@ export function create(ctx) {
 
   const pressed = new Set();
   const look = new Euler(0, 0, 0, 'YXZ').copy(camera.rotation);
-  const maxPitch = MathUtils.degToRad(movement.maxPitch);
+  const maxPitch = degToRad(movement.maxPitch);
   const move = new Vector3();
   const up = new Vector3(0, 1, 0);
   let speed = movement.flySpeed;
@@ -33,7 +33,7 @@ export function create(ctx) {
   function onMouseMove(e) {
     if (!locked()) return;
     look.y -= e.movementX * movement.lookSensitivity;
-    look.x = MathUtils.clamp(look.x - e.movementY * movement.lookSensitivity, -maxPitch, maxPitch);
+    look.x = clamp(look.x - e.movementY * movement.lookSensitivity, -maxPitch, maxPitch);
     camera.rotation.copy(look);
   }
 
@@ -48,7 +48,7 @@ export function create(ctx) {
   function onWheel(e) {
     if (!locked()) return;
     const step = e.deltaY < 0 ? movement.wheelSpeedStep : 1 / movement.wheelSpeedStep;
-    speed = MathUtils.clamp(speed * step, movement.minFlySpeed, movement.maxFlySpeed);
+    speed = clamp(speed * step, movement.minFlySpeed, movement.maxFlySpeed);
   }
 
   function onKeyUp(e) {
@@ -61,7 +61,7 @@ export function create(ctx) {
 
   function logView() {
     const r = (v, d = 2) => Number(v.toFixed(d));
-    const deg = (rad) => r(MathUtils.radToDeg(rad), 1);
+    const deg = (rad) => r(radToDeg(rad), 1);
     const p = camera.position;
     const entry =
       `{ name: 'new-view', position: [${r(p.x)}, ${r(p.y)}, ${r(p.z)}], ` +

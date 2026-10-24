@@ -12,7 +12,7 @@
 // and on a slope its downhill face may stand out over the falling ground. One
 // that would show too little of itself above the ground isn't placed.
 // Settings: config.world.rocks. Pure and Node-importable.
-import { Quaternion, Vector3 } from 'three';
+import { Quaternion, Vector3 } from '../maths/index.js';
 import { hull, scatter } from './scatter.js';
 
 const UP = new Vector3(0, 1, 0);

@@ -6,7 +6,7 @@
 // plane(), box() and sphere() build the shapes three.js's PlaneGeometry,
 // BoxGeometry and SphereGeometry do, vertex for vertex (three.js, MIT).
 
-import { Matrix3, Vector3 } from 'three';
+import { Matrix3, Vector3 } from '../maths/index.js';
 
 const FORMATS = { 1: 'float32', 2: 'float32x2', 3: 'float32x3', 4: 'float32x4' };
 

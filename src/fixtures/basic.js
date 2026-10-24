@@ -1,11 +1,11 @@
 // Tool fixtures: a plain colour (or a texture times it), unlit, with an optional
 // fog to black, as three.js's MeshBasicMaterial drew it for them (basic.wgsl).
 // `raw` leaves out sceneOutput(), which capture mode must catch (broken.js).
-import { Color } from 'three';
+import { Color } from '../maths/index.js';
 import shader from './basic.wgsl';
 import { Material } from '../gpu/material.js';
 
-// color: anything three.js's Color takes (hex numbers and strings are sRGB,
+// color: anything maths/color.js takes (hex numbers and '#rrggbb' are sRGB,
 // made linear); map: a Texture; fog: [start, end] in metres from the camera.
 export function basicMaterial({ name = 'fixture-basic', color = 0xffffff, opacity = 1, map = null, fog = [0, 0], raw = false, ...options } = {}) {
   return new Material({

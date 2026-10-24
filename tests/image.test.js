@@ -1,6 +1,5 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import * as THREE from 'three';
 import {
   bandedShare,
   bandingView,
@@ -19,7 +18,8 @@ import {
   zoom,
 } from '../tools/image.js';
 import { createRandom } from '../src/core/random.js';
-import { applyView } from '../src/core/camera.js';
+import { Camera, applyView } from '../src/core/camera.js';
+import { Vector3 } from '../src/maths/index.js';
 
 // An image whose grey value at each pixel is f(x, y), rounded and clamped to 8 bits.
 function greyImage(width, height, f) {
@@ -218,11 +218,11 @@ test('the frame border is left out', () => {
   for (const [x, y] of [[0, 0], [1, 4], [WIDTH - 1, 3], [5, HEIGHT - 2]]) assert.equal(heat[y * WIDTH + x], 0, `(${x}, ${y})`);
 });
 
-test('panShift matches how three.js projects a turned camera', () => {
+test('panShift matches how the camera projects when turned', () => {
   const [width, height, fov, step] = [320, 180, 70, 0.25];
   const view = { position: [3, 2, 1], yaw: 40, pitch: -12 };
   const { dx, dy, turn } = panShift(width, height, fov, step);
-  const camera = new THREE.PerspectiveCamera(fov, width / height, 0.1, 1000);
+  const camera = new Camera(fov, width / height, 0.1, 1000);
   const toPixel = (p) => {
     const ndc = p.clone().project(camera);
     return [((ndc.x + 1) / 2) * width - 0.5, ((1 - ndc.y) / 2) * height - 0.5];
@@ -230,8 +230,8 @@ test('panShift matches how three.js projects a turned camera', () => {
   for (const [x, y] of [[160, 90], [0, 0], [319, 20], [40, 170], [300, 150]]) {
     applyView(camera, view);
     // A world point seen at the centre of pixel (x, y), 50 m away.
-    const ndc = new THREE.Vector3(((x + 0.5) / width) * 2 - 1, 1 - ((y + 0.5) / height) * 2, 0.5);
-    const point = ndc.unproject(camera).sub(camera.position).setLength(50).add(camera.position);
+    const ndc = new Vector3(((x + 0.5) / width) * 2 - 1, 1 - ((y + 0.5) / height) * 2, 0.5);
+    const point = ndc.applyMatrix4(camera.projectionMatrixInverse).applyMatrix4(camera.matrixWorld).sub(camera.position).normalize().multiplyScalar(50).add(camera.position);
     const before = toPixel(point);
     applyView(camera, view, { turn });
     const after = toPixel(point);

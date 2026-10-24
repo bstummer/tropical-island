@@ -53,7 +53,7 @@
 //                     Passes run by `order`, then by when they were added. Returns a remover.
 //   sceneTarget       the HDR target
 //   output            capture mode only: the output pass's texture, which the canvas shows a copy of
-import { Vector2, Vector3, Vector4 } from 'three';
+import { Vector2, Vector3, Vector4 } from '../maths/index.js';
 import outputShader from './output.wgsl';
 import compositeShader from './composite.wgsl';
 import depthShader from './depth-resolve.wgsl';

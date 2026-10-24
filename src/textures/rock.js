@@ -8,7 +8,7 @@
 // average factor (read back once, so it comes as a promise) with
 // config.world.terrain.rock's tints, which the shader divides by, so the rock
 // keeps its albedo on average. Settings: config.world.terrain.rock.
-import { Vector2, Vector3, Vector4 } from 'three';
+import { Vector2, Vector3, Vector4 } from '../maths/index.js';
 import tileShader from './rock-tile.wgsl';
 import formShader from './rock-form.wgsl';
 import { Material } from '../gpu/material.js';

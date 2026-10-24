@@ -75,7 +75,8 @@ when a choice is about taste or scope rather than engineering (see Open question
 | 2 | Sky, sun and atmosphere | The cove | done |
 | 3 | Island shape | The cove | done |
 | 4 | Ground surfaces and rocks | The cove | in progress |
-| 4b | WebGPU port | The cove | review |
+| 4b | WebGPU port | The cove | done |
+| 4c | Maths of our own | The cove | done |
 | 5 | Shadows | The cove | todo |
 | 6 | Ocean | The cove | todo |
 | 7 | Shoreline | The cove | todo |
@@ -732,6 +733,175 @@ change on any view or named time, and every check proves itself on its bad case 
 remains. The docs describe the new conventions. The user has run the benchmark on their machine and seen
 the game in each browser.
 
+### 4c. Maths of our own
+
+Remove three.js, the game's last runtime dependency. Since Stage 4b it does maths only: vectors, matrices,
+rotations, colours, culling shapes and half floats. Each becomes a small module of the project's own. This
+is about dependencies and control, not speed: the frame rate is set on the GPU, and the maths costs
+microseconds a frame. **Nothing changes:** every picture stays byte-identical, nothing gets slower and
+nothing gets less correct. The stage comes before Stage 5, whose shadows bring the most new maths (the
+sun's cameras), so that maths is written once, on the project's own modules. 4.8 can come before or after it.
+
+**Decision** (2026-10-24, in Decisions below): no runtime dependencies; three goes.
+
+**Ground rules**
+- Not one bit of any picture changes. Captures are deterministic, so on the same backend every capture
+  equals the baseline's, and so do `info.json`'s measurements, timings aside. A difference is a bug in the
+  new maths.
+- Only what the game uses, as the game uses it: no API for its own sake. Later stages add what they need,
+  with tests. Call sites read as clearly as before.
+- The pure JS keeps its logic (island, heightmap, LOD, scatter, rock placement, sun, light maths, albedo);
+  only where its maths comes from changes.
+- Where the project's code follows three's, it keeps three's MIT notice, in the source and in the built file.
+- Stop and ask the user if a picture can't be kept identical, or a check would have to be loosened.
+
+**Found in the code** (a survey of `51774eb`, 2026-10-24):
+- 29 files in `src/` import three (14 of them fixtures), and so do 3 tests. They use:
+  - `Vector2`, `Vector3` and `Vector4`; `Matrix3` (normal matrices); `Matrix4` (compose, invert, multiply,
+    the reversed perspective, look-at, a rotation); `Quaternion`; `Euler`, of which only the camera's
+    angles, in `YXZ` order, are read; `Color`;
+  - `Box3`, `Sphere` and `Frustum`, to cull the terrain's nodes, the rocks and every mesh;
+  - `MathUtils` (degrees, clamp) and `DataUtils` (half floats);
+  - `WebGPUCoordinateSystem`, which changes nothing under reversed depth: three takes the same path for
+    either clip space then.
+- The maths reaches the pictures four ways, and a difference in the last bit can move any of them:
+  - the camera's and the meshes' matrices, in every draw's uniforms;
+  - culling and the draw order (the overdraw counts follow it);
+  - rock placement, where rotations decide where each rock sits, how deep it sinks and whether it shows;
+  - half floats in the heightmap's and the fixtures' textures, and the sRGB colours of the placeholder water
+    and the fixtures.
+
+  three computes in doubles on plain numbers, so plain JS reproduces its bits, but only in its order of
+  operations: `degToRad(x)` is `x * (π / 180)`, not `x * π / 180`.
+- **Half floats truncate.** three's `toHalfFloat` drops the bits a half float can't keep (and clamps at
+  ±65504, with a warning). JS's own `Math.f16round` and `Float16Array` round to nearest, which moves texels.
+- **The renderer reads three's shapes.** `gpu/reflect.js` packs a uniform from a vector's `x, y, z, w`, a
+  colour's `isColor` and `r, g, b`, and a matrix's column-major `elements`. Systems set uniforms with
+  `fromArray`, and the capture reads them with `toArray`. `gpu/scene.js` keeps a node's angles and its
+  quaternion in step through three's private `_onChange` hooks.
+- **Degenerate inputs take branches that random inputs seldom reach:** normalizing a zero vector, a rotation
+  between opposite directions, a pitch of ±90° turned back into angles, inverting a singular matrix, half
+  floats beyond their range or below their smallest normal.
+- **Some tests use three as an independent reference:** `tests/image.test.js` checks `panShift` with three's
+  own camera. Once three goes, they need a reference other than the code they check.
+- **Licence.** `gpu/geometry.js` and `core/camera.js` already follow three's code. The built file carries
+  three's MIT notice only because three is bundled (`vite.config.js` keeps legal comments).
+- `tools/check-build.js`'s lint lets `src/` import three's maths only, by name, and forbids three's clocks
+  and random helpers.
+
+Sub-steps, in order. Each one ends with `npm run verify` green, `main` shippable, and captures
+byte-identical to `maths-before`.
+
+- [x] **M.0 Baseline.** On `main` as it stands, capture `maths-before` as W.0 captured `webgl-final`: every
+  view with `--checks`, the named times on `horizon` and `overview`, and the `tonecard`, `gradient` and
+  `blend` fixtures. Time the JS that uses the maths most: at boot (placing the rocks) and each frame
+  (culling, the draw order, the matrices). Timings compare only on one machine, so a later session on
+  another machine times the baseline's commit again. Record the built file's size.
+  - Done 2026-10-24 on `51774eb`: `maths-before` on SwiftShader (the Linux container, Chromium 156.0.8078.4,
+    1600×900) and `maths-before-hw` on the session machine's GPU, each the whole set. Two hardware runs of
+    one build came out byte-identical, so hardware captures served as the quick check. The built file:
+    700.0 KB raw, 160.0 KB gzip.
+- [x] **M.1 The maths.** Modules of the project's own for everything the survey lists. Every function gives
+  three's answer to the last bit: tests compare the two on seeded inputs and on every degenerate case
+  above, each test seen red once. Other tests hold the maths to what it should do, without three: an
+  inverse undoes its matrix, angles turned into a rotation and back come out the same, a sphere inside the
+  frustum is kept and one outside is culled, half floats keep exactly what they can hold. Nothing uses the
+  new modules yet.
+  - Done: `src/maths/` (index.js exports them, with three's MIT notice). `tests/maths.test.js` runs 18 case
+    sets, 199,683 numbers, each giving three r186's answers to the last bit; the answers are recorded as
+    hashes in `tests/fixtures/maths/three-answers.json`, and with three installed for the moment
+    (`npm i --no-save three@0.186.1`), `THREE_MATHS=compare` names the first number that differs.
+  - The inputs come from a generator of the test's own and are made without `Math.pow`, whose results V8
+    changed in Node 24; the sRGB curve, which takes `Math.pow`, is held to three's formula by a test of its
+    own. The answers hold on Node 20.19, 22.12 and 24.21.
+  - Of 64 deliberate mistakes in the maths, all but two turn the tests red; those two can't change a
+    result (doubling is exact, and exponents below −26 give zero either way).
+- [x] **M.2 Switch-over.** Every import of three in `src/` moves to the new modules, one area at a time:
+  rock placement; the renderer, scene graph and camera; the systems and fixtures. The tests that used three
+  as a reference get one that isn't the code they check. Check: after each area, the compare sheet says
+  "identical" for every view, named time and fixture, and `info.json`'s measurements are unchanged; the
+  quality change leaks nothing; the JS timed in M.0 is no slower.
+  - Done. Rock placement was checked on its own output: 6,330 rocks over nine seeds, every number
+    identical. The other two areas went over before one capture. On both backends all 148 PNGs of the set
+    (views, crops, banding, shimmer, motion, overdraw) are byte-identical to `maths-before`, `info.json`'s
+    measurements are equal, and the compare sheet says "identical" on every view. The hardware run's
+    player mode failed, as on the baseline (M.3, found on the way).
+  - `tests/image.test.js` checks `panShift` against the game's own camera, and `tests/rock-placement.test.js`
+    turns points by a rotation matrix of its own; each goes red when broken on purpose.
+  - Timed in turns, ten runs each (82 rounds) on an otherwise idle machine. Placing the cove's rocks (715 on
+    the timing script's coarser grids; the game's own give 703) took 82.6 ms with three and 81.4 ms after
+    (medians). A frame's culling, draw order and matrices took 103.9 and 105.0 µs: the same within noise.
+    A sum over the frame's results (normal matrices, what was culled) came out the same.
+- [x] **M.3 Removal.** three leaves `package.json` and the lockfile. Once it is gone, the tests still hold
+  the maths to three's answers on their cases. The lint has one rule for imports: `src/` imports only its
+  own files, with a fail fixture (CLAUDE.md §5); the rules for three's clocks and random helpers go with
+  three. An outside reader compares each function with three's original and checks that the tests reach its
+  branches. CLAUDE.md is corrected where it says three: §2 (dependencies, the lint), §3 (`npm run check`),
+  §6 (where the maths lives, `gpu/`), §8 (colours, the projection, frustums). Check: `package.json` has no
+  `dependencies`; `npm ci` on a clean checkout and `verify` are green, also in CI; the built file no longer
+  bundles three and still carries its MIT notice for the code that follows three's; its size is recorded
+  against M.0's.
+  - Done. `package.json` has no `dependencies`.
+  - The guarantee is the build's: it fails when it bundles any module from outside `src/` and `index.html`,
+    whatever brought it in (`checkModules`, called from `vite.config.js`). A build with an import hidden from
+    the lint behind a line continuation failed this way.
+  - The lint's rule (`own-imports`) is the early warning, with a file and a line. It checks every module
+    a file names, wherever it sits: `from '…'`, `import '…'`, `import(…)` and `import.meta.glob(…)`. It
+    passes only relative paths, with forward slashes, into `src/`.
+  - A test trips the lint with packages, `node:` modules, quoted names, imports nested in classes and
+    functions, glob character classes, type arguments, absolute paths, backslashes and paths out of `src/`.
+    Words such as `'import'` must not trip it. (Source rules are tested with trees of files, not HTML
+    fixtures.)
+  - A regex reads text, not JavaScript, so contrived code still gets past the lint; the build stops it.
+  - Three rounds of outside readers, six in all; none found a difference in any number the game computes.
+    - They read every function against three's.
+    - They fuzzed against three's own code: 413,000 checks in the first round and 50 million numbers in
+      the second, ordinary, extreme and non-finite.
+    - They compared the old code with the new on every view's camera, the geometry, 20 seeds of rocks and
+      20,000 sequences of the scene graph's rotations.
+    - They re-recorded three's answers byte for byte.
+    - They checked every claim here against the captures and logs.
+    - The last of them tried to slip imports past the lint, which led to the build's check.
+
+    Fixed from them:
+    - half floats become numbers through three's tables;
+    - an `update` flag counts only when `true`, as in three;
+    - `Euler.set` refuses an unknown order before changing anything;
+    - the camera's `reversedDepth` flag went (the draw order assumes reversed depth, as the projection does);
+    - the lint's gaps, and a hole the first fix of them opened (it now matches modules, not clauses), and
+      the build's module check behind it;
+    - tests for exact ties, nearly opposite directions, non-finite inputs, what a change call sees and what
+      the maths refuses, and the test's independence from the engine's `Math.pow`;
+    - the rock test's rotation of its own;
+    - comments that said wrong things.
+  - The built file: 617.3 KB raw, 137.1 KB gzip (83 KB less), with three's notice from `src/maths/index.js`
+    and none of three's code. A fresh copy of the working tree (nothing is committed yet) installs from the
+    lockfile with `npm ci` and passes test, build and check.
+  - The final captures of the final code are byte-identical to `maths-before`, measurements included:
+    - `maths-final`, from `verify` in the Linux container after `npm ci` there, on the working tree;
+    - `maths-final-hw`, from `verify` on the GPU.
+  - Found on the way: player mode looked for the start screen 30 browser frames after the page loaded, which
+    a busy machine's boot outlasts. It failed on the unchanged baseline too. Now it looks once the game draws,
+    and it still catches a start screen that never shows (a build that hides it fails).
+
+**Known flaws** (for review):
+- On purpose, the maths refuses what the game doesn't use. `Color` throws on CSS names, `#rgb`, `rgb(…)`
+  and `hsl(…)`, which three parsed, and on `null`, objects and other strings, where three left the colour
+  white. Euler orders other than XYZ and YXZ throw, where three supported all six. A later stage that needs
+  more adds it, with tests.
+- The recorded answers say which case set differs, not where. Finding where needs three for the moment
+  (`npm i --no-save three@0.186.1`, `THREE_MATHS=compare`). They hold while the engine's `sin`, `cos`,
+  `tan`, `asin` and `atan2` give what V8's have since 2016; the file records the V8 it was made on.
+- The bits of a NaN written into a `Float32Array` (a readback) depend on how the engine compiled the call,
+  so the tests compare values, not those bits.
+- The switch-over took two areas before one capture, not one at a time; the capture came out identical.
+- CI hasn't run it yet: that needs a push. The container's `verify` is CI's, byte for byte (Stage 4b).
+
+**Done when** the game has no runtime dependencies; every view, named time and fixture is byte-identical to
+`maths-before` on the same backend; the maths' tests reach every branch they replace and hold it to three's
+answers without three installed; nothing timed in M.0 got slower; and CLAUDE.md says how things are. The
+GPU does the same work as before, so the user's review needs no benchmark or browser runs.
+
 ### 5. Shadows
 
 - Sun shadows across the whole depth range: soft penumbrae, stable when the camera moves (no shimmering),
@@ -1053,8 +1223,9 @@ Made with the user. Don't reopen them unless the user does.
 - **Desktop only:** a desktop browser with keyboard and mouse. (2026-10-20)
 - **Raw WebGPU with hand-written WGSL, and a renderer of the project's own** (Stage 4b). It replaces
   WebGL2 with GLSL through three's `WebGLRenderer` (2026-10-20). (2026-10-24)
-- **three for maths only:** vectors, `Matrix4`, `Frustum`, `Color`, `Euler`, `Quaternion`, `Sphere`,
-  `Box3`, `MathUtils`, `DataUtils`. Whether to drop it entirely is decided after the port. (2026-10-24)
+- **No runtime dependencies** (Stage 4c): three goes too, and the maths the game took from it becomes
+  modules of the project's own. It replaces "three for maths only" (2026-10-24), which left the choice
+  until after the port. (2026-10-24)
 - **WebGPU only**, with no WebGL fallback. A browser without WebGPU gets a short note that the game needs
   it. (2026-10-24)
 - **MSAA is 4 samples on every preset.** WebGPU allows only 1 or 4, and the frame needs at least 2.
@@ -1129,6 +1300,11 @@ Not part of the plan. Build one only if the user asks for it: a passing rain sho
 Newest first. One short entry per session, only a few lines: date, stage, what changed, what is still
 open, next step. Details belong in code comments.
 
+- **2026-10-24, Stage 4c planned and built: no runtime dependencies.** The user decided three goes
+  (Decisions). Its maths is now `src/maths/`, ported in three's order of operations and held to three's
+  answers to the last bit. Every capture and measurement is byte-identical to `maths-before` on SwiftShader
+  and on the GPU, it runs as fast, and the build is 83 KB smaller. Player mode no longer races a slow boot.
+  Open: the user's review, CI on a push. Next: 4.8, or Stage 5.
 - **2026-10-24, Stage 4b planned in detail and built (W.1–W.5), on branch `webgpu`:** raw WebGPU with
   a renderer of the project's own (`src/gpu/`), every shader in WGSL, three for maths only (linted).
   Views and named times match `webgl-final` within float noise, every check passes and catches its bad

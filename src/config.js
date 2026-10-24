@@ -560,7 +560,7 @@ export const capture = {
   // 0.005 of it on curved ground, a grid shifted half a sample 0.1 and more.
   // `ground`: how far the GPU's ground may land from heightmap.js's, for the
   // shares of sand and rock, how lush and how sandy (`cover`), the band, and the reef's offset in metres: the
-  // GPU's filtering and its half floats. Half floats, as three makes them, hold
+  // GPU's filtering and its half floats. Half floats, as maths/half-float.js makes them, hold
   // the reef's ±250 m to 0.12 m, and a GPU may filter with coarse weights: 0.15 m
   // on one D3D11 GPU. `bounce`: how far the ground's albedo the light from
   // below reads on the GPU may land from JS's, per channel: half floats and

@@ -14,7 +14,7 @@
 // light for a new time is read back from the GPU, which takes some frames, and
 // meanwhile the frame goes on drawing with the current set (sky.js). Every
 // call takes the set to use and the haze (0 to 1) to render with.
-import { Vector2, Vector3 } from 'three';
+import { Vector2, Vector3 } from '../maths/index.js';
 import transmittanceShader from './transmittance.wgsl';
 import multiscatterShader from './multiscatter.wgsl';
 import skyViewShader from './sky-view.wgsl';

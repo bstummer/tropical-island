@@ -28,14 +28,12 @@ When choosing between approaches, pick the one that looks better in the screensh
   no image or model files. `npm run check` enforces this, and the screenshot tool fails on any network
   request the page makes.
 - **Everything is procedural**: geometry, textures, sky, sound. Generate it at runtime.
-- **`three` is the only runtime dependency, and only for its maths** (vectors, matrices, colours). The
-  renderer is the project's own (`src/gpu/`, raw WebGPU), and `npm run check` lints that `src/` imports
-  nothing else from three. Ask the user before adding another dependency (runtime or dev).
+- **No runtime dependencies.** The renderer (`src/gpu/`, raw WebGPU) and the maths (`src/maths/`) are the
+  project's own. The build fails on any module from outside `src/` (and `index.html`), and `npm run check`
+  lints that `src/` imports only its own files. Ask the user before adding a dependency (runtime or dev).
 - **All randomness goes through `src/core/random.js`** (`ctx.rng('name')`), and **all time goes through
   `src/core/clock.js`** (`ctx.clock`, or the `dt`/`t` passed to `update`). `Math.random`, `Date.now`,
-  `new Date`, `performance.now`, `THREE.Clock`/`Timer`, `MathUtils.rand*`/`seededRandom` and the
-  `.random()`/`.randomDirection()` methods of three's vectors and quaternions are forbidden anywhere
-  else in `src/`. `npm run check` lints for these. three.js internals are exempt.
+  `new Date` and `performance.now` are forbidden anywhere else in `src/`. `npm run check` lints for these.
 
 ## 3. Commands
 
@@ -44,9 +42,9 @@ When choosing between approaches, pick the one that looks better in the screensh
 | `npm install` | Installs deps; `postinstall` downloads Playwright's Chromium headless shell (cached per machine), the only browser the tools use. |
 | `npm run dev` | Vite dev server. JS edits reload the page. Shader edits (`.wgsl`, including `#include`d chunks) are hot-swapped into live scene materials without a reload, so the camera stays put; shaders of fullscreen passes and of the sky's lookup tables reload the page. |
 | `npm test` | Unit and invariant tests: `node --test` over `tests/*.test.js` (Node's built-in runner, no test deps). |
-| `npm run build` | Production build to `dist/index.html` (single file, no sourcemaps). The build fails if it would emit anything other than `index.html`. |
-| `npm run check` | `tools/check-build.js`: exactly one file in dist, no `<script src>`/`<link href>`, no URLs except XML namespaces, no network APIs or `import()`, size vs budget (warn > 3 MB raw, fail > 6 MB), plus the src/ lint: determinism, and three.js for its maths only. |
-| `npm run shot -- [args]` | Builds, then `tools/screenshot.js`: one PNG per view + `contact-sheet.png` + `info.json` in `screenshots/<label>/`, plus each view's measurements (banding view, zoomed crops, shimmer, motion strip, overdraw) in `screenshots/<label>/<view>/`, with the numbers and over-limit warnings in `info.json`. A reused label replaces the old capture. With `--checks` (`verify` passes it) the tool also checks itself and the game: that the shimmer and cost measurements still catch test scenes built to fail them, that the frame keeps its promises (smooth dark edges against a bright sky, depth precision from a hilltop, dithered gradients without bands, translucent layers blended in linear light and hidden behind the scene, the opaque scene handed to what draws after it), that errors nothing shows on screen (a broken shader out of sight, a validation error, a lost device, blending outside the translucent pass) fail a capture, that captures are reproducible, also after the time of day changed in the page (on every view, through every named time), that the GPU's sky maths agrees with the JS, that the terrain's heights on the GPU are the ones JS knows and keep close to the island's between samples, and the mesh's own height as drawn is its JS twin's, and that the light from below reads the ground's albedo map where JS expects it (`terrain` fixture, also with deliberate mistakes), that the rocks' offsets in the mesh as drawn and their vertex shader put them where their JS twins do (`rocks` fixture, likewise), that the green's patches on the GPU are the ones JS knows (`patches` fixture), that the sky's lookup tables agree with direct marches through the same air, and the sunlight by height with one in JS, also in the last minutes of daylight (`haze` fixture), and that the light reads neutral at midday and warm at golden hour, and that a quality change (default preset to low and back) leaks no GPU resources and brings back the same picture. Then it runs the game for 30 frames in player mode (no `?capture`: real-time loop, input, start screen, frame readout, walking on the ground, and a canvas that shows what the capture of the same view does), which captures never exercise, and a short benchmark run (`screenshots/<label>/benchmark.txt`). |
+| `npm run build` | Production build to `dist/index.html` (single file, no sourcemaps). The build fails if it would emit anything other than `index.html`, or bundle a module from outside `src/`. |
+| `npm run check` | `tools/check-build.js`: exactly one file in dist, no `<script src>`/`<link href>`, no URLs except XML namespaces, no network APIs or `import()`, size vs budget (warn > 3 MB raw, fail > 6 MB), plus the src/ lint: determinism, and imports of src/ files only. |
+| `npm run shot -- [args]` | Builds, then `tools/screenshot.js`: one PNG per view + `contact-sheet.png` + `info.json` in `screenshots/<label>/`, plus each view's measurements (banding view, zoomed crops, shimmer, motion strip, overdraw) in `screenshots/<label>/<view>/`, with the numbers and over-limit warnings in `info.json`. A reused label replaces the old capture. With `--checks` (`verify` passes it) the tool also checks itself and the game: that the shimmer and cost measurements still catch test scenes built to fail them, that the frame keeps its promises (smooth dark edges against a bright sky, depth precision from a hilltop, dithered gradients without bands, translucent layers blended in linear light and hidden behind the scene, the opaque scene handed to what draws after it), that errors nothing shows on screen (a broken shader out of sight, a validation error, a lost device, blending outside the translucent pass) fail a capture, that captures are reproducible, also after the time of day changed in the page (on every view, through every named time), that the GPU's sky maths agrees with the JS, that the terrain's heights on the GPU are the ones JS knows and keep close to the island's between samples, and the mesh's own height as drawn is its JS twin's, and that the light from below reads the ground's albedo map where JS expects it (`terrain` fixture, also with deliberate mistakes), that the rocks' offsets in the mesh as drawn and their vertex shader put them where their JS twins do (`rocks` fixture, likewise), that the green's patches on the GPU are the ones JS knows (`patches` fixture), that the sky's lookup tables agree with direct marches through the same air, and the sunlight by height with one in JS, also in the last minutes of daylight (`haze` fixture), and that the light reads neutral at midday and warm at golden hour, and that a quality change (default preset to low and back) leaks no GPU resources and brings back the same picture. Then it runs the game in player mode until it draws (no `?capture`: real-time loop, input, start screen, frame readout, walking on the ground, and a canvas that shows what the capture of the same view does), which captures never exercise, and a short benchmark run (`screenshots/<label>/benchmark.txt`). |
 | `npm run verify` | test + build + check + shot with `--checks`. **The definition-of-done command.** |
 | `npm run map -- [args]` | `tools/map.js`: a top-down map of the island (relief, depths, zones, where the views stand) in `screenshots/map/<label>.png`, to judge the layout without rendering. `--seed`, `--label`, and `--set path=value` (repeatable) to override a setting of `config.world.island` for candidates. No build needed. |
 | `node tools/screenshot.js --compare A B` | Before/after sheet `screenshots/compare/A_vs_B.png`: A, B and a diff column per view, with the % of changed pixels and how many differ by more than 2 levels. No build needed. |
@@ -161,7 +159,8 @@ How tests are written:
 - Tests are deterministic: fixed seeds, and mock time with `t.mock.method(performance, 'now', ...)`.
 - `tools/check-build.js` exports its checks. HTML fixtures live in `tests/fixtures/check-build/`:
   `pass/*.html` must produce no failures, and each `fail/<rule-id>.html` must trip exactly that rule.
-  A new rule needs a new fail fixture; a test enforces this.
+  A new HTML rule needs a new fail fixture; a test enforces this. Source rules (the src/ lint) are tested
+  with trees of files the test writes.
 - A test that has never failed proves little. When adding one, break the code it covers once and
   watch it go red.
 
@@ -177,7 +176,9 @@ src/
   main.js             boot: params -> renderer/scene/camera/frame -> systems -> loop; capture mode hands over to core/capture.js
   config.js           ALL tunables (quality presets, camera, post, movement, defaults, capture, frame-cost budget, size budget). No browser APIs.
   views.js            named viewpoints. No browser APIs (Node imports it).
-  gpu/                the renderer (raw WebGPU; three.js for its maths only): device.js (the device, error reporting, caches),
+  maths/              the maths three.js gave the game, ported from it to the last bit (pure): vectors, matrices, quaternions,
+                      Euler angles, culling shapes, colours, half floats; index.js exports them, with three.js's MIT notice
+  gpu/                the renderer (raw WebGPU): device.js (the device, error reporting, caches),
                       renderer.js (draws a pass: pipelines, culling; fullscreen passes; compile),
                       scene.js (nodes and meshes, three's draw order), material.js, geometry.js, texture.js (textures, render targets,
                       mipmaps, readbacks), reflect.js (what a WGSL module declares, to bind by name), bindings.js
@@ -216,7 +217,7 @@ src/
                       wind later
 tools/                screenshot.js, measure.js, analyse.js (its worker thread), image.js, png.js, check-build.js, map.js (Node
                       only; pure helpers exported for tests); linux.js and linux.Dockerfile (a Linux container like CI's)
-tests/                node:test suites + fixtures/check-build/{pass,fail}/*.html
+tests/                node:test suites + fixtures/check-build/{pass,fail}/*.html, fixtures/maths/ (three.js's answers)
 ```
 
 Planned folders. Create each one when its first real system lands, not before (no empty stubs). The
@@ -291,11 +292,11 @@ async work, put it behind `ready`, or behind `settled()` when its `update` start
 
 ## 8. Rendering conventions
 
-- **WebGPU** through the project's own renderer (`src/gpu/`), with WGSL shaders; three.js only for maths.
+- **WebGPU** through the project's own renderer (`src/gpu/`), with WGSL shaders.
   There is no WebGL fallback: without WebGPU the game says what it needs (`gpu/device.js`). Core WebGPU
   only: no optional feature is required (`timestamp-query` gives the GPU time where it exists).
-- Linear colour workflow. Author colours as sRGB hex through three's `Color` (converted to linear) or as
-  linear floats in shaders, and say which in a comment.
+- Linear colour workflow. Author colours as sRGB hex through `Color` (`maths/color.js`, converted to linear)
+  or as linear floats in shaders, and say which in a comment.
 - The scene renders into the **HDR target** of `post/frame.js` (half float, 4× MSAA). Its output pass is the
   **only** place for tonemapping, sRGB conversion and dithering.
 - **Every scene material's fragment entry point ends with `return sceneOutput(radiance, alpha);`**
@@ -331,8 +332,8 @@ async work, put it behind `ready`, or behind `settled()` when its `update` start
   world position of a surface reaching to the horizon, use `@interpolate(perspective, centroid)`.
 - **Depth is reversed 32-bit float** (`depth32float`, compare `greater-equal`, cleared to 0) in every browser, so
   precision is about the same fraction of the distance everywhere: `camera.near` is 2 cm and `far` 100 km
-  (`config.camera`). The projection is three's reversed one (`core/camera.js`), and frustums are set from it
-  with `WebGPUCoordinateSystem`.
+  (`config.camera`). The projection (`Matrix4.makePerspective`, which `core/camera.js` uses) and the
+  frustums set from it (`maths/bounds.js`) take reversed depth only.
 - **WGSL** rules that bite:
   - Uniformity: `dpdx`/`dpdy`/`fwidth` and `textureSample` (which takes its own mip level) only in uniform
     control flow. Take derivatives before any branch that varies per pixel; inside one, read with

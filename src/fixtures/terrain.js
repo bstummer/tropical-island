@@ -18,7 +18,7 @@
 // world/albedo.js's map of the coarsest grid, filtered as the GPU filters it;
 // its deliberate mistake: the map's layout half a texel off. The terrain
 // draws as usual meanwhile. Not part of the island.
-import { DataUtils } from 'three';
+import { fromHalfFloat, toHalfFloat } from '../maths/index.js';
 import shader from './terrain.wgsl';
 import meshShader from './terrain-mesh.wgsl';
 import bounceShader from './terrain-bounce.wgsl';
@@ -243,7 +243,7 @@ async function bounceCheck(ctx, r) {
 // An RGBA map of size x size texels as the GPU keeps it: half floats, and
 // `count` levels of mips, each texel of one the mean of four of the one before.
 function halfMips(map, size, count) {
-  const half = (v) => DataUtils.fromHalfFloat(DataUtils.toHalfFloat(v));
+  const half = (v) => fromHalfFloat(toHalfFloat(v));
   const mips = [{ size, texels: map.map(half) }];
   while (mips.length < count) {
     const { size: from, texels } = mips.at(-1);

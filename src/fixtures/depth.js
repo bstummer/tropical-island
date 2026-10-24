@@ -6,7 +6,7 @@
 // eye height the planes meet the horizon too fast for precision to matter.)
 // Black fog hides where the planes end, a sliver at the horizon that would
 // shimmer whatever the depth does. Not part of the island.
-import { Color, Matrix4 } from 'three';
+import { Color, Matrix4 } from '../maths/index.js';
 import { basicMaterial } from './basic.js';
 import { plane } from '../gpu/geometry.js';
 import { Mesh } from '../gpu/scene.js';

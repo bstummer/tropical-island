@@ -1,0 +1,24 @@
+{
+  "three": "r186",
+  "engine": "V8 13.6.233.17-node.53",
+  "answers": {
+    "scalars": "837:8e4f6b56752ef729",
+    "half floats from numbers": "6449:29efd78f259c84b1",
+    "half floats to numbers": "65536:ecc18b9b372011f0",
+    "Vector3 arithmetic": "13415:17e02e8a3c93970c",
+    "Vector3 through matrices": "3603:33045d779708a566",
+    "Vector3 turned": "2400:905783a06594a207",
+    "Vector2 and Vector4": "7200:d5b7cca4b73604a6",
+    "Quaternion made": "7960:1f3c240294d7a0d4",
+    "Quaternion arithmetic": "5009:90f1170565007377",
+    "change calls": "465:3e2e1d3e76fb7ba1",
+    "Euler": "8860:f1a24c178ad3c436",
+    "Matrix4": "26048:260510fc34ee2f31",
+    "Matrix4 for cameras": "9680:f6d479569a18c239",
+    "Matrix3": "12618:612b055af873c0ca",
+    "Box3 and Sphere": "7000:abe238cc4a1cdff1",
+    "Frustum": "15637:9b0ef57bef2af819",
+    "non-finite inputs": "1551:c6c4cb960f664661",
+    "Color": "5415:273ffecc19fe0fd9"
+  }
+}

@@ -4,7 +4,7 @@
 // anti-aliased (no shimmer) after tonemapping. Bars thinner than about two
 // pixels crawl with 4x MSAA whatever the frame does; keeping detail that fine
 // out of the picture is the job of each system's level of detail. Not part of the island.
-import { Color, MathUtils } from 'three';
+import { Color, degToRad } from '../maths/index.js';
 import shader from './silhouette.wgsl';
 import { basicMaterial } from './basic.js';
 import { Material } from '../gpu/material.js';
@@ -28,7 +28,7 @@ export function create(ctx) {
   group.add(sky);
 
   // Bar widths in pixels at the bar distance; a pixel there is about 1.6 cm at 1600 x 900.
-  const pixel = (2 * BAR_DISTANCE * Math.tan(MathUtils.degToRad(camera.fov / 2))) / frame.size.height;
+  const pixel = (2 * BAR_DISTANCE * Math.tan(degToRad(camera.fov / 2))) / frame.size.height;
   const material = basicMaterial({ color: new Color(0.03, 0.03, 0.025) });
   const bars = [];
   for (let i = 0; i < BARS; i++) {

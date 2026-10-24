@@ -4,7 +4,7 @@
 // maths-cases.js, and run the sky-view, aerial-perspective and multiple-scattering
 // mappings forth and back, then leaves the answers in window.__MATHS__ for tools/screenshot.js,
 // which checks them against sky/light.js. Draws nothing. Not part of the island.
-import { Vector2, Vector3 } from 'three';
+import { Vector2, Vector3 } from '../maths/index.js';
 import shader from './maths.wgsl';
 import { Material } from '../gpu/material.js';
 import { createTarget } from '../gpu/texture.js';

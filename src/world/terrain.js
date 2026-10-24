@@ -24,7 +24,7 @@
 // made of them or lies on them, their tiles' averages filled once `ready`
 // resolved; greenAt: whether the green inland is living green or bare ground
 // at world x, z, as drawn (world/green.js), once `ready` resolved: 1 green, 0 bare.
-import { Box3, DataUtils, Frustum, Matrix4, Vector3, Vector4, WebGPUCoordinateSystem } from 'three';
+import { Box3, Frustum, Matrix4, Vector3, Vector4, toHalfFloat } from '../maths/index.js';
 import shader from './terrain.wgsl';
 import HeightmapWorker from './heightmap-worker.js?worker&inline';
 import { Material } from '../gpu/material.js';
@@ -243,7 +243,7 @@ export function create(ctx) {
   const stopSelecting = frame.beforeScene(() => {
     if (!lod) return;
     viewProjection.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
-    frustum.setFromProjectionMatrix(viewProjection, WebGPUCoordinateSystem, camera.reversedDepth);
+    frustum.setFromProjectionMatrix(viewProjection);
     const [ca, co] = island.toCove(camera.position.x, camera.position.z);
     const cam = [ca, camera.position.y, co];
     lod.select(cam, ranges, (a0, o0, size, min, max) => {
@@ -309,7 +309,7 @@ export function create(ctx) {
 // takes 20 times as long.
 function halves(floats) {
   const half = new Uint16Array(floats.length);
-  for (let i = 0; i < half.length; i++) half[i] = DataUtils.toHalfFloat(floats[i]);
+  for (let i = 0; i < half.length; i++) half[i] = toHalfFloat(floats[i]);
   return half;
 }
 

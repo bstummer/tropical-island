@@ -3,7 +3,7 @@
 // (chunks/lighting.wgsl), so the light can be judged on it meanwhile, and
 // takes its colour from the depth of the terrain below (chunks/terrain.wgsl),
 // so the lagoon, the reef and the drop-off read from above.
-import { Color, Matrix4 } from 'three';
+import { Color, Matrix4 } from '../maths/index.js';
 import shader from './placeholder-water.wgsl';
 import { Material } from '../gpu/material.js';
 import { plane } from '../gpu/geometry.js';

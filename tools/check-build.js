@@ -1,13 +1,13 @@
 // Verifies that dist/ is a single, self-contained HTML file, that src/ only
 // gets time and randomness through core/clock.js and core/random.js, and that
-// it takes only maths from three.js.
+// it imports nothing from outside src/.
 // Usage: node tools/check-build.js   (exits non-zero on any failure)
 // The individual checks are exported for tests/check-build.test.js; vite.config.js
 // uses checkOutputFiles() to fail any build that would emit more than index.html.
 import { existsSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
 import { gzipSync } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
-import { dirname, join, relative } from 'node:path';
+import { dirname, join, posix, relative } from 'node:path';
 import { build as buildConfig } from '../src/config.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -36,49 +36,36 @@ export const HTML_RULES = [
 ];
 
 // Sources of non-determinism that must go through clock.js / random.js instead,
-// and imports of three.js beyond its maths.
+// and imports from outside src/.
 export const SOURCE_RULES = [
   { id: 'math-random', name: 'Math.random', re: /\bMath\.random\b/g },
   { id: 'date', name: 'Date.now / new Date()', re: /\bDate\.now\b|\bnew\s+Date\b/g },
   { id: 'performance-now', name: 'performance.now', re: /\bperformance\.now\b/g, except: ['core/clock.js'] },
-  { id: 'three-clock', name: 'three.js Clock/Timer', re: /\bnew\s+(THREE\.)?(Clock|Timer)\b/g },
-  // MathUtils helpers, and the .random()/.randomDirection() of three's vectors and quaternions.
-  { id: 'three-random', name: 'three.js random helper', re: /\b(randInt|randFloat|randFloatSpread|seededRandom|generateUUID)\b|(?<!\bMath)\.random(Direction)?\s*\(/g },
-  // gpu/ draws; three.js is there for its maths only (CLAUDE.md §2). Every
-  // import or export from a module, and every import('...'), is matched; one
-  // that names three.js passes only as named imports from 'three' of THREE_MATHS.
+  // The game has no runtime dependencies (CLAUDE.md §2). Every module a file
+  // names is matched: whatever comes before `from '...'` (so no import or
+  // export clause can hide one), `import '...'`, `import('...')`, and the
+  // patterns of `import.meta.glob(...)`; an `import` or `from` after a dot or
+  // a quote is a method or a word, not one. A module passes only by a
+  // relative path, with forward slashes, to files in src/. A regex reads text,
+  // not JavaScript, so contrived code (a specifier split by a line
+  // continuation, say) gets past it: the build's checkModules() is the
+  // guarantee, this the early warning with a file and a line.
   {
-    id: 'three-maths',
-    name: 'three.js beyond its maths',
-    re: /\b(?:import|export)\b\s*(?<clause>[^;'"`()]*?)\s*\bfrom\s*(['"])(?<from>[^'"]*)\2|\bimport\s*(?:\(\s*)?(['"`])(?<bare>[^'"`]*)\4/g,
-    allow: ({ groups: { clause, from, bare } }) => {
-      if (!namesThree(from ?? bare)) return true;
-      return from === 'three' && /^\{[^}]*\}$/.test(clause) && importedNames(clause).every((name) => THREE_MATHS.has(name));
+    id: 'own-imports',
+    name: 'an import from outside src/',
+    re: /(?<![.'"`\w$])from\s*(?<q1>['"])(?<from>(?:(?!\k<q1>)[^\n])*)\k<q1>|(?<![.'"`\w$])import\s*(?:\(\s*)?(?<q2>['"`])(?<bare>(?:(?!\k<q2>)[^\n])*)\k<q2>|(?<![.'"`\w$])import\.meta\.glob\s*(?:<(?:[^<>()]|<[^<>()]*>)*>)?\s*\(\s*(?<glob>\[(?:\s*(?:'[^'\n]*'|"[^"\n]*"|`[^`\n]*`)\s*,?)*\s*\]|(?<q3>['"`])(?:(?!\k<q3>)[^\n])*\k<q3>)/g,
+    allow: ({ groups: { from, bare, glob } }, path) => {
+      if (glob === undefined) return insideSrc(from ?? bare, path);
+      return [...glob.matchAll(/(['"`])((?:(?!\1)[^\n])*)\1/g)].every(([, , pattern]) => insideSrc(pattern.replace(/^!/, ''), path));
     },
-    hint: 'import only its maths (THREE_MATHS), by name',
+    hint: 'import only src/ files, by relative path: the game has no dependencies',
   },
 ];
 
-// Whether a module specifier is three.js: the package, a path into it, or its builds by path.
-function namesThree(specifier) {
-  return /^three(\/|$)|(^|\/)node_modules\/three(\/|$)|(^|\/)three\/(build|src)\//.test(specifier);
-}
-
-// What src/ may import from three.js: its maths (src/math/), DataUtils for
-// half floats, and the WebGPU clip space for the camera's projection.
-export const THREE_MATHS = new Set([
-  ...['Box2', 'Box3', 'Color', 'Cylindrical', 'Euler', 'Frustum', 'Line3', 'MathUtils', 'Matrix2', 'Matrix3', 'Matrix4', 'Plane'],
-  ...['Quaternion', 'Ray', 'Sphere', 'Spherical', 'SphericalHarmonics3', 'Triangle', 'Vector2', 'Vector3', 'Vector4'],
-  ...['DataUtils', 'WebGPUCoordinateSystem'],
-]);
-
-// The names `{ A, B as C }` imports from its module: A and B.
-function importedNames(braces) {
-  return braces
-    .slice(1, -1)
-    .split(',')
-    .map((s) => s.trim().split(/\s+as\s+/)[0])
-    .filter(Boolean);
+// Whether `specifier`, imported by src/`path`, is a file in src/.
+function insideSrc(specifier, path) {
+  if (!/^\.\.?\//.test(specifier) || specifier.includes('\\')) return false;
+  return !posix.normalize(posix.join(posix.dirname(path), specifier)).startsWith('../');
 }
 
 // Content rules for the built HTML.
@@ -106,6 +93,22 @@ export function checkOutputFiles(fileNames) {
   return [{ rule: 'output-files', message: `the build must emit exactly one file (index.html), got: ${fileNames.join(', ') || 'nothing'}` }];
 }
 
+// Every module the build bundles (ids as the bundler gives them, under the
+// project's `root`) is index.html or a file in src/: no runtime dependencies
+// (CLAUDE.md §2), however a module got in. The source lint (own-imports) says
+// so early, from the text; this is the bundler's own answer. Used on the
+// bundle (vite.config.js).
+export function checkModules(ids, root) {
+  const base = root.replaceAll('\\', '/').replace(/\/$/, '');
+  const ours = (id) => {
+    const path = id.split('?')[0].replaceAll('\\', '/');
+    return path === `${base}/index.html` || path.startsWith(`${base}/src/`);
+  };
+  const outside = ids.filter((id) => !ours(id));
+  if (!outside.length) return [];
+  return [{ rule: 'bundled-modules', message: `the build bundles modules from outside src/: ${outside.map((id) => JSON.stringify(id)).join(', ')}` }];
+}
+
 // Raw size against the budget: warn above it, fail above twice it.
 export function checkSize(bytes, budget) {
   if (bytes > 2 * budget) return { level: 'fail', message: `size ${mb(bytes)} exceeds twice the budget (${mb(2 * budget)})` };
@@ -125,7 +128,7 @@ export function checkSources(srcDir) {
     for (const rule of SOURCE_RULES) {
       if (rule.except?.includes(path)) continue;
       for (const match of code.matchAll(rule.re)) {
-        if (rule.allow?.(match)) continue;
+        if (rule.allow?.(match, path)) continue;
         failures.push({ rule: rule.id, message: `${rule.name} in src/${path} (${position(code, match.index)}); ${rule.hint ?? 'use ctx.clock / ctx.rng'}` });
       }
     }

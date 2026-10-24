@@ -10,7 +10,7 @@
 // grass's factor on average, grassCover and litterCover how much the blades
 // and the leaves cover, read back once (so they come as a promise), so the
 // green keeps its albedo on average. Settings: config.world.terrain.green.
-import { Vector2, Vector3, Vector4 } from 'three';
+import { Vector2, Vector3, Vector4 } from '../maths/index.js';
 import grassShader from './grass.wgsl';
 import litterShader from './litter.wgsl';
 import { Material } from '../gpu/material.js';

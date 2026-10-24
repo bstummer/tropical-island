@@ -8,7 +8,7 @@
 // grain's average factor (read back once, so it comes as a promise), which the
 // shader divides by, so the sand keeps its albedo on average. Settings:
 // config.world.terrain.sand.
-import { Vector2, Vector3 } from 'three';
+import { Vector2, Vector3 } from '../maths/index.js';
 import grainShader from './sand-grain.wgsl';
 import ripplesShader from './sand-ripples.wgsl';
 import { Material } from '../gpu/material.js';

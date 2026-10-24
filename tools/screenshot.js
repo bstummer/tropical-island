@@ -878,13 +878,15 @@ async function checkPlayerMode(context, fileUrl, query, view, outDir) {
   try {
     await page.goto(`${fileUrl}?${params}`);
     await untilDone(page, (frames) => window.__FRAMES__ >= frames, PLAYER_MODE.frames);
-    if (!(await page.evaluate(() => document.getElementById('start').checkVisibility()))) {
-      problems.push({ kind: 'player mode', text: 'the start screen is not showing' });
-    }
     // The readout refreshes every config.readout.refreshSeconds; its key hides it.
     await untilDone(page, () => /\d+ draws/.test(document.getElementById('readout').textContent)).catch(() =>
       problems.push({ kind: 'player mode', text: 'the frame readout shows no numbers' }),
     );
+    // Once the game draws (the readout's numbers), not after a count of the browser's
+    // frames: a busy machine can take longer than that to boot.
+    if (!(await page.evaluate(() => document.getElementById('start').checkVisibility()))) {
+      problems.push({ kind: 'player mode', text: 'the start screen is not showing' });
+    }
     await page.keyboard.press(config.readout.key); // a synthetic key event in the page, not the OS keyboard
     if (await page.evaluate(() => document.getElementById('readout').checkVisibility())) {
       problems.push({ kind: 'player mode', text: `${config.readout.key} does not hide the frame readout` });

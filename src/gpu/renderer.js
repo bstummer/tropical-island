@@ -18,7 +18,7 @@
 //       the vertex index (post/fullscreen.wgsl)
 //   setGlobals(uniforms)  ctx.frame.uniforms, bound at group 0 (chunks/frame.wgsl) with the camera
 //   canvas()              the canvas as a target, for the frame's output
-import { Box3, Frustum, Matrix3, Matrix4, Sphere, Vector3, Vector4, WebGPUCoordinateSystem } from 'three';
+import { Box3, Frustum, Matrix3, Matrix4, Sphere, Vector3, Vector4 } from '../maths/index.js';
 import { reflect, structLayout, writeField } from './reflect.js';
 import { Bindings, layoutEntry } from './bindings.js';
 import { Geometry } from './geometry.js';
@@ -294,7 +294,7 @@ export function createRenderer(gpu) {
       if (!Array.isArray(scene)) scene.updateMatrixWorld();
       setCamera(cam);
       projScreen.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse);
-      frustum.setFromProjectionMatrix(projScreen, WebGPUCoordinateSystem, true);
+      frustum.setFromProjectionMatrix(projScreen);
     }
     const meshes = Array.isArray(scene) ? scene : scene.meshes(pass);
 
@@ -309,7 +309,7 @@ export function createRenderer(gpu) {
       if (cam) depth = z.copy(boundingSphere(mesh.geometry).center).applyMatrix4(mesh.matrixWorld).applyMatrix4(projScreen).z;
       entries.push({ mesh, z: depth });
     }
-    const items = drawOrder(entries, Boolean(cam?.reversedDepth));
+    const items = drawOrder(entries);
 
     // Uniforms first: everything written before this pass is submitted applies to it.
     const frameGroup = frameBindings.update(globals);

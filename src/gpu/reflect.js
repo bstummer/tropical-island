@@ -143,8 +143,8 @@ function roundUp(n, align) {
   return Math.ceil(n / align) * align;
 }
 
-// Writes `value` (a number, boolean, array, or a three.js vector, colour or
-// matrix) as `field` (from structLayout) into `view` at `base`.
+// Writes `value` (a number, boolean, array, or a vector, colour or matrix of
+// maths/) as `field` (from structLayout) into `view` at `base`.
 export function writeField(view, base, field, value, structs = {}) {
   const at = base + field.offset;
   const type = field.type;
@@ -161,7 +161,7 @@ export function writeField(view, base, field, value, structs = {}) {
   if (m) {
     const [columns, rows] = [Number(m[1]), Number(m[2])];
     const stride = rows === 2 ? 8 : 16;
-    const elements = value?.elements ?? value; // three.js matrices are column-major, as WGSL's
+    const elements = value?.elements ?? value; // maths/ matrices are column-major, as WGSL's
     if (elements?.length !== columns * rows) throw new Error(`reflect: "${field.name}" (${type}) needs ${columns * rows} elements, got ${elements?.length}`);
     for (let c = 0; c < columns; c++) for (let r = 0; r < rows; r++) view.setFloat32(at + c * stride + 4 * r, elements[c * rows + r], true);
     return;
@@ -194,7 +194,7 @@ function writeScalar(view, at, type, value) {
 }
 
 // A vector's components: an array's, a colour's r, g, b, or the x, y, z, w a
-// vector (three.js's or a plain object) has.
+// vector (of maths/ or a plain object) has.
 function components(value) {
   if (Array.isArray(value) || ArrayBuffer.isView(value)) return Array.from(value);
   if (value?.isColor) return [value.r, value.g, value.b];

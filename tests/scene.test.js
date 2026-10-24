@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Matrix4, Vector3 } from 'three';
+import { Matrix4, Vector3 } from '../src/maths/index.js';
 import { Camera } from '../src/core/camera.js';
 import { Mesh, drawOrder } from '../src/gpu/scene.js';
 
@@ -21,7 +21,6 @@ const names = (items) => items.map(({ mesh }) => mesh.name);
 
 test("passes draw in three.js's order: opaque near to far, transparent far to near", () => {
   const camera = new Camera(70, 16 / 9, 0.02, 100000);
-  assert.equal(camera.reversedDepth, true);
   const opaque = { id: 1, transparent: false };
   const glass = { id: 2, transparent: true };
   const list = entries(camera, [
@@ -32,7 +31,7 @@ test("passes draw in three.js's order: opaque near to far, transparent far to ne
   ]);
   // Reversed depth: the nearer mesh has the larger z, which the order must undo.
   assert.ok(list[1].z > list[0].z);
-  assert.deepEqual(names(drawOrder(list, camera.reversedDepth)), ['5 m', '50 m', '50 m', '5 m']);
+  assert.deepEqual(names(drawOrder(list)), ['5 m', '50 m', '50 m', '5 m']);
 });
 
 test('renderOrder comes first, then the material, then the distance', () => {
@@ -43,5 +42,5 @@ test('renderOrder comes first, then the material, then the distance', () => {
     { distance: 2, material: a },
     { distance: 3, material: a, renderOrder: -1 },
   ]);
-  assert.deepEqual(names(drawOrder(list, true)), ['3 m', '2 m', '1 m']);
+  assert.deepEqual(names(drawOrder(list)), ['3 m', '2 m', '1 m']);
 });

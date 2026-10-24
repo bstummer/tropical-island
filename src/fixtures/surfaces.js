@@ -15,7 +15,7 @@
 // config.capture.surfaces.levels, per tile, goes to window.__SURFACES__ (a
 // whole tile's shift can still flip the odd texel on a cell's edge, by
 // rounding). Not part of the island.
-import { Euler, MathUtils, Matrix4, Vector2, Vector3 } from 'three';
+import { Euler, Matrix4, Vector2, Vector3, degToRad } from '../maths/index.js';
 import shader from './surfaces.wgsl';
 import { Material } from '../gpu/material.js';
 import { plane as planeGeometry } from '../gpu/geometry.js';
@@ -121,7 +121,7 @@ export function create(ctx) {
   // Rock walls to the left, leaning away from the camera, from the sea's level up.
   WALLS.degrees.forEach((degrees, k) => {
     const wall = new Mesh(plane(WALLS.width, WALLS.height, 40), material(0, 0, false, true));
-    const angle = MathUtils.degToRad(degrees);
+    const angle = degToRad(degrees);
     wall.rotation.x = angle;
     wall.position.set(WALLS.aside - k * (WALLS.width + 0.5), (Math.sin(angle) * WALLS.height) / 2, -WALLS.ahead - (Math.cos(angle) * WALLS.height) / 2);
     group.add(wall);
@@ -129,7 +129,7 @@ export function create(ctx) {
   // Ramps to the right, rising away from the camera.
   RAMPS.degrees.forEach((degrees, k) => {
     const ramp = new Mesh(plane(RAMPS.width, RAMPS.length, 20), material(0, 5));
-    const angle = MathUtils.degToRad(degrees);
+    const angle = degToRad(degrees);
     ramp.rotation.x = angle;
     ramp.position.set(RAMPS.aside + k * (RAMPS.width + 0.5), (Math.sin(angle) * RAMPS.length) / 2, -RAMPS.ahead - (Math.cos(angle) * RAMPS.length) / 2);
     group.add(ramp);

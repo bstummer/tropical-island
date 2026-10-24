@@ -5,7 +5,6 @@
 // the rocks' triangles and the ground, not with the placer's own code.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Quaternion, Vector3 } from 'three';
 import { config } from '../src/config.js';
 import { views } from '../src/views.js';
 import { createRandom } from '../src/core/random.js';
@@ -44,16 +43,24 @@ const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
 const unit = (a) => a.map((x) => x / Math.hypot(...a));
 
+// A point turned by a unit quaternion [x, y, z, w], through its rotation
+// matrix: not the placer's maths, so a mistake there can't cancel out here.
+function turn([x, y, z, w], [px, py, pz]) {
+  return [
+    (1 - 2 * (y * y + z * z)) * px + 2 * (x * y - z * w) * py + 2 * (x * z + y * w) * pz,
+    2 * (x * y + z * w) * px + (1 - 2 * (x * x + z * z)) * py + 2 * (y * z - x * w) * pz,
+    2 * (x * z - y * w) * px + 2 * (y * z + x * w) * py + (1 - 2 * (x * x + y * y)) * pz,
+  ];
+}
+
 // A rock as placed: its corners and its triangles in the world, each with its
 // outward normal and its plane's offset.
 function solid(rock, shape) {
-  const q = new Quaternion().fromArray(rock.rotation);
-  const v = new Vector3();
   const { positions, index } = shape;
   const corners = [];
   for (let i = 0; i < positions.length; i += 3) {
-    v.set(positions[i] * rock.scale[0], positions[i + 1] * rock.scale[1], positions[i + 2] * rock.scale[2]).applyQuaternion(q);
-    corners.push([rock.position[0] + v.x, rock.position[1] + v.y, rock.position[2] + v.z]);
+    const v = turn(rock.rotation, [positions[i] * rock.scale[0], positions[i + 1] * rock.scale[1], positions[i + 2] * rock.scale[2]]);
+    corners.push([rock.position[0] + v[0], rock.position[1] + v[1], rock.position[2] + v[2]]);
   }
   const triangles = [];
   for (let t = 0; t < index.length; t += 3) {

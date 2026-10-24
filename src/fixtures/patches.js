@@ -6,7 +6,7 @@
 // land from JS's at worst, and how far they land with the points shifted by
 // a tenth of a patch, a deliberate mistake the comparison has to catch.
 // Draws nothing. Not part of the island.
-import { Vector2 } from 'three';
+import { Vector2 } from '../maths/index.js';
 import shader from './patches.wgsl';
 import { Material } from '../gpu/material.js';
 import { createTarget, Texture } from '../gpu/texture.js';

@@ -10,7 +10,7 @@
 // colour and the light from below on them, window.__LIGHT__ holds where the
 // nearest white sphere of the row and the two spheres below are on screen. Not
 // part of the island.
-import { DataUtils, Euler, MathUtils, Matrix4, Vector3 } from 'three';
+import { Euler, Matrix4, Vector3, degToRad, toHalfFloat } from '../maths/index.js';
 import shader from './light.wgsl';
 import { Material } from '../gpu/material.js';
 import { plane, sphere as sphereGeometry } from '../gpu/geometry.js';
@@ -40,9 +40,9 @@ export function create(ctx) {
   const sphere = sphereGeometry(1, 48, 24);
   const yaw = new Euler().setFromQuaternion(camera.quaternion, 'YXZ').y;
   DISTANCES.forEach((d, i) => {
-    const radius = d * Math.tan(MathUtils.degToRad(SIZE));
+    const radius = d * Math.tan(degToRad(SIZE));
     ALBEDOS.forEach((_, k) => {
-      const azimuth = yaw + MathUtils.degToRad(SPREAD / 2 - (SPREAD * i) / (DISTANCES.length - 1) + (1 - k) * 2.4 * SIZE);
+      const azimuth = yaw + degToRad(SPREAD / 2 - (SPREAD * i) / (DISTANCES.length - 1) + (1 - k) * 2.4 * SIZE);
       const mesh = new Mesh(sphere, materials[k]);
       mesh.scale.setScalar(radius);
       mesh.position.set(-Math.sin(azimuth) * d, camera.position.y, -Math.cos(azimuth) * d);
@@ -72,7 +72,7 @@ export function create(ctx) {
     for (let i = 0; i < map; i++) {
       const [x, z] = [corner[0] + i + 0.5, corner[1] + j + 0.5];
       const k = over.findIndex(([px, pz]) => Math.abs(x - px) < patch / 2 && Math.abs(z - pz) < patch / 2);
-      texels.set([...(k < 0 ? GROUND : [sand, sea][k]), 1].map((v) => DataUtils.toHalfFloat(v)), 4 * (j * map + i));
+      texels.set([...(k < 0 ? GROUND : [sand, sea][k]), 1].map((v) => toHalfFloat(v)), 4 * (j * map + i));
     }
   }
   const albedoMap = new Texture(gpu, { name: 'fixture-light albedo', width: map, height: map, format: 'rgba16float', data: true, sampler: { mag: 'nearest', min: 'nearest' } }).upload(texels);
@@ -92,7 +92,7 @@ export function create(ctx) {
 
   // A sphere's centre in pixels from the top left, and its radius.
   group.updateMatrixWorld();
-  const pixelsPerRadian = frame.size.height / 2 / Math.tan(MathUtils.degToRad(camera.fov / 2));
+  const pixelsPerRadian = frame.size.height / 2 / Math.tan(degToRad(camera.fov / 2));
   const onScreen = (mesh) => {
     const centre = new Vector3().setFromMatrixPosition(mesh.matrixWorld);
     const distance = centre.distanceTo(camera.position);
