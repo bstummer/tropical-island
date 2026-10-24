@@ -75,6 +75,7 @@ when a choice is about taste or scope rather than engineering (see Open question
 | 2 | Sky, sun and atmosphere | The cove | done |
 | 3 | Island shape | The cove | done |
 | 4 | Ground surfaces and rocks | The cove | in progress |
+| 4b | WebGPU port | The cove | in progress |
 | 5 | Shadows | The cove | todo |
 | 6 | Ocean | The cove | todo |
 | 7 | Shoreline | The cove | todo |
@@ -420,13 +421,179 @@ their faces, rock on the ridges in blotches like camouflage, a flat green lawn a
   shader leaves texture units free for shadows, caustics and cloud shadows. Check: tests for each, each
   seen red once; the GPU checks reach the rocks' offsets and the light from below; captures within their
   budget on SwiftShader.
-- [ ] **4.8 The look, again.** What the review saw first in the pictures: the wet band reads as a flat
+- [ ] **4.8 The look, again.** Waits for Stage 4b: the port matches the build before 4.8, and the look
+  is tuned once, in WGSL. What the review saw first in the pictures: the wet band reads as a flat
   grey kerb, the edge from sand to green as a cut-out lying on the sand, the shelf in `rocks` as soot
   sprayed on sand, the `sand` close-up as khaki without grain at midday, and the wet glint as lacquer.
   Since 4.7 the rock's hollows hold their true share of soil, which shows on the `rocks` cliff as tan
   pockets; the blocks taper upwards now (so their sides bury cleanly), and dry rock has no sheen. Each
   is a matter of taste: show the user candidates side by side. Check: every view against the stage's
   Done line, at its time and at golden hour.
+
+### 4b. WebGPU port
+
+Move the game from three.js's WebGL renderer to raw WebGPU, with hand-written WGSL and a small renderer
+of the project's own. three stays only as a maths library. **Nothing changes visually:** the island looks
+exactly as it does in the last WebGL build, and every check still passes and still catches its bad case.
+New capabilities, such as compute, arrive in the stages that need them, not here. The port comes before
+4.8, and `main` takes no change to the picture while it runs: anything that must land on `main` meanwhile
+lands on the branch too, and the baseline is captured again.
+
+**Decisions** (2026-10-24, in Decisions below): raw WebGPU with hand-written WGSL and a renderer of the
+project's own, replacing the WebGL2 decision of 2026-10-20; three for maths only; WebGPU only, with no
+WebGL fallback; MSAA 4 samples on every preset; reversed 32-bit float depth everywhere.
+
+**Ground rules**
+- Work on a branch. `main` stays on WebGL and shippable until the port matches, then merge once.
+- Leave the pure JS untouched: island, heightmap, LOD, scatter, rock placement, sun, light maths, albedo
+  and the workers. Keep the views and config values, except MSAA and the depth fallback.
+- Port shader by shader, keeping function names, structure and comments, so a GLSL→WGSL diff reads side
+  by side.
+- No tuning and no improvements. A visible difference from the baseline is a bug, unless it's explained
+  and logged.
+- Use core WebGPU only. Don't require optional features (`shader-f16` and `float32-filterable`).
+  `timestamp-query` is used where available, and the GPU time reads "n/a" without it.
+- Stop and ask the user if a new dependency looks necessary, if captures can't be made reproducible, or
+  if a check has to be loosened.
+
+**Known facts and pitfalls** (measured in the 2026-10-24 sessions, or standard WebGPU):
+- On SwiftShader (Linux), WebGPU renders at the same speed as WebGL, gives identical pixels across runs,
+  and supports everything the frame needs:
+  - 4× MSAA `rgba16float` with resolve;
+  - `depth32float` with compare `greater`;
+  - alpha-to-coverage;
+  - reading multisampled depth in a later pass;
+  - rendering into slices of a 3D texture;
+  - compute writing 3D storage textures;
+  - timestamp queries.
+- Launch flags: `--enable-unsafe-webgpu --enable-features=Vulkan --use-vulkan=swiftshader
+  --use-webgpu-adapter=swiftshader`. Without the first one there's no adapter.
+- **Windows** (Playwright's headless shell, Chromium 156):
+  - WebGPU gets the real GPU (D3D12) only with `--disable-dawn-features=use_dxc`. The headless shell
+    ships without `dxcompiler.dll`, so creating the device fails without the flag; with it, Dawn compiles
+    with FXC, and the probe's MSAA, depth, alpha-to-coverage and readback ran without validation errors.
+  - There is no SwiftShader WebGPU on Windows: no adapter at all under the flags above, nor with a
+    fallback adapter, `--enable-unsafe-swiftshader`, other ANGLE back ends or without the GPU sandbox.
+    So WebGPU captures on SwiftShader come from Linux only: CI, a cloud session, or a Linux container
+    on a Windows machine. `--gl auto` on Windows means the real GPU, and `--gl swiftshader` there must
+    say where to get SwiftShader instead of handing over another adapter.
+  - A Linux container on Windows (Ubuntu 24.04 in Docker Desktop, with the pinned Chromium) has it: the
+    flags above give the SwiftShader adapter, and a test frame came out byte-identical across launches.
+- **CI time.** On `adee91b` the build job took 22 of its 30 minutes, 20 of them captures (4.8–9.2 s a
+  frame on SwiftShader). Captures can't get slower in the port without the job outgrowing its limit.
+- **WGSL has no preprocessor.**
+  - Variants (`#ifdef TERRAIN_SAND`, the `defines` objects) become `override` constants. A branch on an
+    override set to `false` cost nothing on SwiftShader, the same as removed code.
+  - `vite-plugin-glsl` already resolves `#include` in `.wgsl` files. Keep it, and add `.wgsl` to the
+    hot-swap pattern in `vite.config.js`.
+- **Uniformity.** WGSL rejects `fwidth`/`dpdx`, and texture reads that compute their own detail level
+  (`textureSample`), inside branches that vary per pixel. Take derivatives before any branch, as
+  `terrain.frag` already does. Inside branches, read with `textureSampleGrad` or `textureSampleLevel`.
+  Use `diagnostic(off, derivative_uniformity)` only where it's proven harmless.
+- **Y-axis and origins.** Framebuffer and texture origins are top-left in WebGPU. Anything that renders
+  to a texture and samples it, or reads `gl_FragCoord.y` (the dither, the overdraw counter, readbacks),
+  must be checked for flips.
+- **Uniform buffers.** WGSL alignment rules apply (a `vec3` takes 16 bytes). Put the shared light state
+  (`ctx.frame.uniforms` today) in one uniform buffer bound to every scene pipeline.
+- **Readbacks.** `copyTextureToBuffer` needs `bytesPerRow` to be a multiple of 256, and `mapAsync` is
+  async. This applies to the sky probe, the texture generators and the captures.
+- **Depth.** WebGPU has no automatic depth resolve. The after-opaque pass (water) reads multisampled
+  depth directly, or the frame resolves it in a pass of its own.
+- **Determinism.** No results that depend on the order of atomic operations: on SwiftShader, an
+  atomic-append list came out in a different order every run. Later GPU culling uses prefix sums.
+- **Projection.** Use `Matrix4.makePerspective(..., WebGPUCoordinateSystem, true)` and
+  `Frustum.setFromProjectionMatrix` with the same coordinate system.
+- **Canvas.** Configure it with the preferred format and `alphaMode: 'opaque'`. The output pass keeps
+  doing sRGB encoding and dithering by hand.
+- **Not yet known:** whether GitHub's runners have the Vulkan loader WebGPU needs (prove it in W.1),
+  and whether a Linux container on Windows gives the same bytes as CI.
+
+Sub-steps, in order. Each ends with tests, build and check green, plus the checks named. The full
+`verify` is green from W.4 on.
+
+- [x] **W.0 Baseline.**
+  - Fix CI first: since "Add more beaches" `verify` has failed because the benchmark check times out at
+    60 s on SwiftShader, so the live site is still Stage 3. Then `main` is green.
+  - On that commit, capture `webgl-final` with `--gl swiftshader`: all views, and the four named times on
+    the `horizon` and `overview` views.
+  - Add this stage to PLAN.md and reopen the WebGL2 decision.
+  - Done 2026-10-24. 4.7 had already fixed CI: `verify` passed on `adee91b` and the live site shows
+    Stage 4. The baseline is `adee91b` on SwiftShader WebGL, Chromium 156.0.8078.4, 1600×900:
+    `webgl-final` (all views, with `--checks`, so its `info.json` holds every check's numbers),
+    `webgl-final-<time>` for each named time (`--views horizon,overview --time <time>`), and
+    `webgl-final-tonecard`, `-gradient` and `-blend` (`--views beach --fixture <name>`, the blend at
+    `--exposure 2` as its check takes it). `screenshots/` isn't committed: a machine without them
+    recreates them byte for byte from `adee91b` (a git worktree) with the same args and Chromium build
+    (CLAUDE.md §4).
+- [ ] **W.1 Device and frame.**
+  - WebGPU device setup, and the "needs WebGPU" note.
+  - Errors: shader compile messages, validation errors, `device.lost`, uncaptured errors. All reach the
+    error overlay and fail a capture.
+  - The HDR target (4× MSAA `rgba16float`, reversed `depth32float`), the output pass (tonemap, sRGB,
+    dither) and the fullscreen pass helper.
+  - The frame's passes: opaque, after-opaque, translucent in linear light, composite, the post chain.
+  - Shader loading with includes and overrides; the uniform buffer for the light state; a small draw
+    list in place of three's scene.
+  - The capture contract (`ready`, extra frames, readback), and the screenshot tool's launch flags and
+    backend detection.
+  - Resource tracking for counts, memory and live objects.
+  - Check:
+    - the `tonecard`, `gradient` and `blend` fixtures match `webgl-final` and pass;
+    - the errors check catches a broken shader, a validation error, a lost device and blending outside
+      the translucent pass;
+    - a push of the branch shows WebGPU working in CI.
+- [ ] **W.2 Sky and light.**
+  - The atmosphere tables (transmittance, multiple scattering, sky view, the 3D aerial table, sunlight by
+    height) and the probe readback to SH.
+  - The sky drawing last on the far plane, the light state, time changes, and the placeholder water.
+  - Check:
+    - the `maths`, `haze` and `light` checks pass at their current limits and still catch their
+      deliberate mistakes;
+    - the runtime time check passes;
+    - the `horizon` view matches the baseline at every named time.
+- [ ] **W.3 Ground.**
+  - Heightmap and ground textures, the LOD mesh with instancing, terrain variants as overrides.
+  - The generated textures (sand, rock, green) with mipmaps, and the bounce map.
+  - Check:
+    - the `terrain`, `surfaces` and `depth` checks pass;
+    - the `beach`, `shoreline`, `jungle-edge`, `overview`, `into-the-sun` and `sand` views match
+      `webgl-final` in the compare sheet;
+    - captures stay within the time budget.
+- [ ] **W.4 Rocks and measurements.**
+  - Rocks and their offsets pass.
+  - Cost counts (draws, triangles, passes, pipelines, memory) and overdraw.
+  - GPU time via timestamp queries, the readout (F3) and the benchmark, which names the adapter.
+  - Teardown, with the leaky and stale-time fixtures.
+  - Check:
+    - full `npm run verify` green on SwiftShader, locally and in CI;
+    - every view and named time matches `webgl-final` (differences only at noise level, a few levels);
+    - every tool check still catches its bad case;
+    - the quality change (high → low → high) leaks nothing and gives the same picture.
+- [ ] **W.5 Cut-over.**
+  - Delete the GLSL, three's renderer use, the depth fallback (its fixture, check and `nearFallback`) and
+    MSAA 2.
+  - Add a lint to `npm run check` so three is imported for maths only.
+  - Update CLAUDE.md:
+    - §2: three for maths only;
+    - §3: flags, `--gl`;
+    - §4: where SwiftShader captures come from (Linux only, see above);
+    - §6: architecture;
+    - §7: `ctx.frame`;
+    - §8: WGSL, uniformity, overrides, MSAA 4, reversed depth everywhere, no atomic-order dependence,
+      Y origin;
+    - §9: shader files.
+  - Update the README with browser requirements, and PLAN.md's Decisions and Log, and the later stages'
+    notes that the port made untrue (three's shadow pitfalls in Stage 5, the Firefox depth fallback and
+    WebGL context loss in Stage 18).
+  - Hand over to the user:
+    - run the benchmark on real hardware, compared with the last WebGL build on the same machine;
+    - open the game in Chrome, Edge, Firefox (Windows) and Safari 26;
+    - merge to `main`.
+
+**Done when** `verify` is green on WebGPU in CI. The compare sheet against `webgl-final` shows no visible
+change on any view or named time, and every check proves itself on its bad case as before. No WebGL code
+remains. The docs describe the new conventions. The user has run the benchmark on their machine and seen
+the game in each browser.
 
 ### 5. Shadows
 
@@ -749,7 +916,16 @@ Made with the user. Don't reopen them unless the user does.
 - **Swimming is basic and simple to build:** at the surface only, with the view above the water. No
   diving. (2026-10-20)
 - **Desktop only:** a desktop browser with keyboard and mouse. (2026-10-20)
-- **WebGL2 with GLSL shaders**, through three's `WebGLRenderer`, not WebGPU. (2026-10-20)
+- **Raw WebGPU with hand-written WGSL, and a renderer of the project's own** (Stage 4b). It replaces
+  WebGL2 with GLSL through three's `WebGLRenderer` (2026-10-20), which `main` keeps until the port is
+  merged. (2026-10-24)
+- **three for maths only:** vectors, `Matrix4`, `Frustum`, `Color`, `Euler`, `Quaternion`, `Sphere`,
+  `Box3`, `MathUtils`, `DataUtils`. Whether to drop it entirely is decided after the port. (2026-10-24)
+- **WebGPU only**, with no WebGL fallback. A browser without WebGPU gets a short note that the game needs
+  it. (2026-10-24)
+- **MSAA is 4 samples on every preset.** WebGPU allows only 1 or 4, and the frame needs at least 2.
+  (2026-10-24)
+- **Reversed 32-bit float depth everywhere.** The Firefox depth fallback goes. (2026-10-24)
 - **The seed changes the island; the game has one seed for now.** Every seed makes a different island, but
   the game only uses one, and the views and art direction are tuned on it. (2026-10-20)
 - **The user directs the work and reviews most stages.** A finished stage goes to `review`; only the user
@@ -818,6 +994,11 @@ Not part of the plan. Build one only if the user asks for it: a passing rain sho
 
 Newest first. One short entry per session, only a few lines: date, stage, what changed, what is still
 open, next step. Details belong in code comments.
+
+- **2026-10-24, Stage 4b planned: the WebGPU port.** The user moved the game to raw WebGPU and WGSL
+  (Decisions); the port runs on a branch before 4.8. W.0 done: CI green on `adee91b`, baseline
+  `webgl-final` captured there. Probed headless Chromium 156: on Windows WebGPU gets the real GPU only
+  without DXC, and has no SwiftShader adapter; in a Linux container it does. Next: W.1 on a branch.
 
 - **2026-10-23–24, Stage 4 planned, built (4.1–4.6), reviewed and hardened (4.7):** one ground
   (`island.groundOf`) shared by the GPU and placement; measured albedos and light from below; the user

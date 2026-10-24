@@ -273,7 +273,8 @@ fresh load at that `t` or time; the tool checks both (with `--checks`). Don't br
 
 ## 8. Rendering conventions
 
-- **WebGL2** through three's `WebGLRenderer`, with GLSL shaders. Not WebGPU (PLAN.md, Decisions).
+- **WebGL2** through three's `WebGLRenderer`, with GLSL shaders, until Stage 4b's WebGPU port is merged
+  (PLAN.md).
 - Linear colour workflow. Author colours as sRGB hex through `THREE.Color` (converted to linear) or as
   linear floats in shaders, and say which in a comment.
 - The scene renders into the **HDR target** of `post/frame.js` (half float, MSAA). Its output pass is the
