@@ -4,7 +4,7 @@ import { parseParams } from '../src/core/params.js';
 import { sunPath } from '../src/sky/sun.js';
 
 test('parses every supported param', () => {
-  const search = '?view=beach&time=17.5&t=12.5&seed=abc&capture=1&quality=low&fixture=shimmer&tonemap=aces&exposure=1.5&stats=1&bench=1&benchSeconds=0.5&depth=fallback';
+  const search = '?view=beach&time=17.5&t=12.5&seed=abc&capture=1&quality=low&fixture=shimmer&tonemap=aces&exposure=1.5&stats=1&bench=1&benchSeconds=0.5';
   assert.deepEqual(parseParams(search), {
     view: 'beach',
     time: 17.5,
@@ -18,17 +18,12 @@ test('parses every supported param', () => {
     stats: true,
     bench: true,
     benchSeconds: 0.5,
-    depth: 'fallback',
   });
 });
 
 test('missing params are null and the switches are off', () => {
   const none = { view: null, time: null, t: null, seed: null, capture: false, quality: null, fixture: null, tonemap: null, exposure: null };
-  assert.deepEqual(parseParams(''), { ...none, stats: false, bench: false, benchSeconds: null, depth: null });
-});
-
-test('depth takes only the values it knows', () => {
-  assert.throws(() => parseParams('?depth=log'), /depth=log must be one of: fallback/);
+  assert.deepEqual(parseParams(''), { ...none, stats: false, bench: false, benchSeconds: null });
 });
 
 test('benchSeconds must be a sensible duration', () => {

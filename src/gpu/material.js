@@ -9,7 +9,8 @@
 //   1  the material's own, filled from `uniforms` by name: each field of a
 //      var<uniform> struct from uniforms[field].value, each texture from
 //      uniforms[name].value (a Texture, or null for zeros), and a sampler
-//      `<texture>Sampler` from that texture's sampler
+//      `<texture>Sampler` from that texture's sampler, or `<texture>Texels`, an
+//      unfiltered one for textureGather (bindings.js)
 //   2  the object's: chunks/object.wgsl, the mesh's matrices
 // Overrides (WGSL `override`) take what `defines` did: booleans and numbers.
 
@@ -31,12 +32,12 @@ export class Material {
     fragment = 'fragmentMain',
     uniforms = {},
     overrides = {},
-    side = 'front', // 'front' (back faces culled), 'back' or 'double'
-    depthTest = true,
+    side = 'front', // 'front' (back faces culled), 'back' or 'double'; ignores a mirroring transform
+    depthTest = true, // false: always passes, and still writes depth if depthWrite (WebGL wrote none)
     depthWrite = true,
     blend = null, // a GPUBlendState, or null for none
-    transparent = false, // drawn after the opaque objects of its pass, back to front
-    alphaToCoverage = false,
+    transparent = false, // drawn after the opaque objects of its pass, back to front, in one pass even if double-sided
+    alphaToCoverage = false, // on targets with samples only
     colorWrite = true, // false: writes depth only
   }) {
     if (typeof shader !== 'string') throw new Error(`material ${name}: no shader`);

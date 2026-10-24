@@ -40,31 +40,7 @@ export function createAtmosphere(renderer, { atmosphere: settings, tables, sampl
     aerial: createTarget(gpu, { name: 'sky aerial', width: tables.aerial[0], height: tables.aerial[1], layers: tables.aerial[2], dimension: '3d', format: 'rgba16float' }),
   };
 
-  const vec3 = (v) => new Vector3(...v);
-  // Haze scatters short wavelengths a little more (its Angstrom exponent).
-  const haze = (perKm) => vec3(settings.wavelengths.map((nm) => perKm * (nm / 550) ** -settings.hazeAngstrom));
-  const uniforms = {
-    uTopRadius: { value: settings.topRadius },
-    uRayleighScattering: { value: vec3(settings.rayleighScattering) },
-    uRayleighHeight: { value: settings.rayleighHeight },
-    uMieScattering: { value: settings.mieScattering },
-    uMieExtinction: { value: settings.mieScattering + settings.mieAbsorption },
-    uMieHeight: { value: settings.mieHeight },
-    uHazeScattering: { value: haze(settings.hazeScattering) },
-    uHazeExtinction: { value: haze(settings.hazeScattering + settings.hazeAbsorption) },
-    uHazeHeight: { value: settings.hazeHeight },
-    uHazeAmount: { value: 1 },
-    uMieG: { value: settings.mieG },
-    uHazeG: { value: settings.hazeG },
-    uOzoneAbsorption: { value: vec3(settings.ozoneAbsorption) },
-    uGroundAlbedo: { value: vec3(settings.groundAlbedo) },
-    uSunIlluminance: { value: vec3(settings.sunIlluminance) },
-    uSunRadius: { value: (settings.sunRadius * Math.PI) / 180 },
-    uTransmittance: { value: null },
-    uTransmittanceSize: { value: new Vector2(...tables.transmittance) },
-    uMultiscatter: { value: null },
-    uMultiscatterSize: { value: new Vector2(...tables.multiscatter) },
-  };
+  const uniforms = atmosphereUniforms(settings, tables);
   // Each pass reads the frame's numbers (chunks/frame-values.wgsl) but none of
   // its textures, and never the table it draws into.
   const pass = (name, shader, overrides, own = {}) =>
@@ -142,5 +118,35 @@ export function createAtmosphere(renderer, { atmosphere: settings, tables, sampl
       for (const p of Object.values(passes)) p.dispose();
       for (const t of [...Object.values(targets), ...sets.flatMap((s) => [s.transmittance, s.multiscatter])]) t.dispose();
     },
+  };
+}
+
+// The uniforms of atmosphere.wgsl for config.sky's atmosphere and tables, with
+// no tables yet: for materials and passes that include it.
+export function atmosphereUniforms(settings, tables) {
+  const vec3 = (v) => new Vector3(...v);
+  // Haze scatters short wavelengths a little more (its Angstrom exponent).
+  const haze = (perKm) => vec3(settings.wavelengths.map((nm) => perKm * (nm / 550) ** -settings.hazeAngstrom));
+  return {
+    uTopRadius: { value: settings.topRadius },
+    uRayleighScattering: { value: vec3(settings.rayleighScattering) },
+    uRayleighHeight: { value: settings.rayleighHeight },
+    uMieScattering: { value: settings.mieScattering },
+    uMieExtinction: { value: settings.mieScattering + settings.mieAbsorption },
+    uMieHeight: { value: settings.mieHeight },
+    uHazeScattering: { value: haze(settings.hazeScattering) },
+    uHazeExtinction: { value: haze(settings.hazeScattering + settings.hazeAbsorption) },
+    uHazeHeight: { value: settings.hazeHeight },
+    uHazeAmount: { value: 1 },
+    uMieG: { value: settings.mieG },
+    uHazeG: { value: settings.hazeG },
+    uOzoneAbsorption: { value: vec3(settings.ozoneAbsorption) },
+    uGroundAlbedo: { value: vec3(settings.groundAlbedo) },
+    uSunIlluminance: { value: vec3(settings.sunIlluminance) },
+    uSunRadius: { value: (settings.sunRadius * Math.PI) / 180 },
+    uTransmittance: { value: null },
+    uTransmittanceSize: { value: new Vector2(...tables.transmittance) },
+    uMultiscatter: { value: null },
+    uMultiscatterSize: { value: new Vector2(...tables.multiscatter) },
   };
 }

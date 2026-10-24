@@ -106,3 +106,48 @@ test('objects made untracked and pipelines released leave the counts', () => {
   assert.deepEqual(stats.objects(), { Texture: 0, RenderTarget: 0, Buffer: 0, QuerySet: 0, Pipeline: 1 });
   assert.equal(stats.memory().pipelines, 1);
 });
+
+test('the GPU timer times a frame from its first pass to its last, while someone listens', async () => {
+  globalThis.GPUBufferUsage ??= { MAP_READ: 1, COPY_DST: 8, COPY_SRC: 4, QUERY_RESOLVE: 512 };
+  globalThis.GPUMapMode ??= { READ: 1 };
+  const stamps = [1000000n, 3500000n]; // ns: 2.5 ms apart
+  const device = fakeDevice();
+  device.features = new Set(['timestamp-query']);
+  device.createQuerySet = () => ({ destroy() {} });
+  device.createBuffer = () => ({ mapAsync: () => Promise.resolve(), getMappedRange: () => new BigUint64Array(stamps).buffer, unmap() {}, destroy() {} });
+  const descriptors = [];
+  device.createCommandEncoder = () => ({
+    beginRenderPass: (desc) => {
+      descriptors.push(desc);
+      return { end() {} };
+    },
+    resolveQuerySet() {},
+    copyBufferToBuffer() {},
+    finish: () => ({}),
+  });
+  device.queue = { submit() {} };
+  const stats = instrument(device);
+  const times = [];
+  const pass = () => device.createCommandEncoder().beginRenderPass(passDescriptor()).end();
+
+  stats.beginFrame();
+  pass();
+  stats.endFrame();
+  assert.equal(descriptors[0].timestampWrites, undefined); // nobody listens
+
+  const stop = stats.onGpuTime((ms) => times.push(ms));
+  stats.beginFrame();
+  pass();
+  pass();
+  stats.endFrame();
+  stats.beginFrame(); // a frame with no passes reports nothing
+  stats.endFrame();
+  await new Promise((resolve) => setTimeout(resolve));
+  assert.deepEqual([descriptors[1].timestampWrites.beginningOfPassWriteIndex, descriptors[1].timestampWrites.endOfPassWriteIndex], [0, 1]);
+  assert.deepEqual([descriptors[2].timestampWrites.beginningOfPassWriteIndex, descriptors[2].timestampWrites.endOfPassWriteIndex], [undefined, 1]);
+  assert.deepEqual(times, [2.5]);
+  stop();
+  assert.equal(stats.memory().bufferBytes, 0); // the timer's own buffers aren't the game's
+  delete device.features;
+  assert.equal(instrument(device).onGpuTime(() => {}), null);
+});

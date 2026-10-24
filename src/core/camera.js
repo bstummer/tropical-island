@@ -1,4 +1,4 @@
-import { MathUtils, Matrix4 } from 'three';
+import { MathUtils, Matrix4, Vector3 } from 'three';
 import { Node } from '../gpu/scene.js';
 
 // The camera: a perspective projection with reversed depth (CLAUDE.md §8),
@@ -27,7 +27,16 @@ export class Camera extends Node {
     super.updateMatrixWorld();
     this.matrixWorldInverse.copy(this.matrixWorld).invert();
   }
+
+  // Turns it to look at a point, as three.js's Camera.lookAt.
+  lookAt(target) {
+    this.quaternion.setFromRotationMatrix(lookAt.lookAt(this.position, target, UP));
+    return this;
+  }
 }
+
+const lookAt = new Matrix4();
+const UP = new Vector3(0, 1, 0);
 
 // Puts the camera at a view from views.js. Captures can turn it by [yaw, pitch]
 // degrees in camera space, which is how they probe for shimmer.

@@ -100,10 +100,14 @@ export function typeLayout(type, structs = {}) {
   }
   m = ARRAY.exec(type);
   if (m) {
+    // A uniform array's elements must lie 16 bytes apart, as core WGSL wants
+    // them. Narrower ones (f32, vec2f) lie closer where the browser has
+    // uniform_buffer_standard_layout and fail to compile where it hasn't:
+    // hold them in vec4f instead.
     const element = typeLayout(m[1].trim(), structs);
-    const align = Math.max(element.align, 16); // uniform arrays: elements 16-aligned
-    const stride = roundUp(element.size, align);
-    return { align, size: stride * Number(m[2]), stride, element: m[1].trim(), count: Number(m[2]) };
+    const stride = roundUp(element.size, element.align);
+    if (stride % 16) throw new Error(`reflect: a uniform array of ${m[1].trim()} (${stride} bytes apart); use vec4f elements`);
+    return { align: Math.max(element.align, 16), size: stride * Number(m[2]), stride, element: m[1].trim(), count: Number(m[2]) };
   }
   if (structs[type]) {
     const fields = structLayout(type, structs);

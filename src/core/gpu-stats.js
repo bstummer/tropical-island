@@ -5,6 +5,8 @@
 // Live: the memory of textures, render targets (textures drawn into, the
 // canvas) and buffers, and the objects alive by kind, for teardown checks.
 // Byte counts are what the formats need, before any padding the driver adds.
+// GPU time, where the device has timestamp queries: from the start of a
+// frame's first pass to the end of its last, a few frames late.
 //
 // No browser APIs at import time, so tests/gpu-stats.test.js runs it on a fake device.
 
@@ -55,7 +57,7 @@ export function instrument(device) {
   const pipelines = new Set(); // created and not released by the renderer
   let canvas = { width: 0, height: 0, bytesPerTexel: 4 };
 
-  const gpuListeners = new Set();
+  const timer = createGpuTimer(device, (fn) => untracked(fn));
 
   function beginFrame() {
     if (frame) {
@@ -63,9 +65,21 @@ export function instrument(device) {
       last = { ...counts, pipelinesUsed: used.size };
     }
     frame = { drawCalls: 0, triangles: 0, passes: 0, blits: 0, pipelines: new Set() };
+    timer?.begin();
   }
 
-  function endFrame() {}
+  function endFrame() {
+    timer?.end();
+  }
+
+  function untracked(fn) {
+    tracking = false;
+    try {
+      return fn();
+    } finally {
+      tracking = true;
+    }
+  }
 
   const wrap = (object, name, after) => {
     const original = object[name];
@@ -96,10 +110,17 @@ export function instrument(device) {
     onDestroy(buffer, () => buffers.delete(buffer));
   });
   wrap(device, 'createQuerySet', (set) => {
+    if (!tracking) return;
     querySets.add(set);
     onDestroy(set, () => querySets.delete(set));
   });
   wrap(device, 'createCommandEncoder', (encoder) => {
+    // A timed frame's passes write their timestamps (createGpuTimer).
+    const begin = encoder.beginRenderPass;
+    encoder.beginRenderPass = function (desc) {
+      const writes = timer?.writes();
+      return begin.call(encoder, writes ? { ...desc, timestampWrites: writes } : desc);
+    };
     wrap(encoder, 'beginRenderPass', (pass, desc) => {
       let draws = 0;
       const draw = (count, instances = 1) => {
@@ -137,11 +158,8 @@ export function instrument(device) {
     },
     // fn(ms) with each frame's GPU time, a few frames late, while it listens.
     // Returns a remover, or null when the device has no timestamp queries.
-    onGpuTime() {
-      return null;
-    },
-    get gpuListeners() {
-      return gpuListeners;
+    onGpuTime(fn) {
+      return timer ? timer.listen(fn) : null;
     },
     // The renderer reports its pipelines: WebGPU can't destroy them, so they
     // live as long as something holds them.
@@ -153,14 +171,7 @@ export function instrument(device) {
     },
     // Runs fn without counting what it creates: the device's own lasting
     // objects (placeholders), which a teardown must not count as leaks.
-    untracked(fn) {
-      tracking = false;
-      try {
-        return fn();
-      } finally {
-        tracking = true;
-      }
-    },
+    untracked,
     setCanvas(width, height, format) {
       canvas = { width, height, bytesPerTexel: bytesPerTexel(format) };
     },
@@ -181,6 +192,70 @@ export function instrument(device) {
       let bufferBytes = 0;
       for (const bytes of buffers.values()) bufferBytes += bytes;
       return { textureBytes, renderTargetBytes: renderTargetBytes + canvasBytes, canvasBytes, bufferBytes, pipelines: pipelines.size };
+    },
+  };
+}
+
+// Times frames on the GPU while someone listens, or null without the
+// timestamp-query feature: the first pass of a frame writes when it begins,
+// every pass writes when it ends (the last one's stays), then the two are
+// resolved and read back, a few frames late. A pool of query sets, so frames
+// in flight don't wait for each other. Frames without passes report nothing.
+export function createGpuTimer(device, untracked) {
+  if (!device.features?.has('timestamp-query')) return null;
+  const listeners = new Set();
+  const free = [];
+  let current = null; // this frame's slot, while timing
+  let begun = false;
+
+  function slot() {
+    return (
+      free.pop() ??
+      untracked(() => ({
+        querySet: device.createQuerySet({ type: 'timestamp', count: 2 }),
+        resolve: device.createBuffer({ size: 16, usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC }),
+        read: device.createBuffer({ size: 16, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST }),
+      }))
+    );
+  }
+
+  return {
+    begin() {
+      current = listeners.size ? slot() : null;
+      begun = false;
+    },
+    // The timestampWrites for the pass about to begin, or undefined.
+    writes() {
+      if (!current) return undefined;
+      const first = !begun;
+      begun = true;
+      return { querySet: current.querySet, ...(first && { beginningOfPassWriteIndex: 0 }), endOfPassWriteIndex: 1 };
+    },
+    end() {
+      const done = current;
+      current = null;
+      if (!done) return;
+      if (!begun) {
+        free.push(done);
+        return;
+      }
+      const encoder = device.createCommandEncoder();
+      encoder.resolveQuerySet(done.querySet, 0, 2, done.resolve, 0);
+      encoder.copyBufferToBuffer(done.resolve, 0, done.read, 0, 16);
+      device.queue.submit([encoder.finish()]);
+      done.read.mapAsync(GPUMapMode.READ).then(
+        () => {
+          const [start, stop] = new BigUint64Array(done.read.getMappedRange());
+          done.read.unmap();
+          free.push(done);
+          if (stop > start) for (const fn of listeners) fn(Number(stop - start) / 1e6);
+        },
+        () => {}, // the device went away meanwhile
+      );
+    },
+    listen(fn) {
+      listeners.add(fn);
+      return () => listeners.delete(fn);
     },
   };
 }

@@ -14,6 +14,17 @@ struct Blend {
 
 @group(1) @binding(0) var<uniform> blend: Blend;
 @group(1) @binding(1) var uOpaque: texture_2d<f32>; // the opaque scene, for the after-opaque card
+@group(1) @binding(2) var uOpaqueDepth: texture_depth_2d; // and its depth
+
+const BANDS_DISTANCE: f32 = 20.0; // m, blend.js's
+const MISSED = vec3f(1000.0, 0.0, 1000.0); // bright magenta: far off any reference
+
+// How far the opaque scene lies at this pixel, along the view (m), from its
+// reversed depth: z = d / w - c, with c and d from the projection.
+fn opaqueDistance(at: vec4f) -> f32 {
+  let z = textureLoad(uOpaqueDepth, vec2i(at.xy), 0);
+  return frame.projectionMatrix[3][2] / (z + frame.projectionMatrix[2][2]);
+}
 
 // Bands by screen height, the same behind a card as beside it: from 0.02 to
 // 1300, a factor of 4 apart. Counted from the bottom, as in WebGL.
@@ -31,6 +42,12 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
   } else if (blend.uMode == 2) {
     return sceneOutput(band(in.position) * (1.0 - blend.uAlpha) + blend.uColor * blend.uAlpha, 1.0);
   } else if (blend.uMode == 3) {
+    // Where the opaque scene's depth puts it beyond the bands, where nothing
+    // stands (a depth never resolved reads as the far plane), the card shows it.
+    // Nearer is the bar's edge, whose first sample may be the bar.
+    if (opaqueDistance(in.position) > BANDS_DISTANCE + 0.1) {
+      return sceneOutput(MISSED, 1.0);
+    }
     let behind = sceneRadiance(textureLoad(uOpaque, vec2i(in.position.xy), 0).rgb) / frame.uExposure;
     return sceneOutput(behind * (1.0 - blend.uAlpha) + blend.uColor * blend.uAlpha, 1.0);
   }

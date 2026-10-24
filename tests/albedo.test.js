@@ -60,7 +60,7 @@ test("the green's shares blend between bands as the zones do: the scrub's to a b
   }
 });
 
-test("sand's albedo is halfway between wet and dry sand's where the wet sand's zone ends, wet sand's under a film of water, dry sand's from `dry`, as chunks/sand.glsl darkens it", () => {
+test("sand's albedo is halfway between wet and dry sand's where the wet sand's zone ends, wet sand's under a film of water, dry sand's from `dry`, as chunks/sand.wgsl darkens it", () => {
   const { film, dry } = surfaces.wetness;
   const near = (a, b) => a.every((v, c) => Math.abs(v - b[c]) < 1e-12);
   assert.ok(near(albedoOf(1, 0, 0, surfaces.wetHeight, 0, 0, surfaces), albedo.wetSand.map((v, c) => (v + albedo.drySand[c]) / 2)), 'at the zone');
@@ -149,7 +149,7 @@ test("sand is wettest at the water, half wet at the wet sand zone's edge, dry ab
   assert.equal(sandWetness(0, wetness, surfaces.wetHeight), 1);
   assert.equal(sandWetness(wetness.film, wetness, surfaces.wetHeight), 1);
   assert.equal(sandWetness(wetness.dry, wetness, surfaces.wetHeight), 0);
-  // chunks/sand.glsl darkens sand by smoothstep(0.2, 0.5, wetness): half dark where the wet sand's zone ends.
+  // chunks/sand.wgsl darkens sand by smoothstep(0.2, 0.5, wetness): half dark where the wet sand's zone ends.
   assert.ok(Math.abs(sandWetness(surfaces.wetHeight, wetness, surfaces.wetHeight) - 0.35) < 1e-12);
   let last = Infinity;
   for (let h = 0; h <= 2; h += 0.01) {

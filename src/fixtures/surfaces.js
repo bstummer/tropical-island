@@ -15,9 +15,11 @@
 // config.capture.surfaces.levels, per tile, goes to window.__SURFACES__ (a
 // whole tile's shift can still flip the odd texel on a cell's edge, by
 // rounding). Not part of the island.
-import * as THREE from 'three';
-import vertexShader from './light.vert';
-import fragmentShader from './surfaces.frag';
+import { Euler, MathUtils, Matrix4, Vector2, Vector3 } from 'three';
+import shader from './surfaces.wgsl';
+import { Material } from '../gpu/material.js';
+import { plane as planeGeometry } from '../gpu/geometry.js';
+import { Mesh, Node } from '../gpu/scene.js';
 import { createSurfaceTiles, LAYERS, tilesUniforms } from '../textures/surfaces.js';
 import { sandUniforms } from '../textures/sand.js';
 import { rockUniforms } from '../textures/rock.js';
@@ -35,57 +37,64 @@ export function create(ctx) {
   const { terrain } = config.world;
   const sandSettings = terrain.sand;
   const tiles = createSurfaceTiles(renderer, ctx.rng, 'fixtures/surfaces', terrain, ctx.quality.surfaceTexture);
-  window.__SURFACES__ = tileCheck(ctx, terrain);
 
-  const yaw = new THREE.Euler().setFromQuaternion(camera.quaternion, 'YXZ').y;
-  const forward = new THREE.Vector2(-Math.sin(yaw), -Math.cos(yaw));
-  const right = new THREE.Vector2(-forward.y, forward.x);
+  const yaw = new Euler().setFromQuaternion(camera.quaternion, 'YXZ').y;
+  const forward = new Vector2(-Math.sin(yaw), -Math.cos(yaw));
+  const right = new Vector2(-forward.y, forward.x);
+  // The tiles' averages are read back from the GPU: zeros until then.
+  const surfaceUniforms = ({ sand, rock, green }) => ({
+    ...sandUniforms(sand, sandSettings, config.world.island.zones.wetSand, config.sky.sun.sunsetYaw),
+    ...rockUniforms(rock, terrain.rock),
+    ...greenUniforms(green, terrain.albedo, terrain.green, [1, 2]),
+  });
   const shared = {
-    ...frame.uniforms,
     ...tilesUniforms(tiles),
-    ...sandUniforms(tiles.sand, sandSettings, config.world.island.zones.wetSand, config.sky.sun.sunsetYaw),
-    ...rockUniforms(tiles.rock, terrain.rock),
-    ...greenUniforms(tiles.green, terrain.albedo, terrain.green, [1, 2]),
-    uDrySand: { value: new THREE.Vector3(...terrain.albedo.drySand) },
-    uWetSand: { value: new THREE.Vector3(...terrain.albedo.wetSand) },
-    uRock: { value: new THREE.Vector3(...terrain.albedo.rock) },
+    ...surfaceUniforms({ sand: { grainMean: new Vector3() }, rock: { mean: new Vector3() }, green: { grassMean: new Vector3(), grassCover: 0, litterCover: 0 } }),
+    uDrySand: { value: new Vector3(...terrain.albedo.drySand) },
+    uWetSand: { value: new Vector3(...terrain.albedo.wetSand) },
+    uRock: { value: new Vector3(...terrain.albedo.rock) },
     uGround: { value: camera.position.y - config.movement.walk.eye }, // world y of the fixture's ground
   };
+  const ready = Promise.all([
+    tiles.ready.then((averages) => {
+      for (const [name, { value }] of Object.entries(surfaceUniforms(averages))) shared[name].value = value;
+    }),
+    tileCheck(ctx, terrain).then((result) => (window.__SURFACES__ = result)),
+  ]);
   const materials = [];
   // Sand at this wetness and height above the sea; `rising` sand rises a metre
   // in ten to the right, so the wet strips cross the heights of a few swash marks.
   // Rock is as high above the sea as above the fixture's ground, plus aboveSea.
   // The green: at this band, how lush and how sandy ([band, lush, sandy]).
   const material = (wetness, aboveSea, rising = false, rock = false, green = null) => {
-    const m = new THREE.ShaderMaterial({
+    const m = new Material({
       name: 'fixture-surfaces',
-      vertexShader,
-      fragmentShader,
+      shader,
       uniforms: {
         ...shared,
         uWetness: { value: wetness },
         uAboveSea: { value: aboveSea },
-        uAcross: { value: rising ? right.clone() : new THREE.Vector2() },
-        uGreen: { value: new THREE.Vector3(...(green ?? [0, 0, 0])) },
+        uAcross: { value: rising ? right.clone() : new Vector2() },
+        uGreen: { value: new Vector3(...(green ?? [0, 0, 0])) },
       },
-      defines: rock ? { SURFACE_ROCK: 1, ROCK_DETAIL: 1 } : green ? { SURFACE_GREEN: 1, GREEN_DETAIL: 1 } : {},
+      overrides: rock ? { SURFACE_ROCK: true, ROCK_DETAIL: true } : green ? { SURFACE_GREEN: true, GREEN_DETAIL: true } : {},
     });
     materials.push(m);
     return m;
   };
 
-  const group = new THREE.Group();
+  const group = new Node();
   group.position.set(camera.position.x, camera.position.y - config.movement.walk.eye, camera.position.z);
   group.rotation.y = yaw;
   scene.add(group);
   const geometries = [];
   const plane = (width, length, segments) => {
-    const g = new THREE.PlaneGeometry(width, length, 1, segments).rotateX(-Math.PI / 2);
+    const g = planeGeometry(width, length, 1, segments).applyMatrix4(new Matrix4().makeRotationX(-Math.PI / 2));
     geometries.push(g);
     return g;
   };
   // Group space: -z ahead, +x to the right. The ground everywhere, a little below the strips.
-  const ground = new THREE.Mesh(plane(20000, 20000, 200), material(0, 5));
+  const ground = new Mesh(plane(20000, 20000, 200), material(0, 5));
   ground.position.y = -0.002;
   group.add(ground);
   // The strips side by side across the view, left to right.
@@ -95,36 +104,37 @@ export function create(ctx) {
     // The swash marks sit at heights the wet band spans; the wet strips start where they do.
     const wet = wetness > 0.3;
     const aboveSea = wet ? 0.15 - 0.1 * (camera.position.x * right.x + camera.position.z * right.y + x) : 5;
-    const strip = new THREE.Mesh(plane(STRIP.width, STRIP.to - STRIP.from, 300), material(wetness, aboveSea, wet));
+    const strip = new Mesh(plane(STRIP.width, STRIP.to - STRIP.from, 300), material(wetness, aboveSea, wet));
     strip.position.set(x, 0, -(STRIP.from + STRIP.to) / 2);
     group.add(strip);
   });
-  const rockStrip = new THREE.Mesh(plane(STRIP.width, STRIP.to - STRIP.from, 300), material(0, 5, false, true));
+  const rockStrip = new Mesh(plane(STRIP.width, STRIP.to - STRIP.from, 300), material(0, 5, false, true));
   rockStrip.position.set(start + (STRIPS.length + 0.5) * STRIP.width, 0, -(STRIP.from + STRIP.to) / 2);
   group.add(rockStrip);
   GREENS.forEach((green, k) => {
-    const strip = new THREE.Mesh(plane(STRIP.width, STRIP.to - STRIP.from, 300), material(0, 5, false, false, green));
+    const strip = new Mesh(plane(STRIP.width, STRIP.to - STRIP.from, 300), material(0, 5, false, false, green));
     strip.position.set(start - (k + 0.5) * STRIP.width, 0, -(STRIP.from + STRIP.to) / 2);
     group.add(strip);
   });
   // Rock walls to the left, leaning away from the camera, from the sea's level up.
   WALLS.degrees.forEach((degrees, k) => {
-    const wall = new THREE.Mesh(plane(WALLS.width, WALLS.height, 40), material(0, 0, false, true));
-    const angle = THREE.MathUtils.degToRad(degrees);
+    const wall = new Mesh(plane(WALLS.width, WALLS.height, 40), material(0, 0, false, true));
+    const angle = MathUtils.degToRad(degrees);
     wall.rotation.x = angle;
     wall.position.set(WALLS.aside - k * (WALLS.width + 0.5), (Math.sin(angle) * WALLS.height) / 2, -WALLS.ahead - (Math.cos(angle) * WALLS.height) / 2);
     group.add(wall);
   });
   // Ramps to the right, rising away from the camera.
   RAMPS.degrees.forEach((degrees, k) => {
-    const ramp = new THREE.Mesh(plane(RAMPS.width, RAMPS.length, 20), material(0, 5));
-    const angle = THREE.MathUtils.degToRad(degrees);
+    const ramp = new Mesh(plane(RAMPS.width, RAMPS.length, 20), material(0, 5));
+    const angle = MathUtils.degToRad(degrees);
     ramp.rotation.x = angle;
     ramp.position.set(RAMPS.aside + k * (RAMPS.width + 0.5), (Math.sin(angle) * RAMPS.length) / 2, -RAMPS.ahead - (Math.cos(angle) * RAMPS.length) / 2);
     group.add(ramp);
   });
 
   return {
+    ready,
     update() {},
     dispose() {
       delete window.__SURFACES__;
@@ -139,16 +149,18 @@ export function create(ctx) {
 // The sand's, the rock's and the green's tiles made again shifted by a whole
 // tile across and down, and by half a tile: the share of texels that changed,
 // per tile.
-function tileCheck(ctx, settings) {
-  const make = (shift) => {
+async function tileCheck(ctx, settings) {
+  const make = async (shift) => {
     const t = createSurfaceTiles(ctx.renderer, ctx.rng, 'fixtures/surfaces/tiles', settings, CHECK_SIZE, shift);
-    const pixels = Object.fromEntries(Object.keys(LAYERS).map((name) => [name, t.pixels(name)]));
+    await t.ready;
+    const names = Object.keys(LAYERS);
+    const layers = await Promise.all(names.map((name) => t.pixels(name)));
     t.dispose();
-    return pixels;
+    return Object.fromEntries(names.map((name, k) => [name, layers[k]]));
   };
-  const base = make([0, 0]);
-  const shifted = [make([1, 0]), make([0, 1])];
-  const half = make([0.5, 0.5]);
+  const base = await make([0, 0]);
+  const shifted = [await make([1, 0]), await make([0, 1])];
+  const half = await make([0.5, 0.5]);
   const { levels, tiles } = ctx.config.capture.surfaces;
   const changed = (a, b) => {
     let n = 0;

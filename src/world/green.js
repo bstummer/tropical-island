@@ -1,7 +1,7 @@
 // Where the green grows inland (PLAN.md Stage 4): the ground that is neither
 // sand nor rock is living green over a share of it (greenCover, by its band
 // and how lush it is) and bare ground over the rest, in patches a few metres
-// across that lie where they lie, whatever the camera does. chunks/green.glsl
+// across that lie where they lie, whatever the camera does. chunks/green.wgsl
 // draws them, and this is its twin (greenCover, greenPatches), so placement
 // (Stage 9) knows which ground is green and which bare. Pure and
 // Node-importable.
@@ -29,7 +29,7 @@ export function greenCover(band, lush, { cover }) {
 // The patches for config.world.terrain.green and two whole-number seeds:
 // rank(x, z) is spread about evenly over 0 to 1 across the ground, and the
 // ground at world x, z is green where it falls below greenCover there. Near
-// the camera chunks/green.glsl frays their edges by a blade or two, which
+// the camera chunks/green.wgsl frays their edges by a blade or two, which
 // this leaves out.
 export function greenPatches({ patches }, seeds) {
   return {

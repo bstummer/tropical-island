@@ -96,9 +96,8 @@ test('the haze reaches past the horizon from every view', () => {
 });
 
 test('the depth range covers a leaf at the lens and the horizon from a hilltop', () => {
-  const { near, nearFallback, far } = config.camera;
+  const { near, far } = config.camera;
   assert.ok(near > 0 && near <= 0.05, `near = ${near} m`);
-  assert.ok(nearFallback > near && nearFallback < 1, `nearFallback = ${nearFallback} m`);
   const horizonFrom300m = Math.sqrt(2 * 6371000 * 300); // about 62 km
   assert.ok(far > horizonFrom300m, `far = ${far} m`);
 });
@@ -107,7 +106,6 @@ test('quality presets are complete and sane', () => {
   for (const [name, preset] of Object.entries(config.quality.presets)) {
     assert.ok(preset.renderScale > 0 && preset.renderScale <= 1, `${name}.renderScale`);
     assert.ok(preset.maxPixelRatio >= 1, `${name}.maxPixelRatio`);
-    assert.ok([2, 4, 8].includes(preset.msaa), `${name}.msaa`);
     assert.ok(preset.groundDetail > 0 && preset.groundDetail <= 1, `${name}.groundDetail`);
   }
 });

@@ -556,7 +556,7 @@ baseline: on the branch nothing runs it any more, and `adee91b` keeps it for sid
     `--exposure 2` as its check takes it). `screenshots/` isn't committed: a machine without them
     recreates them byte for byte from `adee91b` (a git worktree) with the same args and Chromium build
     (CLAUDE.md §4).
-- [ ] **W.1 Device, frame and tools.** The foundation every later step is checked with.
+- [x] **W.1 Device, frame and tools.** The foundation every later step is checked with.
   - WebGPU device setup, and the "needs WebGPU" note. The game still opens from `file://`.
   - Errors: shader compile messages, validation errors, a lost device and uncaptured errors. All reach
     the error overlay and fail a capture.
@@ -586,7 +586,10 @@ baseline: on the branch nothing runs it any more, and `adee91b` keeps it for sid
       blending outside the translucent pass;
     - a push of the branch shows WebGPU working in CI, and a capture there is byte-identical to the
       same capture made locally.
-- [ ] **W.2 Sky and light.**
+  - Done 2026-10-24. Windows makes SwiftShader captures in a Linux container (`tools/linux.js`, Docker),
+    where `webgl-final` came out byte for byte again. `tonecard`, `gradient` and `blend` match it within
+    a level.
+- [x] **W.2 Sky and light.**
   - The atmosphere's tables:
     - transmittance;
     - multiple scattering;
@@ -601,7 +604,10 @@ baseline: on the branch nothing runs it any more, and `adee91b` keeps it for sid
       deliberate mistakes;
     - the runtime time check passes, and `stale-time` is still caught;
     - the `horizon` view matches the baseline at every named time.
-- [ ] **W.3 Ground.**
+  - Done 2026-10-24. At every named time under 0.2% of the horizon's pixels differ, by 1–2 levels,
+    apart from a one-row step in the horizon line at the frame's left edge. The light lands in the
+    readback's callback, so a frame never shows half of it.
+- [x] **W.3 Ground.**
   - The heightmap's and the ground's textures, the LOD mesh with instancing, and the terrain's
     variants as overrides.
   - The generated tiles (sand, rock, green) with mipmaps, their averages behind `ready`, and the
@@ -611,7 +617,16 @@ baseline: on the branch nothing runs it any more, and `adee91b` keeps it for sid
     - the `beach`, `shoreline`, `jungle-edge`, `overview`, `into-the-sun` and `sand` views match
       `webgl-final`, far ground included;
     - captures take no longer than `webgl-final`'s.
-- [ ] **W.4 Rocks, measurements and teardown.**
+  - Done 2026-10-24. 76–99.8% of each view's pixels are identical to `webgl-final`, and at most 0.44%
+    are more than 8 levels off: single pixels of fine detail (the rock's streaks, glints, the green's
+    dithered edges) where float rounding crosses a threshold. No edge or shape moved. Two traps cost
+    time:
+    - A uniform array of `f32` or `vec2f` doesn't have GLSL's layout (it broke the mesh's height and
+      the rocks' offsets). Uniform arrays now hold `vec4f`, and `gpu/reflect.js` refuses others.
+    - Frames took 50% longer on SwiftShader until the heights were read with one `textureGather`
+      instead of four `textureLoad`s, which Dawn bounds-checks one by one. Now 545–575 ms a frame,
+      against WebGL's 502–617 in the same container.
+- [x] **W.4 Rocks, measurements and teardown.**
   - Rocks and their offsets pass.
   - Cost counts (draws, triangles, passes, pipelines, memory) and overdraw.
   - GPU time via timestamp queries.
@@ -658,27 +673,25 @@ the game in each browser.
 - Shadow quality scales with the quality presets.
 - Plant shadows come with the plants in Stage 8. Build the shadow system so leaves can later cast
   leaf-shaped shadows.
-- Known pitfalls in three r186: its PCF shadows add the bias without flipping it for reversed depth, so
-  the usual negative bias causes acne; shadow passes ignore `onBeforeCompile`, so anything the vertex
-  shader moves (leaves, waves) needs its own depth material; the SunLight addon has only 2 cascades.
+- Known from Stage 4b: there are no built-in shadows; the shadow maps are the project's own, drawn in a
+  `frame.beforeScene()` pass. Depth is reversed, so a depth bias takes the opposite sign to the usual.
+  Anything whose vertex shader moves it (the terrain's morph, the rocks' offsets, later leaves and waves)
+  needs a depth material that moves it the same way.
 - Known from Stage 4: rocks (`world/rocks.js`) need shadows near and far, and cast them on the sand they
   sit in; their vertex shader moves each by its offset onto the mesh as drawn, which a shadow pass must
-  take too: three's own depth material knows nothing of their instances, and would cast one rock's
-  shadow at the origin. The light from below (`groundAlbedo()` in `skyIrradiance()`) assumes the ground
-  around is in the sun, so shade under a canopy or a cloud gets it in full. Until there are shadows,
-  golden hour has no cool shade anywhere: everything is warm.
-- Known from Stage 2: materials copy `ctx.frame.uniforms` when they are created, so new light uniforms
-  (the shadows') must be in it from the start; capture mode's shader pre-compile doesn't reach the
-  materials of passes outside the scene, such as shadow passes. three's shadow maps fit the frame badly:
-  they render inside every `render()` call (the frame makes up to three a frame) unless told not to, and
-  cast only from objects on the camera's current layer. The sky sits on the opaque layer, so a shadow pass
-  of the frame's own has to leave it out.
-- Known from Stage 3: the terrain's morph and the planet's bend (`chunks/planet.glsl`) measure from
-  three's `cameraPosition`, which in a shadow pass is the light's camera. The terrain picks its nodes
+  take too, or it casts every rock's shadow from where its instance starts. The light from below
+  (`groundAlbedo()` in `skyIrradiance()`) assumes the ground around is in the sun, so shade under a canopy
+  or a cloud gets it in full. Until there are shadows, golden hour has no cool shade anywhere: everything
+  is warm.
+- Known from Stage 2: new light uniforms (the shadows') go in `ctx.frame.uniforms` and
+  `chunks/frame-struct.wgsl`, which every scene material binds at group 0. Capture mode's pre-compile
+  (`frame.compile()`) covers the scene's passes and the frame's own materials: a shadow pass's
+  materials must join it. The sky is in the opaque pass, so a shadow pass has to leave it out.
+- Known from Stage 3: the terrain's morph and the planet's bend (`chunks/planet.wgsl`) measure from the
+  frame's `cameraPosition`, which in a shadow pass is the light's camera. The terrain picks its nodes
   once a frame, for the main camera, into the meshes' shared instance buffers: a shadow pass reusing
-  them would miss casters out of view, such as the volcano with the sun behind it. three's depth
-  material ignores the terrain's vertex shader. The mesh's shape depends on where the camera is (its
-  levels of detail), so whatever draws it must agree on that camera.
+  them would miss casters out of view, such as the volcano with the sun behind it. The mesh's shape
+  depends on where the camera is (its levels of detail), so whatever draws it must agree on that camera.
 - **Done when** low-sun captures show long, soft shadows from the rocks and terrain, with no acne, no
   detached shadows and no hard edges, and the camera-offset captures show no shimmer (the tool turns the
   camera but can't move it yet).
@@ -714,7 +727,7 @@ the game in each browser.
 - Known from Stage 4: the GPU reads the reef's offset with the ground (`terrainGround()`, held within
   ±250 m), but no distance to the shore any more. The light from below takes the far sea's albedo over
   all water (`world/albedo.js`), though the shallow lagoon over white sand sends up far more. Under the
-  sea the ground is soaked but has no film of water (`chunks/wet.glsl`): the water's surface mirrors.
+  sea the ground is soaked but has no film of water (`chunks/wet.wgsl`): the water's surface mirrors.
   The terrain's shader reads 9 textures of the 16 a shader is sure to have (the surfaces' tiles share
   one array, `textures/surfaces.js`).
 - **Done when** the placeholder water is gone and the lagoon reads as tropical at every time of day.
@@ -730,14 +743,14 @@ the game in each browser.
   the waterline is drawn as a polyline 1 m a side, whose kinks show in the `sand` close-up. The cove's
   beach is a smooth arc by design, as sandy bays behind a headland are; the small-scale life of a real
   waterline, beach cusps scalloped by the swash every 20–40 m, comes with the waves.
-- Known from Stage 4: the sand takes any wetness from dry to a film of water (`chunks/sand.glsl`): the
+- Known from Stage 4: the sand takes any wetness from dry to a film of water (`chunks/sand.wgsl`): the
   waves only have to drive it; today it follows the height above the sea, its edge wandering in arcs
   (`sandReach`). Looking down, the sun's glint on the film is a smooth oval, which reads a little CG;
   looking into a low sun, the wet band stays darker than a real foreshore, which mirrors the bright sky
   round the sun: the film is only about 2 m wide, and the sky's light as SH blurs that glow away. The
-  wetness has one input for sand, rock and the rocks (`chunks/wet.glsl`): drive `wetness` (and its film)
+  wetness has one input for sand, rock and the rocks (`chunks/wet.wgsl`): drive `wetness` (and its film)
   there, and keep `washed`, where the waves reach, which the ripples and swash marks follow, so drying
-  sand doesn't grow ripples. Spray darkens rock to 2 m above the sea (`chunks/rock.glsl`): waves
+  sand doesn't grow ripples. Spray darkens rock to 2 m above the sea (`chunks/rock.wgsl`): waves
   breaking on it should drive that too.
 - **Done when** the low beach view is a wallpaper, its motion strip shows waves running up and draining
   back naturally (the strip spans 2.5 s today, less than one wave), and the user finds the motion natural
@@ -765,14 +778,14 @@ the game in each browser.
   draws, about 0.25 µs a point), not `island.zone()` (7 µs, and a little off the drawn ground).
 - Known from Stage 3: near the camera the mesh is `ctx.terrain.heightAt`, but farther out its levels of detail stray from it (by
   centimetres at 200–400 m, decimetres beyond, metres far out) and change as the camera moves. Known
-  from Stage 4: `chunks/terrain-mesh.glsl` gives the mesh's own height as drawn (`terrainMeshHeight`, the
+  from Stage 4: `chunks/terrain-mesh.wgsl` gives the mesh's own height as drawn (`terrainMeshHeight`, the
   vertex shader's own morph), with a JS twin (`ctx.terrain.meshHeightAtCove`) that the terrain fixture
   checks it against; rocks move by it each frame in a pass of nine texels each (`world/rocks.js`, about
   700 rocks), which won't scale to plants by the hundred thousand: they need their offsets another way.
   Placement by rules is `world/scatter.js`, and what it places keeps clear of what is there already
   (`ctx.rocks.clearance`), so palms don't grow through boulders. It runs on the main thread at boot (the
   rocks take 0.1–0.4 s): plants by the hundred thousand need workers. Plants also bend with the planet
-  (`chunks/planet.glsl`), or the far ones float.
+  (`chunks/planet.wgsl`), or the far ones float.
 - **Done when** palms glow when backlit at golden hour, fronds sway and flutter, their shade sits soft on
   the sand, close-ups hold up, and nothing flickers: the shimmer score stays low and the user sees none in
   the running game.
@@ -933,12 +946,12 @@ the game in each browser.
 
 - Profile against the target: 60 fps at 1080p on a mid-range laptop. Captures can't measure real GPU cost,
   so ask the user to run the benchmark on real machines. Also cover: choosing quality automatically or
-  picking a safe default, boot time, memory, WebGL context loss, Chrome, Edge and Firefox, high-DPI
+  picking a safe default, boot time, memory, a lost GPU device, the browsers with WebGPU, high-DPI
   screens, and the size budget.
-- Firefox lacks EXT_clip_control, so it renders with the fallback depth set-up: a near plane at 0.5 m that
-  clips close leaves, and z-fighting far away (`verify` reports its share on the depth fixture). Decide
-  here whether it needs more, such as logarithmic depth, which costs early depth testing and MSAA where
-  surfaces intersect.
+- Known from Stage 4b: a lost device (a driver reset, say) stops the game with the error overlay.
+  Recovering means making every GPU resource again, as a quality change already does (`setQuality` in
+  `main.js`), on a new device. Firefox has WebGPU on Windows only (141 and later); elsewhere it gets the
+  note that the game needs WebGPU.
 - Known from Stage 3: the heightmap's workers are untried outside Chromium; without them the grids
   build in the main thread, about a second on a fast desktop, and with two cores there is one worker.
   The terrain's fragment shader is most of a SwiftShader frame, its aerial perspective and its filtered
@@ -947,8 +960,8 @@ the game in each browser.
   build, a browser download rather than a new npm package; ask the user before adding it. Playwright can
   drive an installed Edge too.
 - **Done when** the user has run the game on real machines, including a mid-range laptop; the `high`
-  preset holds the target there (CLAUDE.md §10); and the game runs in Chrome, Edge and Firefox without
-  errors.
+  preset holds the target there (CLAUDE.md §10); and the game runs without errors in every browser the
+  README names.
 
 ### 19. Final pass
 
@@ -973,8 +986,7 @@ Made with the user. Don't reopen them unless the user does.
   diving. (2026-10-20)
 - **Desktop only:** a desktop browser with keyboard and mouse. (2026-10-20)
 - **Raw WebGPU with hand-written WGSL, and a renderer of the project's own** (Stage 4b). It replaces
-  WebGL2 with GLSL through three's `WebGLRenderer` (2026-10-20), which `main` keeps until the port is
-  merged. (2026-10-24)
+  WebGL2 with GLSL through three's `WebGLRenderer` (2026-10-20). (2026-10-24)
 - **three for maths only:** vectors, `Matrix4`, `Frustum`, `Color`, `Euler`, `Quaternion`, `Sphere`,
   `Box3`, `MathUtils`, `DataUtils`. Whether to drop it entirely is decided after the port. (2026-10-24)
 - **WebGPU only**, with no WebGL fallback. A browser without WebGPU gets a short note that the game needs

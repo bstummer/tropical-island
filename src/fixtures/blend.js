@@ -4,7 +4,8 @@
 // translucent layers so the cards match their references, also over the
 // brightest bands, where blending in the HDR target's compressed space darkens
 // them by stops; hide them behind an opaque bar; and hand the after-opaque card
-// the opaque scene to mix with. tools/screenshot.js compares the two halves. It
+// the opaque scene to mix with, and its depth (the card turns magenta where it
+// puts the scene beyond the bands). tools/screenshot.js compares the two halves. It
 // also routes the frame through a post pass that changes nothing, so the post
 // chain runs. Not part of the island.
 import { MathUtils, Vector3 } from 'three';
@@ -15,7 +16,7 @@ import { plane } from '../gpu/geometry.js';
 import { Mesh, Node } from '../gpu/scene.js';
 import { blendLayout, cardSpan } from './blend-layout.js';
 
-const BANDS_DISTANCE = 20; // m
+const BANDS_DISTANCE = 20; // m (blend.wgsl's)
 const CARD_DISTANCE = 10; // m
 const BAR_DISTANCE = 8; // m
 
@@ -39,6 +40,7 @@ export function create(ctx) {
         uAlpha: { value: alpha },
         // Only the after-opaque pass may read the opaque scene: the opaque pass draws into it.
         uOpaque: { value: mode === 3 ? frame.opaque.color : null },
+        uOpaqueDepth: { value: mode === 3 ? frame.opaque.depth : null },
       },
     });
     materials.push(m);

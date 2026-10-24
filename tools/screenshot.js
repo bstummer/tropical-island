@@ -331,7 +331,15 @@ async function runChecks(context, fileUrl, query, view, outDir) {
     () => checkPlayerMode(context, fileUrl, query, view),
     ...toolCheckTasks(context, fileUrl, query, view, outDir),
   ];
-  const [bench, player, ...tools] = await inParallel(tasks, CHECKS_AT_ONCE);
+  // SCREENSHOT_PROGRESS=1 says when each check is done, for finding one that hangs.
+  const progress = process.env.SCREENSHOT_PROGRESS
+    ? tasks.map((task, i) => async () => {
+        const result = await task();
+        console.log(`  … ${result.name ?? ['benchmark', 'player mode'][i]} done in ${result.ms} ms`);
+        return result;
+      })
+    : tasks;
+  const [bench, player, ...tools] = await inParallel(progress, CHECKS_AT_ONCE);
   return { toolChecks: tools, player, bench };
 }
 
@@ -710,7 +718,7 @@ export function rockProblems(r, { offsets, vertices, pixels }) {
   const problems = [];
   if (!(r?.offsets?.gpu <= offsets)) problems.push(`the GPU's offsets vs their JS twin off by ${r?.offsets?.gpu?.toExponential(1)} m (limit ${offsets})`);
   if (!(r?.offsets?.mistaken > offsets)) problems.push(`offsets read from the next rock's block are only ${r?.offsets?.mistaken?.toExponential(1)} m off, within the limit: the check misses it`);
-  if (!(r?.vertices?.gpu <= vertices)) problems.push(`world/rocks.vert draws rocks ${r?.vertices?.gpu?.toExponential(1)} m off their twin's surface (limit ${vertices})`);
+  if (!(r?.vertices?.gpu <= vertices)) problems.push(`world/rocks.wgsl draws rocks ${r?.vertices?.gpu?.toExponential(1)} m off their twin's surface (limit ${vertices})`);
   if (!(r?.vertices?.mistaken > vertices)) problems.push(`rocks turned the wrong way are only ${r?.vertices?.mistaken?.toExponential(1)} m off, within the limit: the check misses it`);
   if (!(r?.vertices?.pixels >= pixels)) problems.push(`only ${r?.vertices?.pixels} pixels of rocks drawn (at least ${pixels}): the check measures too little`);
   return problems;
@@ -1009,8 +1017,9 @@ export function benchmarkProblems(summary, results, viewNames) {
 }
 
 // WebGPU errors the browser reports as console warnings (the game reports the
-// ones it hears of as errors itself, gpu/device.js).
-const GPU_ERROR = /^WebGPU|\[Invalid [A-Z]|GPUValidationError|validation error/i;
+// ones it hears of as errors itself, gpu/device.js). Dawn ends each with what it
+// was doing: "While calling [Device].CreateBuffer(...)".
+const GPU_ERROR = /^WebGPU|\[Invalid [A-Z]|GPUValidationError|validation error|While (calling|encoding|validating) \[/i;
 
 // Turns console errors, WebGPU errors, page errors and requests for anything but
 // the built file into problems.

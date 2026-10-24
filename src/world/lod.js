@@ -8,7 +8,7 @@
 // `detail` metres at level 0. A child out of that range is drawn as a quarter
 // of its parent instead, at the parent's spacing. Every point of the root is covered once, and
 // neighbours differ by at most one level, so the vertex shader's morph
-// (terrain.vert) closes every seam.
+// (world/terrain.wgsl) closes every seam.
 //
 // Ranges are measured across the ground, ignoring height, here and in the
 // morph. A seam can lie a node's diagonal beyond its level's range, where the
@@ -127,7 +127,7 @@ function distance2(cam, a0, o0, size) {
 // (i + 1, j) and (i + 1, j), (i, j + 1), (i + 1, j + 1).
 const BLOCK = [0, 3, 1, 1, 3, 4, 1, 4, 2, 2, 4, 5, 3, 6, 4, 4, 6, 7, 4, 7, 5, 5, 7, 8];
 
-// The mesh's own height for a camera, as terrain.vert draws it: far out its
+// The mesh's own height for a camera, as world/terrain.wgsl draws it: far out its
 // coarser levels stray from the finest height by centimetres to metres, and
 // whatever stands on the ground must stand on what is drawn. tree as
 // createLod's; ranges and morphs from lodRanges; heightAtCove(a, o, from) samples
@@ -145,7 +145,7 @@ export function createMeshHeight({ origin, levels, leaf, grid }, { ranges, morph
   const go = new Float64Array(9);
   const ks = new Float64Array(9);
 
-  // Vertex n's height, as terrain.vert takes it at its level and the next.
+  // Vertex n's height, as world/terrain.wgsl takes it at its level and the next.
   function vertexHeight(n, a0, o0, spacing, level) {
     const a = a0 + ga[n] * spacing;
     const o = o0 + go[n] * spacing;

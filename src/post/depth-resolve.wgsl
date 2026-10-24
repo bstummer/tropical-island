@@ -1,6 +1,7 @@
-// The opaque scene's depth for the translucent layer (frame.js): one sample of
-// each pixel of the multisampled depth, the first, as WebGL's blit of depth
-// takes it, so the layer hides behind the scene.
+// The scene's depth as passes read it (frame.js): one sample of each pixel of
+// the multisampled depth, the first, as WebGL's blit of depth takes it. The
+// translucent layer hides behind it, and after-opaque materials and depth
+// posts read it (frame.opaque.depth).
 
 #include "chunks/fullscreen.wgsl"
 

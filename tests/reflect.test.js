@@ -9,7 +9,7 @@ struct Light {
   uExposure: f32,
   uSkySH: array<vec3f, 9>,
   uLevels: array<vec4f, 4>,
-  uWeights: array<f32, 2>,
+  uWeights: array<vec4f, 2>,
   uMatrix: mat4x4f,
   uNormal: mat3x3f,
   uSize: vec2f,
@@ -65,7 +65,7 @@ test('uniform layout follows WGSL alignment rules', () => {
     uExposure: [12, 4], // packs into the vec3's last lane
     uSkySH: [16, 144], // vec3 elements, each 16 bytes apart
     uLevels: [160, 64],
-    uWeights: [224, 32], // f32 elements 16 apart in a uniform buffer
+    uWeights: [224, 32],
     uMatrix: [256, 64],
     uNormal: [320, 48], // three columns of 16
     uSize: [368, 8],
@@ -81,7 +81,7 @@ test('writeField packs numbers, vectors, matrices and arrays', () => {
   writeField(view, 0, fields.uSunDirection, { x: 1, y: 2, z: 3 });
   writeField(view, 0, fields.uExposure, 0.5);
   writeField(view, 0, fields.uSkySH, Array.from({ length: 9 }, (_, k) => [k, k + 0.5, k + 0.25]));
-  writeField(view, 0, fields.uWeights, [7, 8]);
+  writeField(view, 0, fields.uWeights, [[7], [8]]);
   writeField(view, 0, fields.uNormal, { elements: [1, 2, 3, 4, 5, 6, 7, 8, 9] });
   writeField(view, 0, fields.uFlag, true);
   const f = (at) => view.getFloat32(at, true);
@@ -91,4 +91,11 @@ test('writeField packs numbers, vectors, matrices and arrays', () => {
   assert.deepEqual([f(320), f(324), f(328), f(336), f(352), f(360)], [1, 2, 3, 4, 7, 9]);
   assert.equal(view.getUint32(376, true), 1);
   assert.throws(() => writeField(view, 0, fields.uSkySH, [[1, 2, 3]]), /has 1 elements, the shader 9/);
+});
+
+test('a uniform array of elements narrower than 16 bytes is refused', () => {
+  const { structs } = reflect('struct A { ranges: array<f32, 16>, morphs: array<vec2f, 4>, ok: array<vec4f, 2> }');
+  assert.throws(() => structLayout('A', structs), /array of f32 \(4 bytes apart\); use vec4f/);
+  assert.throws(() => structLayout('A', { A: [structs.A[1]] }), /array of vec2f/);
+  assert.equal(structLayout('A', { A: [structs.A[2]] })[0].size, 32);
 });

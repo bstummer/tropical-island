@@ -13,8 +13,6 @@
 //   stats    1 = show the frame readout from the start (F3 toggles it)
 //   bench    1 = run the benchmark (core/benchmark.js) instead of the game
 //   benchSeconds  seconds measured per view, instead of config.bench.seconds
-//   depth    fallback = the depth set-up of browsers without EXT_clip_control (Firefox),
-//            to test that path on browsers that have it
 import { sunPath } from '../sky/sun.js';
 
 export function parseParams(search) {
@@ -32,19 +30,12 @@ export function parseParams(search) {
     stats: q.get('stats') === '1',
     bench: q.get('bench') === '1',
     benchSeconds: number(q, 'benchSeconds', 0.05, 600),
-    depth: choice(q, 'depth', ['fallback']),
   };
 }
 
 function text(q, key) {
   const value = q.get(key);
   return value === null || value.trim() === '' ? null : value.trim();
-}
-
-function choice(q, key, values) {
-  const value = text(q, key);
-  if (value !== null && !values.includes(value)) throw new Error(`URL param ${key}=${value} must be one of: ${values.join(', ')}`);
-  return value;
 }
 
 function timeOfDay(q, key) {

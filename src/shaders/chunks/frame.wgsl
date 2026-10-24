@@ -17,8 +17,9 @@
 @group(0) @binding(8) var uSunlightSampler: sampler;
 @group(0) @binding(9) var uBounceMap: texture_2d<f32>; // the ground's albedo seen from above (world/albedo.js), linear
 @group(0) @binding(10) var uBounceMapSampler: sampler;
-@group(0) @binding(11) var uTerrainHeight: texture_2d_array<f32>; // per level: the height at each sample (r32float: read by texel)
+@group(0) @binding(11) var uTerrainHeight: texture_2d_array<f32>; // per level: the height at each sample (r32float: read unfiltered)
 @group(0) @binding(12) var uTerrainInfo: texture_2d_array<f32>; // slope along a and o, the ground's band, the reef's offset
 @group(0) @binding(13) var uTerrainInfoSampler: sampler;
 @group(0) @binding(14) var uTerrainGround: texture_2d_array<f32>; // how much of the ground is sand, and rock; how lush the green; how sandy the soil
 @group(0) @binding(15) var uTerrainGroundSampler: sampler;
+@group(0) @binding(16) var uTerrainHeightTexels: sampler; // unfiltered, for textureGather (gpu/bindings.js)

@@ -27,7 +27,7 @@ const mb = (bytes) => `${Math.round(bytes / (1024 * 1024))} MB`;
 export function formatReadout({ frames, gpu, counts, memory, preset, size, msaa, where, aboveGround }) {
   return [
     `${fixed(frames?.mean, 1)} ms · ${fixed(frames?.fps, 0)} fps · GPU ${gpu ? `${fixed(gpu.mean, 2)} ms` : 'n/a'}`,
-    `${counts.drawCalls} draws · ${count(counts.triangles)} tris · ${counts.passes} passes · ${memory.programs} programs`,
+    `${counts.drawCalls} draws · ${count(counts.triangles)} tris · ${counts.passes} passes · ${memory.pipelines} pipelines`,
     `RT ${mb(memory.renderTargetBytes)} · tex ${mb(memory.textureBytes)} · ${preset} ${size.width}×${size.height} · MSAA ${msaa}`,
     `at ${where.map((v) => v.toFixed(2)).join(', ')} · ${fixed(aboveGround, 2)} m above the ground`,
   ].join('\n');

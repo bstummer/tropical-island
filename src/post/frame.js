@@ -41,13 +41,15 @@
 //                     writing linear, premultiplied colour. Returns node.
 //   opaque            { color, depth }: the opaque scene, compressed like the HDR target
 //                     (sceneRadiance() reads the colour back as radiance times the
-//                     exposure, as sceneOutput() takes it) and its depth (multisampled),
-//                     for materials of meshes in pass 'afterOpaque' only: a pass can't
-//                     read what it draws into, so no other material may bind them.
+//                     exposure, as sceneOutput() takes it) and its depth (one sample
+//                     a pixel, texture_depth_2d), for materials of meshes in pass
+//                     'afterOpaque' only: a pass can't read what it draws into, so no
+//                     other material may bind them.
 //   addPost(fn, { order, depth })  fn(renderer, input, output, depth) every frame:
 //                     input is a texture of linear, exposed radiance, output a render
 //                     target to draw the whole result into, and with `depth` set, depth
-//                     is the opaque scene's depth texture (god rays need it), else null.
+//                     is the scene's depth texture, after-opaque meshes included (god
+//                     rays need it), else null.
 //                     Passes run by `order`, then by when they were added. Returns a remover.
 //   sceneTarget       the HDR target
 //   output            capture mode only: the output pass's texture, which the canvas shows a copy of
@@ -70,8 +72,13 @@ export function createFrame(ctx, display) {
   }
 
   const sceneTarget = createTarget(gpu, { name: 'scene', width: 1, height: 1, format: 'rgba16float', samples: SAMPLES, depth: true });
+  // The translucent pass's target: linear premultiplied colour, transmittance
+  // in alpha. Its depth is the scene's resolved to one sample, which is also
+  // what `opaque.depth` and depth posts read, so it exists from the start (for
+  // materials to hold) but takes the frame's size only once a frame uses it.
+  const layerTarget = createTarget(gpu, { name: 'layer', width: 1, height: 1, format: 'rgba16float', depth: true });
+  let layerSized = false;
   // Created on first use, kept until dispose().
-  let layerTarget = null; // the translucent pass: linear premultiplied colour, transmittance in alpha
   const postTargets = [null, null]; // linear HDR: the composite's, and the post chain's ping-pong partner
   // Capture mode reads the output back (core/capture.js): it draws into a texture the canvas then copies.
   const outputTarget = params.capture ? createTarget(gpu, { name: 'output', width: 1, height: 1, format: 'rgba8unorm' }) : null;
@@ -103,12 +110,13 @@ export function createFrame(ctx, display) {
   let postCount = 0;
   const stopResize = display.onResize(() => {
     ({ width: size.width, height: size.height } = display.buffer);
-    for (const target of [sceneTarget, layerTarget, ...postTargets, outputTarget]) target?.setSize(size.width, size.height);
+    for (const target of [sceneTarget, ...postTargets, outputTarget]) target?.setSize(size.width, size.height);
+    if (layerSized) layerTarget.setSize(size.width, size.height);
     output.uniforms.uHeight.value = size.height;
     for (const fn of listeners) fn(size);
   });
 
-  const hdrTarget = (name, depth) => createTarget(gpu, { name, width: size.width, height: size.height, format: 'rgba16float', depth });
+  const hdrTarget = (name) => createTarget(gpu, { name, width: size.width, height: size.height, format: 'rgba16float' });
   // The layer's target as pipelines see it, before it exists.
   const layerSignature = { format: 'rgba16float', samples: 1, depthFormat: 'depth32float' };
 
@@ -175,7 +183,7 @@ export function createFrame(ctx, display) {
     passes: PASSES,
     skyOrder: 1e9,
     sceneTarget,
-    opaque: { color: sceneTarget.color, depth: sceneTarget.depth },
+    opaque: { color: sceneTarget.color, depth: layerTarget.depth },
     get output() {
       return outputTarget?.color ?? null;
     },
@@ -234,31 +242,36 @@ export function createFrame(ctx, display) {
       for (const pass of passes) pass(renderer);
       const use = used();
       const linear = use.translucent || posts.length > 0;
+      // The scene's depth so far, one sample a pixel, into the layer's depth.
+      // The layer's colour is cleared on the way: nothing in front yet, everything shows through.
+      const resolveDepth = () => {
+        if (!layerSized) layerTarget.setSize(size.width, size.height);
+        layerSized = true;
+        depthResolve.render(layerTarget, { clearColor: [0, 0, 0, 1], clearDepth: 0 });
+      };
 
       renderer.render(scene, camera, sceneTarget, { pass: 'opaque', clearColor: [0, 0, 0, 1], clearDepth: 0 });
       if (use.afterOpaque) {
-        // It reads the resolved opaque scene, so its samples resolve after it, in a pass of their own.
+        // It reads the opaque scene resolved, so its own samples resolve after it, in a pass of their own.
+        resolveDepth();
         renderer.render(scene, camera, sceneTarget, { pass: 'afterOpaque', resolve: false });
         renderer.render([], null, sceneTarget);
       }
 
-      if (use.translucent) {
-        layerTarget ??= hdrTarget('layer', true);
-        // Nothing in front yet: everything shows through. The scene's depth, so the layer hides behind it.
-        depthResolve.render(layerTarget, { clearColor: [0, 0, 0, 1], clearDepth: 0 });
-        renderer.render(scene, camera, layerTarget, { pass: 'translucent' });
-      }
+      // The layer hides behind the scene, after-opaque meshes included, and so do depth posts.
+      if (use.translucent || posts.some((p) => p.depth)) resolveDepth();
+      if (use.translucent) renderer.render(scene, camera, layerTarget, { pass: 'translucent' });
 
       let input = sceneTarget.color;
       if (linear) {
-        postTargets[0] ??= hdrTarget('post', false);
-        if (posts.length) postTargets[1] ??= hdrTarget('post', false);
+        postTargets[0] ??= hdrTarget('post');
+        if (posts.length) postTargets[1] ??= hdrTarget('post');
         composite.uniforms.uHasLayer.value = use.translucent;
         composite.uniforms.uLayer.value = use.translucent ? layerTarget.color : null;
         composite.render(postTargets[0]);
         let [from, to] = postTargets;
         for (const { fn, depth } of posts) {
-          fn(renderer, from.color, to, depth ? sceneTarget.depth : null);
+          fn(renderer, from.color, to, depth ? layerTarget.depth : null);
           [from, to] = [to, from];
         }
         input = from.color;

@@ -10,7 +10,10 @@ HTML file: no install, no downloads at runtime, and it works offline.
 
 - **Online:** https://bstummer.github.io/tropical-island/
 - **Download:** [tropical-island.html](https://github.com/bstummer/tropical-island/releases/latest/download/tropical-island.html).
-  It's one file and always the latest build. Open it in a desktop browser (Chrome, Edge or Firefox).
+  It's one file and always the latest build. Open it in a desktop browser.
+
+It needs WebGPU: a recent Chrome or Edge, Firefox 141 or later on Windows, or Safari 26. If your browser has
+it but the game says otherwise, WebGPU may be turned off in its settings, or your graphics driver blocked.
 
 Click to start, then:
 
@@ -43,7 +46,9 @@ npm run verify   # tests, build, checks and screenshots: run before every push
 ```
 
 On a fresh Linux machine, also run `npx playwright install-deps chromium` once (it installs system libraries
-with apt, so it needs root or sudo).
+with apt, so it needs root or sudo). Screenshots on a machine without a GPU, and those CI compares with, come
+from SwiftShader, which WebGPU has on Linux only: on Windows or macOS, run the command in a Linux container
+with Docker, as in `node tools/linux.js npm run verify -- --gl swiftshader`.
 
 The build is `dist/index.html`. Every push to `main` is verified by GitHub Actions, deployed to Pages and
 published as the download above. [CLAUDE.md](CLAUDE.md) holds the project rules, architecture and workflow.

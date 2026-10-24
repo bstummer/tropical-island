@@ -1,4 +1,4 @@
-// Where the green grows inland (world/green.js, chunks/green.glsl's twin):
+// Where the green grows inland (world/green.js, chunks/green.wgsl's twin):
 // its patches cover as much of the ground as the green's share says, at any
 // share and for any seeds, and lie where they lie.
 import test from 'node:test';

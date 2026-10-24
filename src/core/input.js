@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+import { Euler, MathUtils, Vector3 } from 'three';
 
 // Pointer-lock mouse look + free-fly camera, and rough walking (Stage 14 builds the real thing).
 //   Mouse: look · W/A/S/D: move along the view direction · Space: up · Shift: down
@@ -11,10 +11,10 @@ export function create(ctx) {
   const overlay = document.getElementById('start');
 
   const pressed = new Set();
-  const look = new THREE.Euler(0, 0, 0, 'YXZ').copy(camera.rotation);
-  const maxPitch = THREE.MathUtils.degToRad(movement.maxPitch);
-  const move = new THREE.Vector3();
-  const up = new THREE.Vector3(0, 1, 0);
+  const look = new Euler(0, 0, 0, 'YXZ').copy(camera.rotation);
+  const maxPitch = MathUtils.degToRad(movement.maxPitch);
+  const move = new Vector3();
+  const up = new Vector3(0, 1, 0);
   let speed = movement.flySpeed;
   let walking = false;
 
@@ -33,7 +33,7 @@ export function create(ctx) {
   function onMouseMove(e) {
     if (!locked()) return;
     look.y -= e.movementX * movement.lookSensitivity;
-    look.x = THREE.MathUtils.clamp(look.x - e.movementY * movement.lookSensitivity, -maxPitch, maxPitch);
+    look.x = MathUtils.clamp(look.x - e.movementY * movement.lookSensitivity, -maxPitch, maxPitch);
     camera.rotation.copy(look);
   }
 
@@ -48,7 +48,7 @@ export function create(ctx) {
   function onWheel(e) {
     if (!locked()) return;
     const step = e.deltaY < 0 ? movement.wheelSpeedStep : 1 / movement.wheelSpeedStep;
-    speed = THREE.MathUtils.clamp(speed * step, movement.minFlySpeed, movement.maxFlySpeed);
+    speed = MathUtils.clamp(speed * step, movement.minFlySpeed, movement.maxFlySpeed);
   }
 
   function onKeyUp(e) {
@@ -61,7 +61,7 @@ export function create(ctx) {
 
   function logView() {
     const r = (v, d = 2) => Number(v.toFixed(d));
-    const deg = (rad) => r(THREE.MathUtils.radToDeg(rad), 1);
+    const deg = (rad) => r(MathUtils.radToDeg(rad), 1);
     const p = camera.position;
     const entry =
       `{ name: 'new-view', position: [${r(p.x)}, ${r(p.y)}, ${r(p.z)}], ` +

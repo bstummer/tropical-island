@@ -9,7 +9,8 @@
 //       core/camera.js's, or null for passes that need none; target: createTarget's,
 //       or canvas(); clearColor [r, g, b, a] and clearDepth clear first, else it
 //       draws over what is there; layer, level: of an array or 3D target; resolve
-//       false keeps a multisampled target from resolving (a pass that reads its colour)
+//       false keeps a multisampled target from resolving (a pass that reads its colour);
+//       viewport [x, y, width, height] in pixels from the top left draws into that part only
 //   compile(scene, camera, target, { pass }) -> Promise of the materials whose
 //       shaders or pipelines failed, as "name: message", made in the background
 //   fullscreen(material) -> { material, uniforms, render(target, options), compile(target), dispose() }:
@@ -287,7 +288,7 @@ export function createRenderer(gpu) {
     camera.cameraPosition.value.setFromMatrixPosition(cam.matrixWorld);
   }
 
-  function render(scene, cam, target, { pass, clearColor = null, clearDepth = null, layer = 0, level = 0, resolve = true } = {}) {
+  function render(scene, cam, target, { pass, clearColor = null, clearDepth = null, layer = 0, level = 0, resolve = true, viewport = null } = {}) {
     if (cam) {
       if (!Array.isArray(scene)) scene.updateMatrixWorld();
       setCamera(cam);
@@ -353,6 +354,10 @@ export function createRenderer(gpu) {
     if (!draws.length && !clearColor && clearDepth === null && !(target.msaa && resolve)) return;
     const encoder = device.createCommandEncoder({ label: target.name });
     const encoded = encoder.beginRenderPass(descriptor);
+    if (viewport) {
+      encoded.setViewport(...viewport, 0, 1);
+      encoded.setScissorRect(...viewport);
+    }
     for (const draw of draws) {
       const { geometry } = draw.mesh;
       encoded.setPipeline(draw.pipeline);

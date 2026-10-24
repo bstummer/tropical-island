@@ -4,7 +4,7 @@ import glsl from 'vite-plugin-glsl';
 import { viteSingleFile } from 'vite-plugin-singlefile';
 import { checkOutputFiles } from './tools/check-build.js';
 
-const SHADER_ID = /\.(glsl|vert|frag|wgsl)(\?.*)?$/;
+const SHADER_ID = /\.wgsl(\?.*)?$/;
 
 // The commit the game is built from, shown in the benchmark summary
 // (src/core/benchmark.js) so numbers from other machines name their build.
@@ -17,10 +17,10 @@ function buildId() {
   }
 }
 
-// Lets any shader write `#include "chunks/noise.glsl"` no matter which folder it
+// Lets any shader write `#include "chunks/noise.wgsl"` no matter which folder it
 // lives in: the include is rewritten to a root import, which vite-plugin-glsl
 // resolves against `root` (src/shaders). Chunks themselves include sibling
-// chunks by relative path (`#include "hash.glsl"`), because the plugin reads
+// chunks by relative path (`#include "noise.wgsl"`), because the plugin reads
 // nested chunks from disk without running this transform.
 function shaderChunkPaths() {
   return {
@@ -59,21 +59,6 @@ function shaderHotSwap() {
   };
 }
 
-// three.js cites papers in GLSL comments inside its shader strings
-// (`// https://jcgt.org/...`). They are inert, but the build must contain no
-// URLs (tools/check-build.js), so drop links from such comment lines. Minified
-// JS has no comments of its own, so a line starting with `//` is shader text.
-function stripShaderCommentUrls() {
-  return {
-    name: 'strip-shader-comment-urls',
-    apply: 'build',
-    renderChunk(code) {
-      const out = code.replace(/(\n[ \t]*\/\/[^\n]*?)https?:\/\/[^\s`'"]+/g, '$1(link removed)');
-      return out === code ? null : { code: out, map: null };
-    },
-  };
-}
-
 // The build must emit index.html and nothing else. Runs after
 // vite-plugin-singlefile has dropped the inlined chunks, and fails the build
 // before anything is written.
@@ -98,11 +83,10 @@ export default defineConfig({
   define: { __BUILD__: JSON.stringify(buildId()) },
   plugins: [
     shaderChunkPaths(),
-    // Chunks share helpers (two chunks may both include hash.glsl), and GLSL
+    // Chunks share helpers (two chunks may both include noise.wgsl), and WGSL
     // rejects a function defined twice, so each chunk lands in a shader once.
     glsl({ root: '/src/shaders', watch: true, minify: false, removeDuplicatedImports: true }),
     shaderHotSwap(),
-    stripShaderCommentUrls(),
     viteSingleFile({ removeViteModuleLoader: true }),
     singleFileOutput(),
   ],

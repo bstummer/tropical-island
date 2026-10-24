@@ -8,8 +8,10 @@ import { structLayout, structSize, writeField } from './reflect.js';
 const VISIBLE = () => GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT;
 
 // The bind group layout entry of a reflected binding. A float texture with a
-// `<name>Sampler` beside it is filtered; one without is read texel by texel
-// (textureLoad), which any float format allows (r32float and rgba32float can't be filtered in core WebGPU).
+// `<name>Sampler` beside it is filtered; one without is read unfiltered, which
+// any float format allows (r32float and rgba32float can't be filtered in core
+// WebGPU): texel by texel (textureLoad), or with textureGather through a
+// `<name>Texels` sampler, a nearest one that clamps to the edge.
 export function layoutEntry(binding, all) {
   const entry = { binding: binding.binding, visibility: VISIBLE() };
   const { type } = binding;
@@ -17,7 +19,10 @@ export function layoutEntry(binding, all) {
   if (binding.kind === 'storage') {
     return { ...entry, visibility: GPUShaderStage.FRAGMENT | GPUShaderStage.COMPUTE, buffer: { type: binding.access === 'read_write' ? 'storage' : 'read-only-storage' } };
   }
-  if (binding.kind === 'sampler') return { ...entry, sampler: { type: type === 'sampler_comparison' ? 'comparison' : 'filtering' } };
+  if (binding.kind === 'sampler') {
+    if (type === 'sampler_comparison') return { ...entry, sampler: { type: 'comparison' } };
+    return { ...entry, sampler: { type: binding.name.endsWith('Texels') ? 'non-filtering' : 'filtering' } };
+  }
   const multisampled = type.includes('multisampled');
   const viewDimension = type.includes('3d') ? '3d' : type.includes('array') ? '2d-array' : '2d';
   let sampleType;
@@ -93,6 +98,9 @@ export class Bindings {
     if (binding.kind === 'uniform') {
       const { buffer } = this.buffers.find((b) => b.binding === binding.binding);
       return { key: 'u', resource: { buffer } };
+    }
+    if (binding.kind === 'sampler' && binding.name.endsWith('Texels')) {
+      return { key: 'texels', resource: this.gpu.sampler({ mag: 'nearest', min: 'nearest' }) };
     }
     if (binding.kind === 'sampler') {
       const texture = uniforms[binding.name.replace(/Sampler$/, '')]?.value;

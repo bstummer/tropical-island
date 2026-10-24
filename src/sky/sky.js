@@ -12,6 +12,7 @@
 // whole between two frames, tables and light at once, so no frame mixes two
 // times. ready resolves once the first light is in; settled() returns a
 // promise while a time change is on its way (core/capture.js waits for it).
+// Puts ctx.sky on the context, { ready }, for what needs the first light.
 import { Mesh } from '../gpu/scene.js';
 import { Geometry } from '../gpu/geometry.js';
 import { Material } from '../gpu/material.js';
@@ -69,14 +70,15 @@ export function create(ctx) {
     const set = 1 - current;
     atmosphere.renderTables(set, haze);
     const next = { time, set, sun, haze };
-    next.probe = atmosphere.probe(set, haze, sun.direction).then(
-      (probe) => {
+    // A failure, in the readback or in landing it, is thrown by the next update.
+    next.probe = atmosphere
+      .probe(set, haze, sun.direction)
+      .then((probe) => {
         if (disposed) return;
         land(next, probe);
         coming = null;
-      },
-      (err) => (failed = err),
-    );
+      })
+      .catch((err) => (failed = err));
     coming = next;
   }
 
@@ -115,6 +117,7 @@ export function create(ctx) {
   const ready = coming.probe.then(() => {
     if (failed) throw failed;
   });
+  ctx.sky = { ready };
 
   return {
     ready,
@@ -125,6 +128,7 @@ export function create(ctx) {
     },
     dispose() {
       disposed = true;
+      delete ctx.sky;
       scene.remove(mesh);
       material.dispose();
       atmosphere.dispose();

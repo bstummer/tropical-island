@@ -17,6 +17,8 @@ import * as benchmark from './core/benchmark.js';
 import { defineTimeOfDay } from './sky/sun.js';
 import * as timeControl from './sky/time-control.js';
 import * as sky from './sky/sky.js';
+import * as terrain from './world/terrain.js';
+import * as rocks from './world/rocks.js';
 import * as placeholder from './world/placeholder.js';
 import * as shimmerFixture from './fixtures/shimmer.js';
 import * as heavyFixture from './fixtures/heavy.js';
@@ -28,11 +30,17 @@ import * as gradientFixture from './fixtures/gradient.js';
 import * as brokenFixture from './fixtures/broken.js';
 import * as staleTimeFixture from './fixtures/stale-time.js';
 import * as blendFixture from './fixtures/blend.js';
+import * as lightFixture from './fixtures/light.js';
+import * as mathsFixture from './fixtures/maths.js';
+import * as hazeFixture from './fixtures/haze.js';
+import * as terrainFixture from './fixtures/terrain.js';
+import * as surfacesFixture from './fixtures/surfaces.js';
+import * as patchesFixture from './fixtures/patches.js';
+import * as rocksFixture from './fixtures/rocks.js';
 
 // Updated in this order every frame. Each module exports create(ctx) -> { update(dt, t), dispose(), ready? }
 // where the optional `ready` promise is awaited before a capture starts.
-// TEMPORARY (PLAN.md Stage 4b): the world's systems join as their WebGPU ports land.
-const WORLD_SYSTEMS = [sky, placeholder];
+const WORLD_SYSTEMS = [sky, terrain, rocks, placeholder];
 
 // Test scenes that replace the world with ?fixture=<name>: tools/screenshot.js
 // uses them to prove its measurements and the frame's guarantees, the tonecard
@@ -48,6 +56,13 @@ const FIXTURES = {
   broken: [brokenFixture],
   'stale-time': [staleTimeFixture],
   blend: [blendFixture],
+  light: [sky, lightFixture],
+  maths: [mathsFixture],
+  haze: [sky, hazeFixture],
+  terrain: [sky, terrain, terrainFixture],
+  surfaces: [sky, surfacesFixture],
+  patches: [patchesFixture],
+  rocks: [sky, terrain, rocks, rocksFixture],
 };
 
 let captureMode = false;
@@ -109,17 +124,25 @@ async function boot() {
   // Changing the preset tears it all down and builds it again.
   let world = [];
   let ready = null;
+  let lit = false; // the sky's first light is in: a frame before it would be black
   function build() {
     ctx.frame = createFrame(ctx, display);
-    world = worldSystems(params.fixture).map((system) => system.create(ctx));
+    const built = (world = worldSystems(params.fixture).map((system) => system.create(ctx)));
+    // The light arrives a few frames late (sky.js reads it back from the GPU).
+    // A sky that fails throws in its update, so that opens the gate too.
+    lit = !ctx.sky;
+    const light = () => (lit = lit || world === built);
+    ctx.sky?.ready.then(light, light);
     // In the game, every pipeline is made once the world is in, rather than
     // the first time something draws with it, mid-walk. Capture mode
     // makes and checks them itself (core/capture.js).
     const { frame } = ctx;
     ready = Promise.all(world.map((system) => system.ready)).then(async () => {
-      if (params.capture) return;
+      if (params.capture || world !== built) return; // or torn down already
       const problems = await frame.compile();
-      if (problems.length) fail(new Error(`shader compile failed: ${problems.join('; ')}`), 'Stopped.');
+      if (!problems.length) return;
+      stopped = true;
+      fail(new Error(`shader compile failed: ${problems.join('; ')}`), 'Stopped.');
     });
     ready.catch(() => {}); // a system that fails says so itself
   }
@@ -169,7 +192,7 @@ async function boot() {
     const loop = () => {
       if (stopped) return;
       try {
-        frame();
+        if (lit) frame();
         requestAnimationFrame(loop);
       } catch (err) {
         fail(err, 'Stopped.');

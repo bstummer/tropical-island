@@ -52,9 +52,9 @@ test("each level lies inside the next coarser one's full share", () => {
 });
 
 test('the shaders know as many levels as config.world.terrain lays out', () => {
-  const glsl = readFileSync(new URL('../src/shaders/chunks/terrain.glsl', import.meta.url), 'utf8');
+  const wgsl = readFileSync(new URL('../src/shaders/chunks/terrain.wgsl', import.meta.url), 'utf8');
   const js = readFileSync(new URL('../src/world/terrain.js', import.meta.url), 'utf8');
-  assert.equal(Number(glsl.match(/#define TERRAIN_LEVELS (\d+)/)[1]), settings.levels.length, 'chunks/terrain.glsl');
+  assert.equal(Number(wgsl.match(/const TERRAIN_LEVELS: i32 = (\d+);/)[1]), settings.levels.length, 'chunks/terrain.wgsl');
   assert.equal(Number(js.match(/const TERRAIN_LEVELS = (\d+);/)[1]), settings.levels.length, 'world/terrain.js');
 });
 

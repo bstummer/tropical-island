@@ -5,8 +5,6 @@
 // from ctx.quality, so a new system adds its per-preset knobs here.
 export const quality = {
   default: 'high',
-  // msaa: samples per pixel in the HDR target (post/frame.js), at least 2 (it
-  // checks): the after-opaque pass reads the resolved target while it draws into the samples.
   // terrainDetail: metres from the camera, across the ground, within which the
   // terrain keeps its finest mesh; each coarser level reaches terrainRatio times
   // as far (config.world.terrain), a ratio over 2 refining the distance. Below
@@ -19,25 +17,23 @@ export const quality = {
   // of the drawing buffer isn't drawn (world/rocks.js): thinner than about two,
   // it would crawl (CLAUDE.md §8).
   presets: {
-    low: { renderScale: 0.67, maxPixelRatio: 1, msaa: 2, terrainDetail: 72, terrainRatio: 2, groundDetail: 0.6, surfaceTexture: 512, rockPixels: 3 },
-    medium: { renderScale: 0.85, maxPixelRatio: 1.5, msaa: 4, terrainDetail: 90, terrainRatio: 2.5, groundDetail: 0.8, surfaceTexture: 1024, rockPixels: 2.5 },
-    high: { renderScale: 1, maxPixelRatio: 2, msaa: 4, terrainDetail: 128, terrainRatio: 2.5, groundDetail: 1, surfaceTexture: 1024, rockPixels: 2 },
+    low: { renderScale: 0.67, maxPixelRatio: 1, terrainDetail: 72, terrainRatio: 2, groundDetail: 0.6, surfaceTexture: 512, rockPixels: 3 },
+    medium: { renderScale: 0.85, maxPixelRatio: 1.5, terrainDetail: 90, terrainRatio: 2.5, groundDetail: 0.8, surfaceTexture: 1024, rockPixels: 2.5 },
+    high: { renderScale: 1, maxPixelRatio: 2, terrainDetail: 128, terrainRatio: 2.5, groundDetail: 1, surfaceTexture: 1024, rockPixels: 2 },
   },
 };
 
 // Depth is reversed and 32-bit float (post/frame.js), so precision is about
 // the same fraction of the distance everywhere: a near plane at a leaf's
-// distance costs nothing at the horizon. Without reversed depth (no
-// EXT_clip_control) the near plane moves out to nearFallback instead.
+// distance costs nothing at the horizon.
 export const camera = {
   fov: 70, // vertical, degrees; a view may override it
   near: 0.02,
-  nearFallback: 0.5,
   far: 100000, // beyond the horizon from any hilltop
 };
 
-// The output pass (post/output.frag). `tonemap` picks one of `tonemaps`
-// (?tonemap=<name> overrides it); the numbers are the shader's TONEMAP define.
+// The output pass (post/output.wgsl). `tonemap` picks one of `tonemaps`
+// (?tonemap=<name> overrides it); the numbers are the shader's TONEMAP override.
 export const post = {
   exposure: 1, // a factor on the exposure, which follows the light (sky/light.js); ?exposure= overrides it
   // The user's pick (PLAN.md, Decisions): keeps authored colours. agx-punchy's extra
@@ -63,15 +59,15 @@ export const sky = {
   // The haze thins as the sun sinks (sky/light.js hazeAmount): its share with the
   // sun on the horizon, and the sun's height (degrees) from which it is all there.
   haze: { low: 0.3, fullAbove: 25 },
-  // The sun's disk once exposed is held softly under this (sky/sky.frag), so a
+  // The sun's disk once exposed is held softly under this (sky/sky.wgsl), so a
   // low sun keeps its colour instead of clipping to white.
   sunCeiling: 8,
   limbDarkening: 0.6, // the disk's edge at 40% of its centre's brightness
-  // The aureole around the sun (sky/sky.frag): the sharp forward peak of the haze's
+  // The aureole around the sun (sky/sky.wgsl): the sharp forward peak of the haze's
   // scattering, which makes the sun glow a few degrees wide, as the eye sees it.
   aureole: { g: 0.98, strength: 0.012 },
   stepMinutes: 10, // the dev time control (sky/time-control.js): , and . step the time by this much
-  // The atmosphere (sky/atmosphere.glsl). Lengths in km, scattering and
+  // The atmosphere (sky/atmosphere.wgsl). Lengths in km, scattering and
   // absorption per km at sea level; Earth's values after Hillaire 2020, plus a
   // humid marine haze layer that softens the horizon and warms the low sun.
   atmosphere: {
@@ -98,7 +94,7 @@ export const sky = {
   },
   // Lookup table sizes (sky/atmosphere.js).
   tables: { transmittance: [256, 64], multiscatter: [32, 32], skyView: [192, 108], aerial: [32, 32, 32], sunlight: [64, 1] },
-  // Ray-march steps and sample counts of the tables (sky/*.frag). They run only
+  // Ray-march steps and sample counts of the tables (sky/*.wgsl). They run only
   // when the time or the camera's height changes, never per frame.
   samples: {
     transmittance: 40,
@@ -311,7 +307,7 @@ export const world = {
       drySand: [0.72, 0.64, 0.5],
       wetSand: [0.36, 0.28, 0.17], // darker, warmer and more saturated
       rock: [0.055, 0.052, 0.05], // the user's pick (PLAN.md, Decisions): dark basalt
-      // Inland (chunks/green.glsl): the living green, grasses and herbs on open
+      // Inland (chunks/green.wgsl): the living green, grasses and herbs on open
       // ground and the leafy understory on lush; the bare ground, sand behind
       // the beach, then soil, and dead leaves further in. With the shares in
       // `green`, the user's pick (PLAN.md, Decisions): lush tropical.
@@ -321,9 +317,9 @@ export const world = {
       litter: [0.09, 0.06, 0.035],
     },
     // Metres: the light from below comes from the ground's albedo averaged over
-    // about this far around (chunks/lighting.glsl groundAlbedo).
+    // about this far around (chunks/lighting.wgsl groundAlbedo).
     bounceReach: 24,
-    // Sand (chunks/sand.glsl, textures/sand.js). Lengths in metres.
+    // Sand (chunks/sand.wgsl, textures/sand.js). Lengths in metres.
     sand: {
       grain: { tile: 1 },
       // Wind ripples: about this far apart and this high (a ripple index of about 17).
@@ -331,7 +327,7 @@ export const world = {
       // The wind that piles them blows this many degrees to the right of
       // straight out to sea: the trades, from behind the island.
       wind: 25,
-      // How wet the ground is by the height above the sea (chunks/wet.glsl,
+      // How wet the ground is by the height above the sea (chunks/wet.wgsl,
       // rock's too): under a film below `film`, half wet at zones.wetSand
       // (the wet sand's zone), dry above `dry`.
       wetness: { film: 0.2, dry: 0.7 },
@@ -341,7 +337,7 @@ export const world = {
       // albedo alone, drawn by a cheaper shader (world/terrain.js).
       range: 120,
     },
-    // Rock (chunks/rock.glsl, textures/rock.js). Lengths in metres.
+    // Rock (chunks/rock.wgsl, textures/rock.js). Lengths in metres.
     rock: {
       // The detail tile, and its second, finer read as a share of it.
       tile: 4,
@@ -371,7 +367,7 @@ export const world = {
       streaks: { colour: [1.2, 1, 0.85], strength: 0.35 },
       strata: { spacing: 4, tone: 0.2, ledges: 0.08 },
       lichen: { colour: [0.16, 0.16, 0.14], cover: 0.03, second: [0.25, 0.16, 0.07], share: 0.15 },
-      // Rock is as wet as the ground (chunks/wet.glsl), its crests up to
+      // Rock is as wet as the ground (chunks/wet.wgsl), its crests up to
       // `ragged` drier and its hollows wetter, and darkens by `dark` wet; a
       // band from `band` m above the sea where spray keeps algae alive,
       // darkened by `bandDark`, its edges `bandRagged` m ragged.
@@ -382,7 +378,7 @@ export const world = {
       // (world/terrain.js).
       range: 200,
     },
-    // The green inland (chunks/green.glsl): the ground that is neither sand
+    // The green inland (chunks/green.wgsl): the ground that is neither sand
     // nor rock. Shares at the scrub, the palm belt and the jungle
     // (world/island.js's bands): of the ground that is green, on open and on
     // lush ground (island.js lushOf); and of the bare ground that is litter
@@ -544,7 +540,7 @@ export const capture = {
   // from sky/light.js's (relative), and the tables' mappings from inverting (texels).
   // A wrong formula misses by whole texels; the GPUs' approximate sin and asin cost
   // up to 0.08 near the zenith on SwiftShader, and cost 0.28 at the horizon before
-  // the mappings measured angles from it (chunks/angles.glsl).
+  // the mappings measured angles from it (chunks/angles.wgsl).
   maths: { valueTolerance: 1e-4, texelTolerance: 0.1 },
   // The light fixture (src/fixtures/light.js), in 8-bit levels on a white sphere's
   // lit side: how far its channels may spread at midday (neutral), and how much

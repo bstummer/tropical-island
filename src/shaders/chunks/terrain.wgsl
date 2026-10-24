@@ -43,12 +43,12 @@ fn terrainBilinear(k: i32, ao: vec2f) -> f32 {
   let f = clamp(terrainGrid(k, ao), vec2f(0.0), vec2f(last));
   let i = min(floor(f), vec2f(last - 1.0));
   let t = f - i;
-  let p = vec2i(i32(i.x), i32(i.y));
-  let h00 = textureLoad(uTerrainHeight, p, k, 0).r;
-  let h10 = textureLoad(uTerrainHeight, p + vec2i(1, 0), k, 0).r;
-  let h01 = textureLoad(uTerrainHeight, p + vec2i(0, 1), k, 0).r;
-  let h11 = textureLoad(uTerrainHeight, p + vec2i(1, 1), k, 0).r;
-  return mix(mix(h00, h10, t.x), mix(h01, h11, t.x), t.y);
+  // Samples i to i + 1 in one read, unfiltered: the 2 x 2 a bilinear filter
+  // would take at their shared corner, in the order (i, i+1), (i+1, i+1),
+  // (i+1, i), (i, i). A sampled read is cheaper than four textureLoads, which
+  // robustness checks one by one.
+  let h = textureGather(0, uTerrainHeight, uTerrainHeightTexels, (i + 1.0) / frame.uTerrainSamples, k);
+  return mix(mix(h.w, h.z, t.x), mix(h.x, h.y, t.x), t.y);
 }
 
 // The drawn height at ao, from level `first` or coarser.

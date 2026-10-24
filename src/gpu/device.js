@@ -107,7 +107,8 @@ export async function createDevice(canvas, { capture, onError, instrument }) {
     module(source, label) {
       let entry = modules.get(source);
       if (!entry) {
-        // A module that doesn't compile reports through `compiled`, not as an error nothing caught.
+        // A module that doesn't compile reports its messages through `compiled`
+        // and onError, rather than as the bare error nothing caught.
         device.pushErrorScope('validation');
         const module = device.createShaderModule({ label, code: source });
         const scoped = device.popErrorScope();
@@ -115,6 +116,7 @@ export async function createDevice(canvas, { capture, onError, instrument }) {
           const messages = info.messages.filter((m) => m.type === 'error').map((m) => `line ${m.lineNum}:${m.linePos} ${m.message}`);
           return messages.length || !error ? messages : [error.message];
         });
+        compiled.then((messages) => messages.length && onError(new Error(`shader compile failed: ${label}: ${messages.join('; ')}`)));
         entry = { module, compiled, users: 0 };
         modules.set(source, entry);
       }
@@ -129,7 +131,7 @@ export async function createDevice(canvas, { capture, onError, instrument }) {
       return modules.size;
     },
     // A 1 x 1 texture of zeros standing in for a binding with no texture yet, by
-    // its WGSL type: what an unset sampler reads in WebGL.
+    // its WGSL type. (WebGL's unset texture read alpha 1: shaders guard such reads.)
     placeholder(type) {
       if (!placeholders.has(type)) {
         const depth = type.startsWith('texture_depth');

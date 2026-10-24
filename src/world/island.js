@@ -1,7 +1,7 @@
 // The island's shape: the one height function (CLAUDE.md §6), and the placement
 // zones from the reef to the jungle. Pure and Node-importable: JS evaluates it
 // for placement and collision, the GPU gets it as a heightmap, and nothing
-// re-implements it in GLSL.
+// re-implements it in WGSL.
 //
 // Everything hangs off the coast: a signed distance to the shore (positive
 // inland) built from shapes, from which the beach, the seabed and the zones
@@ -397,7 +397,7 @@ export function createIsland(rng, settings = config.world.island, sunsetYaw = co
   // measures it on its grids). Open behind the beach and lusher into the
   // jungle; lush in hollows and gullies, where water and soil gather, open on
   // ridges and spurs; and in patches a few hundred metres across. What grows
-  // follows it (Stages 8-9), and the green's look (chunks/green.glsl).
+  // follows it (Stages 8-9), and the green's look (chunks/green.wgsl).
   function lushOf(g, relief, a, o) {
     const { bands, relief: perMetre, patches, wavelength } = zones.lush;
     const palm = smoothstep(0.5, 1.5, g.band);
