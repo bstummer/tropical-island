@@ -107,10 +107,10 @@ test('objects made untracked and pipelines released leave the counts', () => {
   assert.equal(stats.memory().pipelines, 1);
 });
 
-test('the GPU timer times a frame from its first pass to its last, while someone listens', async () => {
+test('the GPU timer sums how long each pass of a frame ran, not the gaps between, while someone listens', async () => {
   globalThis.GPUBufferUsage ??= { MAP_READ: 1, COPY_DST: 8, COPY_SRC: 4, QUERY_RESOLVE: 512 };
   globalThis.GPUMapMode ??= { READ: 1 };
-  const stamps = [1000000n, 3500000n]; // ns: 2.5 ms apart
+  const stamps = [1000000n, 2000000n, 3000000n, 4500000n]; // ns: passes of 1 and 1.5 ms, 1 ms apart
   const device = fakeDevice();
   device.features = new Set(['timestamp-query']);
   device.createQuerySet = () => ({ destroy() {} });
@@ -142,9 +142,13 @@ test('the GPU timer times a frame from its first pass to its last, while someone
   stats.endFrame();
   stats.beginFrame(); // a frame with no passes reports nothing
   stats.endFrame();
+  stats.beginFrame(); // nor one with more passes than it has stamps for
+  for (let i = 0; i < 33; i++) pass();
+  stats.endFrame();
   await new Promise((resolve) => setTimeout(resolve));
   assert.deepEqual([descriptors[1].timestampWrites.beginningOfPassWriteIndex, descriptors[1].timestampWrites.endOfPassWriteIndex], [0, 1]);
-  assert.deepEqual([descriptors[2].timestampWrites.beginningOfPassWriteIndex, descriptors[2].timestampWrites.endOfPassWriteIndex], [undefined, 1]);
+  assert.deepEqual([descriptors[2].timestampWrites.beginningOfPassWriteIndex, descriptors[2].timestampWrites.endOfPassWriteIndex], [2, 3]);
+  assert.equal(descriptors[3 + 32].timestampWrites, undefined); // the 33rd
   assert.deepEqual(times, [2.5]);
   stop();
   assert.equal(stats.memory().bufferBytes, 0); // the timer's own buffers aren't the game's

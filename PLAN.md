@@ -697,6 +697,15 @@ baseline: on the branch nothing runs it any more, and `adee91b` keeps it for sid
     - shader modules join the teardown's counts;
     - a game that never starts drawing fails the tool instead of hanging it.
 
+    The user's benchmark (GTX 1660 Ti, 2562×1237, `high`):
+    - Both builds hold 60 fps on every view, with the same draws, triangles and passes.
+    - GPU ms across all views: 6.1 and 6.7 on WebGL; 6.4–6.6 on WebGPU. WebGPU was faster where sky and
+      sea fill the frame, and slower where ground does.
+    - Some of that was the timer, not the GPU. WebGPU's timer ran from the frame's first pass to its
+      last, so it counted the GPU waiting for the CPU between passes: headless on that GPU, a quarter of
+      the span (5.6 ms busy in 7.5). WebGL's timer saw the frame as one stream.
+    - The timer now sums the passes' own durations (`core/gpu-stats.js`); a rerun is to compare.
+
 **Known flaws** (for review):
 - WebGL stored its targets bottom-up, WebGPU top-down, and two things follow. Edges and detail differ
   from WebGL's in single pixels; nothing is better or worse. Rendering the frame upside down would match

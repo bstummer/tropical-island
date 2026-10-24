@@ -7,8 +7,10 @@
 // Live: the memory of textures, render targets (textures drawn into, the
 // canvas) and buffers, and the objects alive by kind, for teardown checks.
 // Byte counts are what the formats need, before any padding the driver adds.
-// GPU time, where the device has timestamp queries: from the start of a
-// frame's first pass to the end of its last, a few frames late.
+// GPU time, where the device has timestamp queries: how long the frame's passes
+// ran, each from its start to its end, a few frames late. The gaps between
+// them don't count: each pass is submitted as soon as it is encoded, and the
+// GPU waits there for the CPU, which WebGL's single stream of a frame hid.
 //
 // No browser APIs at import time, so tests/gpu-stats.test.js runs it on a fake device.
 
@@ -199,24 +201,27 @@ export function instrument(device) {
 }
 
 // Times frames on the GPU while someone listens, or null without the
-// timestamp-query feature: the first pass of a frame writes when it begins,
-// every pass writes when it ends (the last one's stays), then the two are
-// resolved and read back, a few frames late. A pool of query sets, so frames
-// in flight don't wait for each other. Frames without passes report nothing.
+// timestamp-query feature: every pass writes when it begins and when it ends,
+// then the stamps are resolved and read back, a few frames late, and the
+// passes' durations summed. A pool of query sets, so frames in flight don't
+// wait for each other. Frames without passes, or with more than MAX_TIMED_PASSES,
+// report nothing.
+const MAX_TIMED_PASSES = 32;
+
 export function createGpuTimer(device, untracked) {
   if (!device.features?.has('timestamp-query')) return null;
   const listeners = new Set();
   const free = [];
   let current = null; // this frame's slot, while timing
-  let begun = false;
+  let passes = 0; // timed so far this frame; more than MAX_TIMED_PASSES: none count
 
   function slot() {
     return (
       free.pop() ??
       untracked(() => ({
-        querySet: device.createQuerySet({ type: 'timestamp', count: 2 }),
-        resolve: device.createBuffer({ size: 16, usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC }),
-        read: device.createBuffer({ size: 16, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST }),
+        querySet: device.createQuerySet({ type: 'timestamp', count: 2 * MAX_TIMED_PASSES }),
+        resolve: device.createBuffer({ size: 16 * MAX_TIMED_PASSES, usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC }),
+        read: device.createBuffer({ size: 16 * MAX_TIMED_PASSES, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST }),
       }))
     );
   }
@@ -224,33 +229,34 @@ export function createGpuTimer(device, untracked) {
   return {
     begin() {
       current = listeners.size ? slot() : null;
-      begun = false;
+      passes = 0;
     },
     // The timestampWrites for the pass about to begin, or undefined.
     writes() {
-      if (!current) return undefined;
-      const first = !begun;
-      begun = true;
-      return { querySet: current.querySet, ...(first && { beginningOfPassWriteIndex: 0 }), endOfPassWriteIndex: 1 };
+      if (!current || passes++ >= MAX_TIMED_PASSES) return undefined;
+      return { querySet: current.querySet, beginningOfPassWriteIndex: 2 * passes - 2, endOfPassWriteIndex: 2 * passes - 1 };
     },
     end() {
       const done = current;
       current = null;
       if (!done) return;
-      if (!begun) {
+      const n = passes;
+      if (!n || n > MAX_TIMED_PASSES) {
         free.push(done);
         return;
       }
       const encoder = device.createCommandEncoder();
-      encoder.resolveQuerySet(done.querySet, 0, 2, done.resolve, 0);
-      encoder.copyBufferToBuffer(done.resolve, 0, done.read, 0, 16);
+      encoder.resolveQuerySet(done.querySet, 0, 2 * n, done.resolve, 0);
+      encoder.copyBufferToBuffer(done.resolve, 0, done.read, 0, 16 * n);
       device.queue.submit([encoder.finish()]);
       done.read.mapAsync(GPUMapMode.READ).then(
         () => {
-          const [start, stop] = new BigUint64Array(done.read.getMappedRange());
+          const stamps = new BigUint64Array(done.read.getMappedRange(0, 16 * n));
+          let busy = 0n;
+          for (let i = 0; i < n; i++) if (stamps[2 * i + 1] > stamps[2 * i]) busy += stamps[2 * i + 1] - stamps[2 * i];
           done.read.unmap();
           free.push(done);
-          if (stop > start) for (const fn of listeners) fn(Number(stop - start) / 1e6);
+          if (busy > 0n) for (const fn of listeners) fn(Number(busy) / 1e6);
         },
         () => {}, // the device went away meanwhile
       );
