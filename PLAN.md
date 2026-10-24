@@ -75,7 +75,7 @@ when a choice is about taste or scope rather than engineering (see Open question
 | 2 | Sky, sun and atmosphere | The cove | done |
 | 3 | Island shape | The cove | done |
 | 4 | Ground surfaces and rocks | The cove | in progress |
-| 4b | WebGPU port | The cove | in progress |
+| 4b | WebGPU port | The cove | review |
 | 5 | Shadows | The cove | todo |
 | 6 | Ocean | The cove | todo |
 | 7 | Shoreline | The cove | todo |
@@ -639,7 +639,11 @@ baseline: on the branch nothing runs it any more, and `adee91b` keeps it for sid
     - the cost numbers match `webgl-final`'s, or each difference is explained;
     - every tool check still catches its bad case;
     - the quality change (high → low → high) leaks nothing and gives the same picture.
-- [ ] **W.5 Cut-over.**
+  - Done 2026-10-24. The cost numbers equal `webgl-final`'s on every view (draws, triangles, passes,
+    overdraw, memory), but for 26 pipelines against 25 programs: the frame's depth resolve, a blit in
+    three, is a pipeline made up front. CI's build job took 12.5 minutes (`adee91b`: 21.7), and its
+    captures are byte-identical to the Linux container's.
+- [x] **W.5 Cut-over.**
   - Delete what's left of three's renderer and of WebGL: the depth fallback's fixture, check and
     `nearFallback`, `?depth=`, and the MSAA knob.
   - Add a lint to `npm run check` so three is imported for maths only.
@@ -660,6 +664,25 @@ baseline: on the branch nothing runs it any more, and `adee91b` keeps it for sid
     - run the benchmark on real hardware, compared with the last WebGL build on the same machine;
     - open the game in Chrome, Edge, Firefox (Windows) and Safari 26;
     - merge to `main`.
+  - Done 2026-10-24, but for the hand-over. Two readers compared every WGSL file with `adee91b`'s GLSL
+    and found no transcription error. A third reviewed the renderer; fixed from it:
+    - `frame.opaque.depth` was the multisampled depth the after-opaque pass draws into, which it can't
+      read. Now it is the depth resolved to one sample, as WebGL gave it, and the blend fixture checks it.
+    - Player mode waits for the sky's first light: the first frames were black.
+    - A sky that fails to land its light, and shaders that fail to compile outside the scene, now say so.
+
+**Known flaws** (for review):
+- With an odd drawing-buffer height, derivatives pair other rows than in WebGL, whose targets were
+  stored bottom-up: footprint-filtered detail shifts by a row there. The medium and low presets hit it
+  at 900 rows; captures at `high` don't, so no image shows it yet.
+- The mip chains are the project's own box filter, which may round a level by 1/255 otherwise than
+  WebGL's did.
+- Behaviours of three's renderer that nothing uses yet are missing: a change of render state needs
+  `needsUpdate`, double-sided transparent meshes draw in one pass, a mirroring transform doesn't flip
+  the front face, alpha-to-coverage needs a target with samples, and a destroyed texture keeps its cached
+  bind groups. `gpu/material.js` says so where it bites. A drawing buffer beyond the device's limit
+  (8192 px) fails instead of shrinking.
+- Speed on real hardware and the four browsers are untried (the hand-over).
 
 **Done when** `verify` is green on WebGPU in CI. The compare sheet against `webgl-final` shows no visible
 change on any view or named time, and every check proves itself on its bad case as before. No WebGL code
@@ -1063,10 +1086,12 @@ Not part of the plan. Build one only if the user asks for it: a passing rain sho
 Newest first. One short entry per session, only a few lines: date, stage, what changed, what is still
 open, next step. Details belong in code comments.
 
-- **2026-10-24, Stage 4b planned in detail** from a survey of the code. Two things wait on GPU
-  readbacks (a time change, the tiles' averages) and become async. The survey also found traps where
-  WGSL reads like GLSL, what three does besides drawing, and four checks whose subject goes. W.1–W.5
-  are sharpened, and each system's GLSL goes once its port matches. Next: W.1 on a branch.
+- **2026-10-24, Stage 4b planned in detail and built (W.1–W.5), on branch `webgpu`:** raw WebGPU with
+  a renderer of the project's own (`src/gpu/`), every shader in WGSL, three for maths only (linted).
+  Views and named times match `webgl-final` within float noise, every check passes and catches its bad
+  case, and CI's job takes 12.5 minutes (was 21.7). Outside reviews found no shader port error; their
+  renderer findings are fixed or listed as known flaws. Open: the user's hand-over (benchmark on real
+  hardware against the last WebGL build, the four browsers, merge). Next: 4.8.
 - **2026-10-24, Stage 4b planned: the WebGPU port.** The user moved the game to raw WebGPU and WGSL
   (Decisions); the port runs on a branch before 4.8. W.0 done: CI green on `adee91b`, baseline
   `webgl-final` captured there. Probed headless Chromium 156: on Windows WebGPU gets the real GPU only

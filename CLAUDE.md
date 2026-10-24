@@ -308,7 +308,8 @@ async work, put it behind `ready`, or behind `settled()` when its `update` start
   camera and `ctx.frame.uniforms`, which the renderer binds for every scene material. Group 1 is the
   material's own: its `uniforms` fill the module's `var<uniform>` structs field by field and its textures by
   name, each texture's sampler at `<name>Sampler` (a texture without one, such as `r32float`, is read with
-  `textureLoad`). Group 2 is the mesh's transform (`chunks/object.wgsl`). Within group 1, chunks that bring
+  `textureLoad`, or with `textureGather` through an unfiltered `<name>Texels` sampler: per pixel, prefer the
+  gather, as WebGPU bounds-checks every `textureLoad`). Group 2 is the mesh's transform (`chunks/object.wgsl`). Within group 1, chunks that bring
   bindings of their own (terrain, tiles, sand, rock, green, patches, wet) each keep a fixed binding number.
 - **The frame draws in passes** (`post/frame.js` lists them), picked by the mesh's `pass`. Opaque meshes
   need nothing. Meshes that read the opaque scene's colour or depth (`frame.opaque`: water) set
