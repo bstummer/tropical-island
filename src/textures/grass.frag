@@ -1,12 +1,12 @@
 // The grass's base (textures/green.js): short tropical grass seen from
 // straight above, a tile uTile metres across. Tufts, their blades radiating
 // from a crown and leaning out, more and larger where the ground is lush;
-// single blades lying about between them; bare ground in the gaps. A few
-// tufts are old and gone to straw. r: coverage; g: height of the topmost
-// blade, 0 on the ground, rising from each blade's base to its tip, tufts
-// above lying blades; b: its tone, 0 fresh green to 1 dry straw; a: its
-// brightness, a folded leaf lit on one half and shaded toward the crown, 0.5
-// where bare.
+// single blades lying about between them; the sward's dark depths in the
+// gaps. A few tufts are old and gone to straw. rgb: the colour's factor, a
+// quarter of it: each blade lit on one half and shaded toward its crown and
+// its base, by its tone from fresh green to straw; the depths' between them.
+// a: how much the blades cover. Each is a plain average of what a texel
+// shows, so the mipmaps keep the grass's colour at every distance.
 
 #include "tileable.glsl"
 
@@ -18,12 +18,10 @@ uniform float uTile; // m
 uniform float uTexels; // across the tile
 uniform vec2 uSeed;
 uniform vec2 uShift; // tiles: shifted by whole ones, the texture is the same (fixtures/surfaces.js checks)
+uniform vec3 uStraw; // a dry blade's colour factor
+uniform float uDepths; // the depths' between the blades
 
 varying vec2 vUv;
-
-// The tone bare ground gets: about the blades' average, so mipmaps that
-// average it in keep the grass's tone.
-const float BARE_TONE = 0.25;
 
 // A grid of cells about `size` metres that repeats over the tile: its cell count.
 float cellsAcross(float size) {
@@ -221,6 +219,7 @@ void main() {
   lying(c, uv);
   tufts(c, uv);
   float cover = 1.0 - c.bare;
-  vec3 top = c.weight > 0.0 ? c.sum / c.weight : vec3(0.0, BARE_TONE, 0.5);
-  gl_FragColor = vec4(cover, top.x * cover, mix(BARE_TONE, top.y, cover), mix(0.5, top.z, cover));
+  vec3 top = c.weight > 0.0 ? c.sum / c.weight : vec3(0.0, 0.0, 0.5); // height, tone, brightness
+  vec3 blade = mix(vec3(1.0), uStraw, smoothstep(0.45, 0.85, top.y)) * (0.4 + 0.8 * top.z) * (0.55 + 0.45 * top.x);
+  gl_FragColor = vec4(mix(vec3(uDepths), blade, cover) / 4.0, cover);
 }

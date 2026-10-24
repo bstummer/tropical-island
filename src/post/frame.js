@@ -252,6 +252,16 @@ export function createFrame(ctx, display) {
       composite.compile(renderer, sceneTarget);
       output.compile(renderer, null);
     },
+    // The same for the game, which keeps drawing meanwhile: the browser
+    // compiles in the background where it can (KHR_parallel_shader_compile).
+    // Resolves once the scene's programs are ready.
+    compileAsync() {
+      renderer.setRenderTarget(sceneTarget);
+      const ready = renderer.compileAsync(scene, camera);
+      composite.compile(renderer, sceneTarget);
+      output.compile(renderer, null);
+      return ready;
+    },
     render() {
       // The camera moved since the last frame; passes that cull or follow it
       // (the terrain's nodes, shadow maps) need where it is now, which

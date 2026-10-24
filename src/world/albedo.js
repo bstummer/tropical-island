@@ -7,6 +7,7 @@
 // water. Pure.
 import { smoothstep } from './island.js';
 import { GROUND } from './heightmap.js';
+import { greenByBand, greenCover } from './green.js';
 
 // How wet sand is at this height above the sea, 1 under a film of water and 0
 // dry: chunks/sand.glsl's sandWetness, with `film` and `dry` from
@@ -20,18 +21,10 @@ export function sandWetness(height, { film, dry }, wetHeight) {
 // The green's albedo on average at this band, how lush and how sandy
 // (chunks/green.glsl greenAlbedo), into `out`: of its living green and bare
 // ground (sand, soil, litter), by their shares per band
-// (config.world.terrain.green).
+// (config.world.terrain.green; world/green.js).
 export function greenAlbedo(band, lush, sandy, { albedo, green }, out = [0, 0, 0]) {
-  const palm = smoothstep(0.5, 1.5, band);
-  const jungle = smoothstep(1.67, 2.33, band);
-  // A value per band, blended as chunks/green.glsl greenByBand blends it.
-  const byBand = ([scrub, palmBelt, deep]) => {
-    const v = scrub + (palmBelt - scrub) * palm;
-    return v + (deep - v) * jungle;
-  };
-  const open = byBand(green.cover.open);
-  const cover = open + (byBand(green.cover.lush) - open) * lush;
-  const litter = byBand(green.litter);
+  const cover = greenCover(band, lush, green);
+  const litter = greenByBand(green.litter, band);
   for (let c = 0; c < 3; c++) {
     const living = albedo.grass[c] + (albedo.leafy[c] - albedo.grass[c]) * lush;
     const soil = albedo.soil[c] + (albedo.drySand[c] - albedo.soil[c]) * sandy;

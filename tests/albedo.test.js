@@ -1,12 +1,15 @@
 // The ground's albedo from above (world/albedo.js), which lights shade from
 // below: the sea's over water, the surfaces' as the ground has them, never
-// outside what the surfaces reflect.
+// outside what the surfaces reflect, read from each sample as world/heightmap.js
+// lays its grids out. Expected values come from the surfaces' albedos where
+// they can, not from albedo.js's own functions. On the GPU, the terrain
+// fixture checks that the light from below reads this map where JS expects.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRandom } from '../src/core/random.js';
 import { config } from '../src/config.js';
 import { createIsland } from '../src/world/island.js';
-import { buildHeightmap } from '../src/world/heightmap.js';
+import { buildHeightmap, GROUND } from '../src/world/heightmap.js';
 import { albedoMap, albedoOf, greenAlbedo, sandWetness } from '../src/world/albedo.js';
 
 const { albedo, green } = config.world.terrain;
@@ -30,6 +33,78 @@ test('the green is its living green where all of it is green, grass on open grou
   assert.ok(near(greenAlbedo(0, 0.5, 1, bare), albedo.drySand), 'behind a beach, all bare');
   assert.ok(near(greenAlbedo(1.5, 0.5, 0, bare), albedo.soil), 'the palm belt, all bare');
   assert.ok(near(greenAlbedo(3, 0.5, 0.5, bare), albedo.litter), 'the jungle, all bare');
+});
+
+test('how much of the green is living green follows how lush it is, and its bare ground how sandy the soil', () => {
+  const near = (a, b) => a.every((v, c) => Math.abs(v - b[c]) < 1e-12);
+  // Open ground all bare, lush ground all living green, no litter.
+  const byLush = { ...surfaces, green: { ...green, cover: { open: [0, 0, 0], lush: [1, 1, 1] }, litter: [0, 0, 0] } };
+  assert.ok(near(greenAlbedo(1.5, 1, 0, byLush), albedo.leafy), 'lush: the leafy understory');
+  assert.ok(near(greenAlbedo(1.5, 0, 1, byLush), albedo.drySand), 'open, behind a beach: bare sand');
+  assert.ok(near(greenAlbedo(1.5, 0, 0, byLush), albedo.soil), 'open: bare soil');
+  const half = albedo.leafy.map((v, c) => (v + albedo.grass[c]) / 4 + albedo.soil[c] / 2);
+  assert.ok(near(greenAlbedo(1.5, 0.5, 0, byLush), half), 'half lush: half its green living, of grass and understory alike');
+});
+
+test("the green's shares blend between bands as the zones do: the scrub's to a band of 0.5, the palm belt's at 1.5, the jungle's from 2.33, halfway at 1 and 2", () => {
+  const shares = [0.2, 0.5, 0.9]; // scrub, palm belt, jungle
+  const bands = { '-1': 0.2, 0.5: 0.2, 1: 0.35, 1.5: 0.5, 1.67: 0.5, 2: 0.7, 2.33: 0.9, 4: 0.9 };
+  // Living grass over bare soil by the cover's shares; litter over soil by the litter's.
+  const covered = { ...surfaces, green: { ...green, cover: { open: shares, lush: shares }, litter: [0, 0, 0] } };
+  const littered = { ...surfaces, green: { ...green, cover: { open: [0, 0, 0], lush: [0, 0, 0] }, litter: shares } };
+  const share = (rgb, over) => (rgb[0] - albedo.soil[0]) / (over[0] - albedo.soil[0]);
+  for (const [band, want] of Object.entries(bands)) {
+    const cover = share(greenAlbedo(Number(band), 0, 0, covered), albedo.grass);
+    const litter = share(greenAlbedo(Number(band), 0, 0, littered), albedo.litter);
+    assert.ok(Math.abs(cover - want) < 1e-9 && Math.abs(litter - want) < 1e-9, `band ${band}: cover ${cover.toFixed(3)}, litter ${litter.toFixed(3)}, not ${want}`);
+  }
+});
+
+test("sand's albedo is halfway between wet and dry sand's where the wet sand's zone ends, wet sand's under a film of water, dry sand's from `dry`, as chunks/sand.glsl darkens it", () => {
+  const { film, dry } = surfaces.wetness;
+  const near = (a, b) => a.every((v, c) => Math.abs(v - b[c]) < 1e-12);
+  assert.ok(near(albedoOf(1, 0, 0, surfaces.wetHeight, 0, 0, surfaces), albedo.wetSand.map((v, c) => (v + albedo.drySand[c]) / 2)), 'at the zone');
+  assert.ok(near(albedoOf(1, 0, 0, film, 0, 0, surfaces), albedo.wetSand), 'under a film');
+  assert.ok(near(albedoOf(1, 0, 0, dry, 0, 0, surfaces), albedo.drySand), 'dry');
+  // In between, never darker higher up.
+  let last = albedo.wetSand;
+  for (let h = film; h <= dry; h += 0.01) {
+    const rgb = albedoOf(1, 0, 0, h, 0, 0, surfaces);
+    assert.ok(rgb.every((v, c) => v >= last[c] - 1e-12), `${h.toFixed(2)} m`);
+    last = rgb;
+  }
+});
+
+test("the map reads each sample as the grid lays it out: sand, rock, lush and sandy in bytes of 255, the band in info's third value, the height", () => {
+  // The green shows each input plainly: bare in the scrub and the palm belt,
+  // all living green in the jungle, lush or not, and no litter.
+  const plain = { ...surfaces, green: { ...green, cover: { open: [0, 0, 1], lush: [0, 0, 1] }, litter: [0, 0, 0] } };
+  const mix = (...parts) => [0, 1, 2].map((c) => parts.reduce((sum, [share, rgb]) => sum + share * rgb[c], 0));
+  // Per sample: its ground's bytes (sand, rock, lush, sandy), band and height, and its albedo.
+  const cases = [
+    [[255, 0, 0, 0], 0, 10, albedo.drySand],
+    [[255, 0, 0, 0], 0, 0.1, albedo.wetSand],
+    [[0, 255, 0, 0], 3, 10, albedo.rock],
+    [[0, 0, 255, 0], 3, 10, albedo.leafy], // the jungle: living green, lush
+    [[0, 0, 0, 255], 3, 10, albedo.grass], // open
+    [[0, 0, 255, 0], 0, 10, albedo.soil], // the scrub: bare soil
+    [[0, 0, 0, 255], 0, 10, albedo.drySand], // behind a beach: bare sand
+    [[255, 0, 255, 255], 3, -2, surfaces.sea],
+    [[51, 102, 255, 0], 3, 10, mix([0.2, albedo.drySand], [0.4, albedo.rock], [0.4, albedo.leafy])],
+  ];
+  const n = cases.length;
+  const grid = { heights: new Float32Array(n), info: new Float32Array(4 * n), ground: new Uint8Array(GROUND * n) };
+  cases.forEach(([bytes, band, height], i) => {
+    grid.heights[i] = height;
+    grid.info.set([7, -9, band, 200], 4 * i); // slopes and a reef's offset that would show if read as the band
+    grid.ground.set(bytes, GROUND * i);
+  });
+  const map = albedoMap(grid, plain);
+  assert.equal(map.length, 4 * n);
+  cases.forEach(([bytes, band, height, want], i) => {
+    const got = Array.from(map.slice(4 * i, 4 * i + 4));
+    assert.ok(got.every((v, c) => Math.abs(v - (c < 3 ? want[c] : 1)) < 1e-6), `sample ${i} (${bytes}, band ${band}, ${height} m): ${got.map((v) => v.toFixed(4))}, not ${want.map((v) => v.toFixed(4))}`);
+  });
 });
 
 test('any mix of the ground reflects no more and no less than its surfaces do', () => {

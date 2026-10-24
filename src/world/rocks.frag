@@ -7,6 +7,7 @@
 #include "chunks/scene-output.glsl"
 #include "chunks/lighting.glsl"
 #include "chunks/terrain.glsl"
+#include "chunks/wet.glsl"
 #include "chunks/sand.glsl"
 #include "chunks/rock.glsl"
 #include "chunks/green.glsl"
@@ -30,8 +31,10 @@ void main() {
   float footprint = max(length(dPdx), length(dPdy));
   vec3 view = normalize(cameraPosition - vWorldPos);
   float aboveSea = vWorldPos.y + planetDrop(vWorldPos.xz);
-  // Its surface where it was placed, so it doesn't slide over the rock as its offset changes.
-  Rock r = rock(vWorldPos - vec3(0.0, vOffset, 0.0), aboveSea, normalize(vNormal), view, uRock, dPdx, dPdy);
+  // Its surface where it was placed, so it doesn't slide over the rock as its
+  // offset changes, and as wet as the ground at that height.
+  Wet w = groundWet(vWorldPos.xz, aboveSea - vOffset, fwidth(aboveSea));
+  Rock r = rock(vWorldPos - vec3(0.0, vOffset, 0.0), aboveSea - vOffset, w, normalize(vNormal), view, uRock, dPdx, dPdy);
 
   // The ground under this point of the rock, as drawn, and what it is.
   float above = aboveSea - terrainHeight(ao, 0) - vOffset;
@@ -39,7 +42,7 @@ void main() {
   vec4 cover;
   terrainGround(ao, dx, dy, info, cover);
   vec3 green = greenAlbedo(info.z, cover.z, cover.w, uDrySand);
-  vec3 sand = sandAlbedo(sandWetness(aboveSea - sandReach(vWorldPos.xz)), uDrySand, uWetSand);
+  vec3 sand = sandAlbedo(w.wetness, uDrySand, uWetSand);
   float rest = max(1.0 - cover.x - cover.y, 0.0);
   // Sand drifts higher than soil, raggedly round the rock, and less high on a small one.
   float drift = min(0.03 + 0.06 * cover.x, 0.1 * vSize) * (1.0 + 0.6 * gradientNoise(vWorldPos.xz * 4.0 + vWorldPos.y));

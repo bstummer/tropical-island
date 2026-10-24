@@ -14,12 +14,14 @@ import {
   hazeProblems,
   terrainProblems,
   surfaceProblems,
+  patchesProblems,
   isSameFile,
   mathsMismatch,
   metricChanges,
   mismatchWarnings,
   parseArgs,
   resourceLeaks,
+  rockProblems,
   timeChangeTarget,
 } from '../tools/screenshot.js';
 
@@ -286,8 +288,15 @@ test('haze problems: tables made at sea level only have to show from high up', (
 
 // ---------------------------------------------------------------- terrain fixture
 
-const goodTerrain = { gpu: 5e-5, mistaken: 1.6, ground: { gpu: 0.3, mistaken: 9 }, mesh: { points: 3000, gpu: 2e-4, mistaken: 3 }, island: [1, 2, 4, 8].map((texel) => ({ texel, median: 0.004 * texel })) };
-const terrainLimits = { limit: 0.002, islandMedian: 0.04, mesh: 0.01 };
+const goodTerrain = {
+  gpu: 5e-5,
+  mistaken: 1.6,
+  ground: { gpu: 0.3, mistaken: 9 },
+  mesh: { points: 3000, gpu: 2e-4, mistaken: 3 },
+  bounce: { points: 1024, gpu: 1e-3, mistaken: 0.1 },
+  island: [1, 2, 4, 8].map((texel) => ({ texel, median: 0.004 * texel })),
+};
+const terrainLimits = { limit: 0.002, islandMedian: 0.04, mesh: 0.01, bounce: 0.01 };
 
 test('terrain problems: heights and ground that agree pass', () => {
   assert.deepEqual(terrainProblems(goodTerrain, terrainLimits), []);
@@ -313,6 +322,32 @@ test("terrain problems: the GPU's mesh height off its twin, a mistake the check 
   assert.equal(terrainProblems({ ...goodTerrain, mesh: undefined }, terrainLimits).length, 2);
 });
 
+test("terrain problems: the light from below's albedo off JS's, a mistake in its layout the check misses, or no albedo read fail", () => {
+  assert.match(terrainProblems({ ...goodTerrain, bounce: { points: 1024, gpu: 0.05, mistaken: 0.1 } }, terrainLimits).join(), /albedo the GPU's light from below reads/);
+  assert.match(terrainProblems({ ...goodTerrain, bounce: { points: 1024, gpu: 1e-3, mistaken: 0.004 } }, terrainLimits).join(), /half a texel off .* misses it/);
+  assert.equal(terrainProblems({ ...goodTerrain, bounce: undefined }, terrainLimits).length, 2);
+  assert.equal(terrainProblems({ ...goodTerrain, bounce: { points: 1024, gpu: NaN, mistaken: NaN } }, terrainLimits).length, 2);
+});
+
+// ---------------------------------------------------------------- rocks fixture
+
+const goodRocks = { rocks: 690, cameras: 14, offsets: { points: 80000, gpu: 3e-4, mistaken: 5 }, vertices: { rocks: 336, pixels: 84000, gpu: 1.5e-4, mistaken: 1.9 } };
+const rockLimits = { offsets: 0.01, vertices: 0.01, pixels: 20000 };
+
+test('rock problems: offsets and vertices that agree with their twins pass', () => {
+  assert.deepEqual(rockProblems(goodRocks, rockLimits), []);
+});
+
+test('rock problems: GPU offsets or vertices off, mistakes the check misses, too few pixels or no answer fail', () => {
+  assert.match(rockProblems({ ...goodRocks, offsets: { ...goodRocks.offsets, gpu: 0.05 } }, rockLimits).join(), /offsets vs their JS twin/);
+  assert.match(rockProblems({ ...goodRocks, offsets: { ...goodRocks.offsets, mistaken: 0.001 } }, rockLimits).join(), /next rock's .* misses it/);
+  assert.match(rockProblems({ ...goodRocks, vertices: { ...goodRocks.vertices, gpu: 0.02 } }, rockLimits).join(), /rocks\.vert draws rocks/);
+  assert.match(rockProblems({ ...goodRocks, vertices: { ...goodRocks.vertices, mistaken: 0.002 } }, rockLimits).join(), /wrong way .* misses it/);
+  assert.match(rockProblems({ ...goodRocks, vertices: { ...goodRocks.vertices, pixels: 100 } }, rockLimits).join(), /measures too little/);
+  assert.match(rockProblems({ ...goodRocks, vertices: { ...goodRocks.vertices, gpu: NaN } }, rockLimits).join(), /rocks\.vert/);
+  assert.equal(rockProblems(undefined, rockLimits).length, 5);
+});
+
 // ---------------------------------------------------------------- surfaces fixture
 
 const goodTiles = { grain: { whole: 0.001, half: 0.95 }, ripples: { whole: 0, half: 0.9 }, rock: { whole: 0.002, half: 0.97 }, grass: { whole: 0, half: 0.8 }, litter: { whole: 0, half: 0.95 } };
@@ -329,6 +364,16 @@ test("surface problems: a tile that doesn't repeat, a check that can't see it, o
   assert.match(surfaceProblems({ ...goodTiles, litter: { whole: 0.1, half: 0.95 } }, tileLimits).join(), /litter tile doesn't repeat/);
   assert.match(surfaceProblems({ ...goodTiles, grass: { whole: 0, half: 0 } }, tileLimits).join(), /grass tile .* misses it/);
   assert.equal(surfaceProblems(undefined, tileLimits).length, 10);
+});
+
+test('patches problems: GPU patches on their twin pass; off it, a check that misses its mistake, or no answer fail', () => {
+  const limits = { limit: 0.002 };
+  const good = { points: 1024, gpu: 3e-4, mistaken: 0.6 };
+  assert.deepEqual(patchesProblems(good, limits), []);
+  assert.match(patchesProblems({ ...good, gpu: 0.4 }, limits).join(), /GPU vs world\/green\.js off/);
+  assert.match(patchesProblems({ ...good, mistaken: 1e-4 }, limits).join(), /misses it/);
+  assert.equal(patchesProblems(undefined, limits).length, 2);
+  assert.match(patchesProblems({ ...good, gpu: NaN }, limits).join(), /GPU/);
 });
 
 // ---------------------------------------------------------------- time check

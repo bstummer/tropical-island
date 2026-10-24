@@ -13,7 +13,8 @@
 // Per sample, `heights` holds the height, `info` four values: the slope along
 // a and along o (rise over run, from the grid itself), the ground's band and
 // the reef's offset; and `ground` GROUND bytes, of 255: how much of the ground
-// is sand and how much rock (island.js groundOf, given the grid's slope), how
+// is sand and how much rock (island.js groundOf, given the steepest the drawn
+// ground gets next to the sample, so no sand lies on a drawn cliff), how
 // lush the green is (island.js lushOf, given the grid's relief: fillLush, once
 // the grid is whole), and how sandy the soil is (groundOf). Between samples the ground is read as the GPU reads
 // it, so placement and the drawn ground agree (the screenshot tool's terrain
@@ -65,13 +66,26 @@ export function fillRows(island, level, samples, j0, j1, heights, info, ground) 
       const jf = Math.min(j + 1, samples - 1);
       const along = (at(i1, j) - at(i0, j)) / ((i1 - i0) * texel);
       const across = (at(i, jf) - at(i, jb)) / ((jf - jb) * texel);
+      // The ground is judged by the steepest the drawn ground gets in the
+      // cells round the sample, which share its ground. Bilinear, a cell is
+      // steepest at a corner, where its slope is the two edges' that meet
+      // there. The slopes above would average a cliff with the flat ground
+      // beside it, and see a gully's floor or a ridge's crest as flat.
+      let steepest = 0; // the most a corner of them rises over a texel, squared
+      for (let cj = jb; cj < jf; cj++) {
+        for (let ci = i0; ci < i1; ci++) {
+          const rise = Math.max(Math.abs(at(ci + 1, cj) - at(ci, cj)), Math.abs(at(ci + 1, cj + 1) - at(ci, cj + 1)));
+          const climb = Math.max(Math.abs(at(ci, cj + 1) - at(ci, cj)), Math.abs(at(ci + 1, cj + 1) - at(ci + 1, cj)));
+          steepest = Math.max(steepest, rise * rise + climb * climb);
+        }
+      }
       const n = (j - j0) * samples + i;
       s.coast = kept[3 * n];
       s.beach = kept[3 * n + 1];
       s.reef = kept[3 * n + 2];
       s.a = a0 + i * texel;
       s.o = o0 + j * texel;
-      island.groundOf(s, Math.hypot(along, across), g);
+      island.groundOf(s, Math.sqrt(steepest) / texel, g);
       heights[n] = at(i, j);
       info[4 * n] = along;
       info[4 * n + 1] = across;

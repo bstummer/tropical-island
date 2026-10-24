@@ -5,8 +5,8 @@
 // paste into a session, naming the GPU, browser, resolution and preset. That is
 // how numbers from real machines reach the AI. window.__BENCH__ holds the
 // result for tools/screenshot.js. Runs instead of input: nothing to steer. It
-// starts once `ready` (the world's) resolves, so it measures the whole world:
-// the terrain's grids take a moment to build.
+// starts once `ready` (the world's, with its shaders compiled) resolves, so it
+// measures the whole world: the terrain's grids take a moment to build.
 import { views } from '../views.js';
 import { applyView } from './camera.js';
 import { formatBenchmark } from './timing.js';

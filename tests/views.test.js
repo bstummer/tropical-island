@@ -108,6 +108,7 @@ test('quality presets are complete and sane', () => {
     assert.ok(preset.renderScale > 0 && preset.renderScale <= 1, `${name}.renderScale`);
     assert.ok(preset.maxPixelRatio >= 1, `${name}.maxPixelRatio`);
     assert.ok([2, 4, 8].includes(preset.msaa), `${name}.msaa`);
+    assert.ok(preset.groundDetail > 0 && preset.groundDetail <= 1, `${name}.groundDetail`);
   }
 });
 

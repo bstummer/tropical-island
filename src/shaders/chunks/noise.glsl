@@ -38,6 +38,44 @@ vec3 gradientNoiseD(vec2 p) {
   return 1.4 * vec3(value, slope);
 }
 
+// murmur3's 32-bit finaliser (world/noise.js fmix).
+uint noiseMix(uint h) {
+  h ^= h >> 16u;
+  h *= 0x85ebca6bu;
+  h ^= h >> 13u;
+  h *= 0xc2b2ae35u;
+  return h ^ (h >> 16u);
+}
+
+// A lattice point's gradient in [-1, 1]^2: the bits of a hash of its cell and
+// a seed, the same in JS (world/noise.js cellBits) and on every GPU.
+vec2 seededGradient(ivec2 cell, uint seed) {
+  uint h = noiseMix(noiseMix(noiseMix(seed) ^ uint(cell.x)) ^ uint(cell.y));
+  return vec2(float(h & 65535u), float(h >> 16u)) / 32767.5 - 1.0;
+}
+
+// Gradient noise with its slope, as gradientNoiseD, from seededGradient's
+// lattice: for what JS has to know too (world/noise.js seededNoise is its
+// value's twin). seed: a whole number.
+vec3 seededNoiseD(vec2 p, uint seed) {
+  vec2 i = floor(p);
+  vec2 f = p - i;
+  ivec2 c = ivec2(i);
+  vec2 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+  vec2 du = 30.0 * f * f * (f * (f - 2.0) + 1.0);
+  vec2 ga = seededGradient(c, seed);
+  vec2 gb = seededGradient(c + ivec2(1, 0), seed);
+  vec2 gc = seededGradient(c + ivec2(0, 1), seed);
+  vec2 gd = seededGradient(c + ivec2(1, 1), seed);
+  float a = dot(ga, f);
+  float b = dot(gb, f - vec2(1.0, 0.0));
+  float cc = dot(gc, f - vec2(0.0, 1.0));
+  float d = dot(gd, f - vec2(1.0, 1.0));
+  float value = a + u.x * (b - a) + u.y * (cc - a) + u.x * u.y * (a - b - cc + d);
+  vec2 slope = ga + u.x * (gb - ga) + u.y * (gc - ga) + u.x * u.y * (ga - gb - gc + gd) + du * (u.yx * (a - b - cc + d) + vec2(b, cc) - a);
+  return 1.4 * vec3(value, slope);
+}
+
 vec3 noiseHash33(vec3 p) {
   p = fract(p * vec3(0.1031, 0.1030, 0.0973));
   p += dot(p, p.yxz + 33.33);

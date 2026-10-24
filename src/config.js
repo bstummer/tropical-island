@@ -12,10 +12,16 @@ export const quality = {
   // as far (config.world.terrain), a ratio over 2 refining the distance. Below
   // leaf x 1.41 / ((ratio - 1) x (1 - morph)), about 65 m at a ratio of 2,
   // seams between levels open (world/lod.js refuses it).
+  // groundDetail: a factor on how far from the camera the ground's surfaces
+  // show their detail (config.world.terrain's sand, rock and green `range`);
+  // surfaceTexture: texels across each of their tiles (textures/surfaces.js).
+  // rockPixels: a rock standing out of the ground less than this many pixels
+  // of the drawing buffer isn't drawn (world/rocks.js): thinner than about two,
+  // it would crawl (CLAUDE.md §8).
   presets: {
-    low: { renderScale: 0.67, maxPixelRatio: 1, msaa: 2, terrainDetail: 72, terrainRatio: 2, sandTexture: 512, rockTexture: 512, greenTexture: 512 },
-    medium: { renderScale: 0.85, maxPixelRatio: 1.5, msaa: 4, terrainDetail: 90, terrainRatio: 2.5, sandTexture: 1024, rockTexture: 1024, greenTexture: 1024 },
-    high: { renderScale: 1, maxPixelRatio: 2, msaa: 4, terrainDetail: 128, terrainRatio: 2.5, sandTexture: 1024, rockTexture: 1024, greenTexture: 1024 },
+    low: { renderScale: 0.67, maxPixelRatio: 1, msaa: 2, terrainDetail: 72, terrainRatio: 2, groundDetail: 0.6, surfaceTexture: 512, rockPixels: 3 },
+    medium: { renderScale: 0.85, maxPixelRatio: 1.5, msaa: 4, terrainDetail: 90, terrainRatio: 2.5, groundDetail: 0.8, surfaceTexture: 1024, rockPixels: 2.5 },
+    high: { renderScale: 1, maxPixelRatio: 2, msaa: 4, terrainDetail: 128, terrainRatio: 2.5, groundDetail: 1, surfaceTexture: 1024, rockPixels: 2 },
   },
 };
 
@@ -325,8 +331,9 @@ export const world = {
       // The wind that piles them blows this many degrees to the right of
       // straight out to sea: the trades, from behind the island.
       wind: 25,
-      // How wet it is by the height above the sea: under a film below `film`,
-      // half wet at zones.wetSand (the wet sand's zone), dry above `dry`.
+      // How wet the ground is by the height above the sea (chunks/wet.glsl,
+      // rock's too): under a film below `film`, half wet at zones.wetSand
+      // (the wet sand's zone), dry above `dry`.
       wetness: { film: 0.2, dry: 0.7 },
       // Damp sand is all but matte; only a film of water mirrors.
       roughness: { dry: 0.9, wet: 0.75, film: 0.07 },
@@ -358,13 +365,17 @@ export const world = {
       relief: { scale: 12, height: 0.22, sharp: 0.8, stretch: 0.5 },
       tone: 0.2, // how much the albedo follows the relief
       // Colour factors: streaks of salt and rust down steep faces, layers of
-      // lava flows across them, lichen on what faces up.
+      // lava flows across them. Lichen (albedos) covers `cover` of what faces
+      // up, `share` of it the second kind: a little, as the user picked bare
+      // basalt over lichened rock (PLAN.md, Decisions).
       streaks: { colour: [1.2, 1, 0.85], strength: 0.35 },
       strata: { spacing: 4, tone: 0.2, ledges: 0.08 },
-      lichen: { colour: [0.16, 0.16, 0.14], cover: 0.12, second: [0.25, 0.16, 0.07], share: 0.15 },
-      // The sea wets rock up to `reach` above it, by `dark`; a band above
-      // where spray keeps algae alive, darkened by `bandDark`.
-      wet: { reach: 0.6, dark: 0.6, band: [0.6, 2], bandDark: 0.8 },
+      lichen: { colour: [0.16, 0.16, 0.14], cover: 0.03, second: [0.25, 0.16, 0.07], share: 0.15 },
+      // Rock is as wet as the ground (chunks/wet.glsl), its crests up to
+      // `ragged` drier and its hollows wetter, and darkens by `dark` wet; a
+      // band from `band` m above the sea where spray keeps algae alive,
+      // darkened by `bandDark`, its edges `bandRagged` m ragged.
+      wet: { ragged: 0.4, dark: 0.6, band: [0.6, 2], bandDark: 0.8, bandRagged: 0.6 },
       roughness: { dry: 0.8, wet: 0.35 },
       // Metres from the camera within which rock shows its detail tile and
       // lichen; beyond, its relief alone, drawn by a cheaper shader
@@ -394,6 +405,7 @@ export const world = {
       // and how much larger the soil's crumbs are than the sand's grains.
       tiles: { grass: 0.6, litter: 1.5, crumbs: 2.5 },
       straw: [3.2, 1.4, 3], // a dry blade's colour factor
+      depths: 0.35, // the sward's depths between the blades: their colour's factor
       leaves: { light: [1.45, 1.4, 1.3], dark: [0.55, 0.55, 0.6] }, // a leaf's colour factor at its lightest tone and its darkest
       // Metres from the camera within which the green shows its detail;
       // beyond, its patches and albedo alone, drawn by a cheaper shader
@@ -405,8 +417,16 @@ export const world = {
   rocks: {
     // The cove's: within this of its beach (m). Beyond it, Stage 17's.
     reach: 520,
-    minPixels: 2, // a rock drawn smaller across than this many pixels isn't drawn
+    // A rock standing out of the ground less than quality.rockPixels pixels
+    // isn't drawn; it sinks into the ground as it shrinks from `fade` times
+    // that to it, so it doesn't pop.
+    fade: 2,
     show: 0.3, // a rock whose top would stand less than this share of its height above the ground isn't placed
+    // Degrees: a facet that leans out over the ground further than this past
+    // square to it (its normal more than 90° plus this from the ground's) is
+    // underside, which placement buries; the others are sides.
+    overhang: 15,
+    step: 0.25, // m: how far apart placement tries the underside against the ground; rough ground bends between the finest grid's samples
     // How far the terrain's mesh may stray from its finest height, for a share
     // of the distance: rocks move with it, and are culled with that much room.
     stray: 0.03,
@@ -423,11 +443,13 @@ export const world = {
       maxAngle: 170,
       // Blocks: prisms round an ellipse on a level bottom, width and height
       // over length; `sides` round it, spaced unevenly by `jitter` of their
-      // spacing, moved in or out by `offset`, leaning up to `lean` degrees,
-      // the top tilted up to `topTilt`. Then `fractures` across its upper
-      // edges, their faces looking `fractureElevation` degrees above level,
-      // each taking `fractureDepth` of its extent that way.
-      blocks: { count: 8, width: [0.5, 0.9], height: [0.25, 0.65], sides: [5, 6], jitter: 0.4, offset: 0.15, lean: 22, topTilt: 25, fractures: [2, 3], fractureElevation: [15, 65], fractureDepth: [0.15, 0.4] },
+      // spacing, moved in or out by `offset`, leaning out over its foot (-)
+      // or in (+) by `lean` degrees: mostly in, so a block sunk in the ground
+      // doesn't overhang it (rock-placement.js); the top tilted up to
+      // `topTilt`. Then `fractures` across its upper edges, their faces
+      // looking `fractureElevation` degrees above level, each taking
+      // `fractureDepth` of its extent that way.
+      blocks: { count: 8, width: [0.5, 0.9], height: [0.25, 0.65], sides: [5, 6], jitter: 0.4, offset: 0.15, lean: [-6, 22], topTilt: 25, fractures: [2, 3], fractureElevation: [15, 65], fractureDepth: [0.15, 0.4] },
       // Fallen columns: five or six uneven sides, `length` over width, ends
       // slanting `endTilt` degrees from square; `breaks` more cuts step an
       // end, `breakTilt` degrees off the axis, `breakDepth` of the width deep.
@@ -436,25 +458,24 @@ export const world = {
       // leave no wider than `span`, lopsided by `skew` (faces weighted 1 ± skew);
       // `edgeChance` of them off an edge's end, tapering out over `taper` degrees.
       chips: { count: [5, 9], depth: [0.06, 0.16], span: 0.4, skew: 0.5, edgeChance: 0.5, taper: [10, 35] },
-      // The lower points, which placement sinks under the ground: a ring at
-      // `height` of its height, at most `spacing` apart (in half-widths), and
-      // the corners below it.
-      lower: { height: 0.2, spacing: 0.3 },
     },
     // Each kind is scattered by a rule (world/scatter.js): a candidate in
     // `chance` of the cells `cell` m apart, kept where the ground meets `where`
-    // (sand and rock shares, height above the sea in m, slope in degrees).
+    // (sand and rock shares, height above the sea in m, slope in degrees, and
+    // m inland from the coast: a rocky shore's foot lies within a few metres
+    // out, and the reef's crest, as shallow, far beyond).
     // Sizes: the horizontal half-width, from size[0] to size[1] m, `tail`
     // raising how many are small; `columns`: the share that are fallen basalt
     // columns rather than blocks. Each is tipped up to `tip` degrees, leans
     // `lean` of the way to the ground's slope, and sinks `sink` of its height
-    // below where the ground first covers its lower part all round.
+    // below where the ground first covers its underside. Rocks keep clear of
+    // each other, so the kinds placed first, the largest, claim their ground.
     kinds: {
-      shore: { cell: 2.5, chance: 0.5, where: { rock: [0.5, 1], height: [-1.5, 4], slope: [0, 40] }, size: [0.2, 1.8], tail: 2.5, columns: 0.25, tip: 15, lean: 0.6, sink: 0.12 },
-      foot: { cell: 9, chance: 0.4, where: { rock: [0.6, 1], height: [-1, 6], slope: [0, 50] }, size: [1.2, 3.5], tail: 1.5, columns: 0.4, tip: 20, lean: 0.5, sink: 0.2 },
-      beach: { cell: 5, chance: 0.25, where: { sand: [0.3, 0.95], rock: [0.05, 0.7], height: [-0.5, 3] }, size: [0.15, 0.9], tail: 2, columns: 0.1, tip: 15, lean: 0.7, sink: 0.25 },
-      crags: { cell: 6, chance: 0.18, where: { rock: [0.6, 1], height: [6, 1000], slope: [30, 55] }, size: [0.8, 2.5], tail: 1.5, columns: 0.2, tip: 10, lean: 0.8, sink: 0.4 },
-      inland: { cell: 10, chance: 0.06, where: { sand: [0, 0.2], rock: [0, 0.3], height: [2, 1000], slope: [0, 35] }, size: [0.2, 0.9], tail: 2.5, columns: 0, tip: 20, lean: 0.8, sink: 0.35 },
+      foot: { cell: 9, chance: 0.4, where: { rock: [0.6, 1], height: [-1, 6], slope: [0, 50], coast: [-8, 1000] }, size: [1.2, 3.5], tail: 1.5, columns: 0.4, tip: 20, lean: 0.5, sink: 0.3 },
+      crags: { cell: 6, chance: 0.18, where: { rock: [0.6, 1], height: [6, 1000], slope: [30, 55] }, size: [0.8, 2.5], tail: 1.5, columns: 0.2, tip: 10, lean: 0.8, sink: 0.5 },
+      shore: { cell: 2.5, chance: 0.5, where: { rock: [0.5, 1], height: [-1.5, 4], slope: [0, 40], coast: [-8, 1000] }, size: [0.2, 1.8], tail: 2.5, columns: 0.25, tip: 15, lean: 0.6, sink: 0.22 },
+      beach: { cell: 5, chance: 0.25, where: { sand: [0.3, 0.95], rock: [0.05, 0.7], height: [-0.5, 3], coast: [-8, 1000] }, size: [0.15, 0.9], tail: 2, columns: 0.1, tip: 15, lean: 0.7, sink: 0.35 },
+      inland: { cell: 10, chance: 0.06, where: { sand: [0, 0.2], rock: [0, 0.3], height: [2, 1000], slope: [0, 35] }, size: [0.2, 0.9], tail: 2.5, columns: 0, tip: 20, lean: 0.8, sink: 0.45 },
     },
   },
 };
@@ -545,14 +566,28 @@ export const capture = {
   // shares of sand and rock, how lush and how sandy (`cover`), the band, and the reef's offset in metres: the
   // GPU's filtering and its half floats. Half floats, as three makes them, hold
   // the reef's ±250 m to 0.12 m, and a GPU may filter with coarse weights: 0.15 m
-  // on one D3D11 GPU.
-  terrain: { limit: 0.002, offset: 0.5, islandMedian: 0.04, ground: { cover: 0.01, band: 0.005, reef: 0.25 }, mesh: 0.01 },
+  // on one D3D11 GPU. `bounce`: how far the ground's albedo the light from
+  // below reads on the GPU may land from JS's, per channel: half floats and
+  // filter weights cost 0.001 on one D3D11 GPU, 0.0003 on SwiftShader; the
+  // map read half a texel off misses by 0.1.
+  terrain: { limit: 0.002, offset: 0.5, islandMedian: 0.04, ground: { cover: 0.01, band: 0.005, reef: 0.25 }, mesh: 0.01, bounce: 0.01 },
   // The surfaces fixture (src/fixtures/surfaces.js): a tile made again shifted
   // by a whole tile may change this share of its texels by more than `levels`
   // (the odd texel on a cell's edge flips by rounding); shifted by half a tile,
   // a deliberate mistake, it must change more than `mistaken` of them. `tiles`:
   // the tiles it checks.
   surfaces: { levels: 2, share: 0.01, mistaken: 0.3, tiles: ['grain', 'ripples', 'rock', 'grass', 'litter'] },
+  // The patches fixture (src/fixtures/patches.js): how far the GPU's patches
+  // (0 to 1) may land from world/green.js's (floats and an approximate exp on
+  // the GPU); points shifted a tenth of a patch, a mistake, must land further.
+  patches: { limit: 0.002 },
+  // The rocks fixture (src/fixtures/rocks.js), in metres: how far the GPU's
+  // offsets may land from their JS twin (as the terrain's mesh: floats on the
+  // GPU), and the pixels its vertex shader draws from its twin's surface: 0.5 mm
+  // on one D3D11 GPU, 2.3 mm on SwiftShader, whose rasterizer lets a pixel at
+  // a facet's edge read the facet a hair past it. And at least how many pixels
+  // it must draw to tell. Its deliberate mistakes miss by metres.
+  rocks: { offsets: 0.01, vertices: 0.01, pixels: 20000 },
 };
 
 // Frame cost limits per quality preset. tools/screenshot.js measures every view

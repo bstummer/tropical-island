@@ -44,7 +44,7 @@ When choosing between approaches, pick the one that looks better in the screensh
 | `npm test` | Unit and invariant tests: `node --test` over `tests/*.test.js` (Node's built-in runner, no test deps). |
 | `npm run build` | Production build to `dist/index.html` (single file, no sourcemaps). The build fails if it would emit anything other than `index.html`. |
 | `npm run check` | `tools/check-build.js`: exactly one file in dist, no `<script src>`/`<link href>`, no URLs except XML namespaces, no network APIs or `import()`, size vs budget (warn > 3 MB raw, fail > 6 MB), plus the src/ determinism lint. |
-| `npm run shot -- [args]` | Builds, then `tools/screenshot.js`: one PNG per view + `contact-sheet.png` + `info.json` in `screenshots/<label>/`, plus each view's measurements (banding view, zoomed crops, shimmer, motion strip, overdraw) in `screenshots/<label>/<view>/`, with the numbers and over-limit warnings in `info.json`. A reused label replaces the old capture. With `--checks` (`verify` passes it) the tool also checks itself and the game: that the shimmer and cost measurements still catch test scenes built to fail them, that the frame keeps its promises (smooth dark edges against a bright sky, depth precision from a hilltop, dithered gradients without bands, translucent layers blended in linear light and hidden behind the scene, the opaque scene handed to what draws after it), that errors nothing shows on screen (a broken shader out of sight, a bad WebGL call, a lost context, blending outside the translucent pass) fail a capture, that captures are reproducible, also after the time of day changed in the page (on every view, through every named time), that the GPU's sky maths agrees with the JS, that the terrain's heights on the GPU are the ones JS knows and keep close to the island's between samples, and the mesh's own height as drawn is its JS twin's (`terrain` fixture, also with deliberate mistakes), that the sky's lookup tables agree with direct marches through the same air, and the sunlight by height with one in JS, also in the last minutes of daylight (`haze` fixture), and that the light reads neutral at midday and warm at golden hour, and that a quality change (default preset to low and back) leaks no GPU resources and brings back the same picture. Then it runs the game for 30 frames in player mode (no `?capture`: real-time loop, input, start screen, frame readout, walking on the ground), which captures never exercise, and a short benchmark run (`screenshots/<label>/benchmark.txt`). |
+| `npm run shot -- [args]` | Builds, then `tools/screenshot.js`: one PNG per view + `contact-sheet.png` + `info.json` in `screenshots/<label>/`, plus each view's measurements (banding view, zoomed crops, shimmer, motion strip, overdraw) in `screenshots/<label>/<view>/`, with the numbers and over-limit warnings in `info.json`. A reused label replaces the old capture. With `--checks` (`verify` passes it) the tool also checks itself and the game: that the shimmer and cost measurements still catch test scenes built to fail them, that the frame keeps its promises (smooth dark edges against a bright sky, depth precision from a hilltop, dithered gradients without bands, translucent layers blended in linear light and hidden behind the scene, the opaque scene handed to what draws after it), that errors nothing shows on screen (a broken shader out of sight, a bad WebGL call, a lost context, blending outside the translucent pass) fail a capture, that captures are reproducible, also after the time of day changed in the page (on every view, through every named time), that the GPU's sky maths agrees with the JS, that the terrain's heights on the GPU are the ones JS knows and keep close to the island's between samples, and the mesh's own height as drawn is its JS twin's, and that the light from below reads the ground's albedo map where JS expects it (`terrain` fixture, also with deliberate mistakes), that the rocks' offsets in the mesh as drawn and their vertex shader put them where their JS twins do (`rocks` fixture, likewise), that the green's patches on the GPU are the ones JS knows (`patches` fixture), that the sky's lookup tables agree with direct marches through the same air, and the sunlight by height with one in JS, also in the last minutes of daylight (`haze` fixture), and that the light reads neutral at midday and warm at golden hour, and that a quality change (default preset to low and back) leaks no GPU resources and brings back the same picture. Then it runs the game for 30 frames in player mode (no `?capture`: real-time loop, input, start screen, frame readout, walking on the ground), which captures never exercise, and a short benchmark run (`screenshots/<label>/benchmark.txt`). |
 | `npm run verify` | test + build + check + shot with `--checks`. **The definition-of-done command.** |
 | `npm run map -- [args]` | `tools/map.js`: a top-down map of the island (relief, depths, zones, where the views stand) in `screenshots/map/<label>.png`, to judge the layout without rendering. `--seed`, `--label`, and `--set path=value` (repeatable) to override a setting of `config.world.island` for candidates. No build needed. |
 | `node tools/screenshot.js --compare A B` | Before/after sheet `screenshots/compare/A_vs_B.png`: A, B and a diff column per view, with the % of changed pixels. No build needed. |
@@ -72,8 +72,8 @@ Cloud sessions run in a Linux container with no GPU and no display, so screensho
 
 - Run `npm ci`, then once per machine `npx playwright install-deps chromium` (apt, needs root). Without the
   system libraries, the screenshot tool fails with "missing system library ..." and prints that command.
-- `--gl auto` finds no GPU and falls back to SwiftShader (a few seconds per view at 1600×900, measurements included; the tool
-  warns when a frame gets slow).
+- `--gl auto` finds no GPU and falls back to SwiftShader (about half a minute per view at 1600×900 on a desktop CPU,
+  measurements included, and two to three times that on CI's runners; the tool warns when a frame gets slow).
 - SwiftShader captures from here compare directly with CI and local `--gl swiftshader` captures (see section 4).
 
 ### Deploying
@@ -183,21 +183,25 @@ src/
                       scene-output.js, scene-check.js (the materials capture mode checks), fullscreen.js (one-triangle
                       passes); later bloom and colour grading. The only place tonemapping happens.
   fixtures/           test scenes for the screenshot tool's checks and the tonecard (?fixture=); not part of the island
-  world/              island.js (the island's shape: the height function and the placement zones; pure), noise.js (its noise and a cell hash),
+  world/              island.js (the island's shape: the height function and the placement zones; pure), noise.js (its noise, a cell hash
+                      and the hash's noise, which the GPU shares), green.js (where the green inland is green and where bare; pure),
                       heightmap.js (the island as drawn: nested grids of it, and their sampler; pure), heightmap-worker.js
                       (builds them), lod.js (picks the terrain's mesh for a camera, and the mesh's own height; pure),
                       albedo.js (the ground's albedo from above, for the light it sends up; pure), terrain.js (the ground
-                      and seabed), scatter.js (things scattered over the ground by rules; pure), rock-shapes.js,
+                      and seabed), scatter.js (things scattered over the ground by rules, keeping clear of each
+                      other; pure), rock-shapes.js,
                       rock-placement.js (pure) and rocks.js (rocks and boulders)
   world/placeholder*  TEMPORARY stand-in water (flat, coloured by depth). Delete once replaced.
-  textures/           procedural textures made on the GPU at boot: sand.js (the sand's grain and ripple tiles), rock.js (the
-                      rock's detail tile), green.js (the grass's and the leaf litter's tiles), tileable.glsl
+  textures/           procedural textures made on the GPU at boot: surfaces.js (the ground's tiles, in one texture array), which
+                      sand.js (the sand's grain and ripple tiles), rock.js (the rock's detail tile) and green.js (the grass's and
+                      the leaf litter's tiles) draw into; tileable.glsl
   shaders/chunks/     shared GLSL: noise.glsl, scene-output.glsl (how every scene material ends), lighting.glsl (the
                       shared lighting model, with sky-view.glsl, aerial.glsl, sunlight.glsl, sh.glsl and angles.glsl),
                       terrain.glsl (the terrain's heights, slopes and ground, as heightmap.js samples them),
                       terrain-mesh.glsl (the terrain's mesh as drawn, which what stands on it follows), sand.glsl,
-                      rock.glsl and green.glsl (the sand's, the rock's and the green's surfaces), planet.glsl (the
-                      planet's bend, see section 8);
+                      rock.glsl and green.glsl (the sand's, the rock's and the green's surfaces, with tiles.glsl, wet.glsl:
+                      how wet the ground is, and patches.glsl: where the green grows), planet.glsl (the planet's bend, see
+                      section 8);
                       wind later
 tools/                screenshot.js, measure.js, analyse.js (its worker thread), image.js, png.js, check-build.js, map.js (Node
                       only; pure helpers exported for tests)
@@ -231,8 +235,11 @@ night throws), `clock` (`elapsed`, `dt`, `frame`,
 (`world/terrain.js`: `island`, `heightAt(x, z)` the ground's height at its finest, which the mesh matches near the camera but
 not far out, where its coarser levels stray from it, `heightmap` and its `ready`, `mesh` and `meshHeightAtCove` (the
 mesh as drawn, for what stands on it: chunks/terrain-mesh.glsl and its JS twin), `surfaces` (the ground's
-surfaces' uniforms, for what is made of them or lies on them); it exists while the terrain
-system does, so systems that read it in `create()` come after `terrain` in `WORLD_SYSTEMS`), and `frame`
+surfaces' uniforms, for what is made of them or lies on them), `greenAt(x, z)` (whether the green inland is green or
+bare there, as drawn: world/green.js); it exists while the terrain
+system does, so systems that read it in `create()` come after `terrain` in `WORLD_SYSTEMS`), `rocks`
+(`world/rocks.js`: `ready`, then `placed` and `shapes`, and `clearance`, the rocks' footprints, which later
+placement passes to `world/scatter.js` to keep clear of them; likewise after `rocks`), and `frame`
 (`post/frame.js`: `size` and `onResize(fn)` for the drawing buffer, `uniforms` every scene material shares (the
 exposure, the light state and the terrain's grids),
 `beforeScene(fn)` for passes of a system's own such as shadow maps, `layers`, `translucent(object)`,

@@ -1,9 +1,10 @@
 // Sand (PLAN.md Stage 4): its albedo, normal and gloss at a point, for any
-// wetness from dry to the mirror of a film of water just after a wave drains.
-// Stage 7's waves will drive the wetness; until then sandWetness() takes it
-// from the height above the sea (world/albedo.js sandWetness is its twin).
+// wetness from dry to the mirror of a film of water just after a wave drains
+// (chunks/wet.glsl, which Stage 7's waves will drive). Far away it keeps its
+// albedo and its sheen at that wetness (sandPlain); near the camera it has
+// detail too (sand).
 //
-// The detail comes from the tiles of textures/sand.js, which repeat: the grain
+// The detail comes from the tiles of textures/sand.js (chunks/tiles.glsl), which repeat: the grain
 // is read at two scales that never line up, and the ripples through a slow
 // warp in world space that bends their field and hides the tile, patchy as
 // sand is. Drifts of lighter and darker sand span metres, and the wind combs
@@ -16,13 +17,12 @@
 
 #include "noise.glsl"
 #include "lighting.glsl"
+#include "wet.glsl"
+#include "tiles.glsl"
 
-uniform sampler2D uSandGrain;
-uniform sampler2D uSandRipples;
 uniform vec3 uSandGrainMean; // the grain's average factor, which the albedo keeps
 uniform vec3 uSandTiles; // the grain's and the ripples' tiles, m; how strong the ripples stand
 uniform vec2 uSandWind; // which way the wind blows the sand: world xz, unit
-uniform vec3 uSandWet; // m above the sea: a film below .x, half wet at .y, dry above .z
 uniform vec3 uSandRoughness; // dry, wet, and a film of water's
 uniform float uSandRange; // m from the camera: beyond it sand is its albedo alone (sandAlbedo)
 
@@ -33,21 +33,6 @@ struct Sand {
   float f0;
   float film; // how much of it a film of water covers, 0 to 1
 };
-
-// How much further up the beach than elsewhere the waves reach here, as a
-// height above the sea (m): in arcs tens of metres across, and raggedly, so
-// the wet sand's edge wanders. A caller takes it off the height it passes to
-// sandWetness().
-float sandReach(vec2 xz) {
-  return 0.07 * (1.0 - 2.0 * abs(gradientNoise(xz * 0.06 + 1.7))) + 0.03 * gradientNoise(xz * 0.4 - 2.3);
-}
-
-// How wet sand is at this height above the sea: 1 under a film, 0 dry.
-float sandWetness(float aboveSea) {
-  if (aboveSea <= uSandWet.x) return 1.0;
-  if (aboveSea <= uSandWet.y) return mix(1.0, 0.35, (aboveSea - uSandWet.x) / (uSandWet.y - uSandWet.x));
-  return 0.35 * (1.0 - smoothstep(uSandWet.y, uSandWet.z, aboveSea));
-}
 
 // Sand's diffuse albedo once a film of water has mirrored its share.
 vec3 sandDiffuse(Sand s, vec3 n, vec3 view) {
@@ -76,22 +61,31 @@ vec2 sandRotate(vec2 v, float c, float s) {
   return vec2(c * v.x - s * v.y, s * v.x + c * v.y);
 }
 
-// n: the ground's normal; dry, wet: the albedos (config.world.terrain.albedo).
-Sand sand(vec3 position, float aboveSea, vec3 n, float wetness, vec3 dry, vec3 wet, vec2 dpdx, vec2 dpdy) {
+// Sand without its detail, as far away: its albedo at this wetness, and its
+// gloss, from all but matte when damp to a sheen where water fills it to the
+// surface, and a mirror under a film. n: the ground's normal; dry, wet: the
+// albedos (config.world.terrain.albedo).
+Sand sandPlain(Wet w, vec3 n, vec3 dry, vec3 wet) {
+  float dark = smoothstep(0.2, 0.5, w.wetness);
+  float soaked = smoothstep(0.45, 0.7, w.wetness);
+  Sand s;
+  s.albedo = sandAlbedo(w.wetness, dry, wet);
+  s.normal = n;
+  s.roughness = mix(mix(uSandRoughness.x, uSandRoughness.y, dark), 0.4, soaked);
+  s.f0 = 0.02; // water's, and near enough dry sand's, which is too rough to show it
+  s.film = w.film;
+  return s;
+}
+
+// The same with its detail near the camera; aboveSea: m, for the swash marks.
+Sand sand(vec3 position, float aboveSea, vec3 n, Wet w, vec3 dry, vec3 wet, vec2 dpdx, vec2 dpdy) {
   vec2 xz = position.xz;
   float footprint = max(length(dpdx), length(dpdy)); // metres a pixel spans on the ground
   float near = 1.0 - smoothstep(0.75 * uSandRange, uSandRange, length(position - cameraPosition));
-  float dark = smoothstep(0.2, 0.5, wetness);
-  float soaked = smoothstep(0.45, 0.7, wetness); // water up to the surface: a sheen
-  float film = smoothstep(0.75, 1.0, wetness);
-  float dryness = 1.0 - smoothstep(0.4, 0.7, wetness); // ripples stand on dry and damp sand, not wet
+  float soaked = smoothstep(0.45, 0.7, w.wetness);
+  float dryness = 1.0 - smoothstep(0.4, 0.7, w.washed); // ripples stand where the waves don't reach
 
-  Sand s;
-  s.albedo = sandAlbedo(wetness, dry, wet);
-  s.normal = n;
-  s.roughness = mix(1.0, mix(mix(uSandRoughness.x, uSandRoughness.y, dark), 0.4, soaked), near);
-  s.f0 = 0.02; // water's, and near enough dry sand's, which is too rough to show it
-  s.film = film * near;
+  Sand s = sandPlain(w, n, dry, wet);
 
   // Drifts of lighter and darker sand over metres, and streaks the wind combs
   // along itself, metres long and a hand or two wide.
@@ -107,13 +101,13 @@ Sand sand(vec3 position, float aboveSea, vec3 n, float wetness, vec3 dry, vec3 w
     const float C = 0.8;
     const float S = 0.6;
     vec2 uv2 = sandRotate(xz, C, S) / (0.37 * tile) + 0.31;
-    vec3 a = textureGrad(uSandGrain, xz / tile, dpdx / tile, dpdy / tile).rgb;
-    vec3 b = textureGrad(uSandGrain, uv2, sandRotate(dpdx, C, S) / (0.37 * tile), sandRotate(dpdy, C, S) / (0.37 * tile)).rgb;
+    vec3 a = surfaceTile(TILE_GRAIN, xz / tile, dpdx / tile, dpdy / tile).rgb;
+    vec3 b = surfaceTile(TILE_GRAIN, uv2, sandRotate(dpdx, C, S) / (0.37 * tile), sandRotate(dpdy, C, S) / (0.37 * tile)).rgb;
     vec3 grain = (a + b) / uSandGrainMean;
     float fine = 1.0 - smoothstep(0.006, 0.02, footprint);
     s.albedo *= mix(vec3(1.0), grain, fine);
     // Soaked sand's sheen is grainy: each grain sits a little higher or lower in the water.
-    s.roughness *= 1.0 + 0.6 * soaked * fine * (grain.g - 1.0) * 4.0;
+    s.roughness *= max(1.0 + 0.6 * soaked * fine * (grain.g - 1.0) * 4.0, 0.25);
   }
 
   // Bits of bleached shell, the odd one pink or a dark pebble: one or none in
@@ -149,7 +143,7 @@ Sand sand(vec3 position, float aboveSea, vec3 n, float wetness, vec3 dry, vec3 w
     float tile = uSandTiles.y;
     vec2 gx = vec2(dot(dpdx, uSandWind), dot(dpdx, across)) / tile;
     vec2 gy = vec2(dot(dpdy, uSandWind), dot(dpdy, across)) / tile;
-    vec4 r = textureGrad(uSandRipples, (w + warp) / tile, gx, gy);
+    vec4 r = surfaceTile(TILE_RIPPLES, (w + warp) / tile, gx, gy);
     vec3 t = r.xyz * 2.0 - 1.0;
     // Fields of stronger and fainter ripples.
     float patchy = 0.3 + 0.7 * smoothstep(-0.3, 0.4, broad);
@@ -165,13 +159,13 @@ Sand sand(vec3 position, float aboveSea, vec3 n, float wetness, vec3 dry, vec3 w
   }
 
   // Swash marks: thin lines of fine grit where waves ran out, short arcs that
-  // bulge up the beach and overlap, a few across the wet band.
-  float marks = smoothstep(0.35, 0.6, wetness) * near * (1.0 - smoothstep(0.02, 0.08, footprint));
+  // bulge up the beach and overlap, a few across the band they wash.
+  float marks = smoothstep(0.35, 0.6, w.washed) * near * (1.0 - smoothstep(0.02, 0.08, footprint));
   if (marks > 0.0) {
     // A line every 7 cm of height, about 0.7 m up the beach, each a couple of
     // centimetres wide, wider as the pixel grows so it never aliases.
     float lobes = 1.0 - abs(gradientNoise(xz * 0.35 - 6.0));
-    float reach = (aboveSea - uSandWet.x) * 14.0 - 0.6 * lobes;
+    float reach = (aboveSea - uWet.x) * 14.0 - 0.6 * lobes;
     float line = 1.0 - smoothstep(0.012, 0.03 + 1.4 * footprint, abs(fract(reach) - 0.5));
     float broken = smoothstep(0.0, 0.4, gradientNoise(xz * 0.9 + 4.0));
     s.albedo *= 1.0 - 0.08 * line * broken * marks;
@@ -179,7 +173,7 @@ Sand sand(vec3 position, float aboveSea, vec3 n, float wetness, vec3 dry, vec3 w
 
   // Wet sand isn't quite flat: the backwash leaves it gently rumpled, which
   // breaks a mirrored sun into a streak of glints; under a film, less so.
-  float rumpled = smoothstep(0.45, 0.75, wetness) * (1.0 - 0.6 * film) * near * (1.0 - smoothstep(0.05, 0.3, footprint));
+  float rumpled = smoothstep(0.45, 0.75, w.wetness) * (1.0 - 0.6 * w.film) * near * (1.0 - smoothstep(0.05, 0.3, footprint));
   if (rumpled > 0.0) {
     vec2 q = xz * 1.7;
     vec2 slope = gradientNoiseD(q).yz + 0.5 * 2.7 * gradientNoiseD(q * 2.7 + 5.0).yz;

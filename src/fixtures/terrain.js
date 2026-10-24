@@ -12,17 +12,24 @@
 // height as drawn (chunks/terrain-mesh.glsl) against its JS twin
 // (ctx.terrain.meshHeightAtCove), for cameras where the views stand and
 // seeded ones, at points out to the island's far side, where the levels and
-// their morphs change; its deliberate mistake: a camera 30 m off. The terrain
+// their morphs change; its deliberate mistake: a camera 30 m off. And the
+// ground's albedo the light from below reads (chunks/lighting.glsl
+// groundAlbedo, from world/terrain.js's map and its layout) against
+// world/albedo.js's map of the coarsest grid, filtered as the GPU filters it;
+// its deliberate mistake: the map's layout half a texel off. The terrain
 // draws as usual meanwhile. Not part of the island.
 import * as THREE from 'three';
 import vertexShader from '../post/output.vert';
 import fragmentShader from './terrain.frag';
 import meshShader from './terrain-mesh.frag';
+import bounceShader from './terrain-bounce.frag';
 import { views } from '../views.js';
 import { createFullscreen } from '../post/fullscreen.js';
+import { albedoMap } from '../world/albedo.js';
 
 const PER_LEVEL = { inside: 48, edge: 32, samples: 16, coarser: 8 };
 const MESH = { cameras: 6, points: 400, reach: 2500, off: 30 }; // seeded cameras; points per camera, within reach m
+const BOUNCE = { points: 1024, off: 0.5 }; // seeded points over the island; the mistake, in texels
 
 export function create(ctx) {
   const { renderer, frame, config } = ctx;
@@ -97,6 +104,7 @@ export function create(ctx) {
     pass.dispose();
     pointTexture.dispose();
     const mesh = meshCheck(ctx, r);
+    const bounce = bounceCheck(ctx, ctx.rng('fixtures/terrain/bounce'));
 
     const out = {};
     const ground = {};
@@ -128,6 +136,7 @@ export function create(ctx) {
       // Per level: its spacing, and the drawn ground's median miss of the island's.
       island: heightmap.levels.map(({ texel }, k) => ({ texel, median: median(misses[k]) })),
       mesh,
+      bounce,
     };
   });
 
@@ -193,5 +202,105 @@ function meshCheck(ctx, r) {
     mistaken = Math.max(mistaken, Math.abs(pixels[4 * i] - terrain.meshHeightAtCove(a, o, [ca + MESH.off, 0, co])));
   });
   return { points, gpu, mistaken };
+}
+
+// The ground's albedo the light from below reads on the GPU, against what JS
+// expects there: world/albedo.js's map of the coarsest grid, its texel centres
+// on the grid's samples, kept and read as the GPU keeps and reads it, at the
+// mip level config.world.terrain.bounceReach asks for. For seeded points over
+// the island: the worst difference over the three channels, and the worst
+// with the map's layout BOUNCE.off texels off along both axes, which must show.
+function bounceCheck(ctx, r) {
+  const { renderer, frame, config, terrain } = ctx;
+  const { heightmap, island } = terrain;
+  const { samples, bounceReach, albedo, green, sand } = config.world.terrain;
+  const coarsest = heightmap.levels.at(-1);
+  const { origin, texel } = coarsest;
+  const looks = { albedo, green, wetness: sand.wetness, wetHeight: config.world.island.zones.wetSand, sea: config.sky.atmosphere.groundAlbedo };
+  const lod = Math.log2(bounceReach / texel);
+  const mips = halfMips(albedoMap(coarsest, looks), samples, Math.floor(lod) + 2);
+  const corner = [origin[0] - texel / 2, origin[1] - texel / 2];
+  const size = samples * texel;
+
+  const { minA, maxA, minO, maxO } = island.coveBounds;
+  const end = (samples - 1) * texel;
+  const world = Array.from({ length: BOUNCE.points }, () =>
+    island.fromCove(r.range(Math.max(minA, origin[0]), Math.min(maxA, origin[0] + end)), r.range(Math.max(minO, origin[1]), Math.min(maxO, origin[1] + end))),
+  );
+  const data = new Float32Array(4 * BOUNCE.points);
+  world.forEach(([x, z], i) => data.set([x, z, 0, 0], 4 * i));
+  const input = new THREE.DataTexture(data, BOUNCE.points, 1, THREE.RGBAFormat, THREE.FloatType);
+  input.needsUpdate = true;
+  const pass = createFullscreen(
+    new THREE.ShaderMaterial({ name: 'fixture-terrain-bounce', vertexShader, fragmentShader: bounceShader, uniforms: { ...frame.uniforms, uPoints: { value: input } } }),
+  );
+  const target = new THREE.WebGLRenderTarget(BOUNCE.points, 1, { type: THREE.FloatType, depthBuffer: false });
+  const read = () => {
+    pass.render(renderer, target);
+    const pixels = new Float32Array(4 * BOUNCE.points);
+    renderer.readRenderTargetPixels(target, 0, 0, BOUNCE.points, 1, pixels);
+    renderer.setRenderTarget(null);
+    return pixels;
+  };
+  const gpu = read();
+  const off = frame.uniforms.uBounceLayout.value.clone();
+  off.x -= BOUNCE.off * texel;
+  off.y -= BOUNCE.off * texel;
+  pass.uniforms.uBounceLayout = { value: off };
+  const mistaken = read();
+  target.dispose();
+  pass.dispose();
+  input.dispose();
+
+  let worst = 0;
+  let worstMistaken = 0;
+  world.forEach((xz, i) => {
+    const [a, o] = island.toCove(...xz);
+    sampleMips(mips, (a - corner[0]) / size, (o - corner[1]) / size, lod).forEach((js, c) => {
+      worst = Math.max(worst, Math.abs(gpu[4 * i + c] - js));
+      worstMistaken = Math.max(worstMistaken, Math.abs(mistaken[4 * i + c] - js));
+    });
+  });
+  return { points: BOUNCE.points, gpu: worst, mistaken: worstMistaken };
+}
+
+// An RGBA map of size x size texels as the GPU keeps it: half floats, and
+// `count` levels of mips, each texel of one the mean of four of the one before.
+function halfMips(map, size, count) {
+  const half = (v) => THREE.DataUtils.fromHalfFloat(THREE.DataUtils.toHalfFloat(v));
+  const mips = [{ size, texels: map.map(half) }];
+  while (mips.length < count) {
+    const { size: from, texels } = mips.at(-1);
+    const n = from / 2;
+    const next = new Float32Array(4 * n * n);
+    const at = (i, j, c) => texels[4 * (j * from + i) + c];
+    for (let j = 0; j < n; j++) {
+      for (let i = 0; i < n; i++) {
+        for (let c = 0; c < 4; c++) next[4 * (j * n + i) + c] = half((at(2 * i, 2 * j, c) + at(2 * i + 1, 2 * j, c) + at(2 * i, 2 * j + 1, c) + at(2 * i + 1, 2 * j + 1, c)) / 4);
+      }
+    }
+    mips.push({ size: n, texels: next });
+  }
+  return mips;
+}
+
+// The colour of `mips` at u, v as textureLod reads it at `lod` (linear,
+// mipmapped linearly, clamped at the edges): bilinear in the mips either side
+// of lod, blended between them.
+function sampleMips(mips, u, v, lod) {
+  const d = Math.floor(lod);
+  const bilinear = ({ size, texels }, c) => {
+    const [x, y] = [u * size - 0.5, v * size - 0.5];
+    const [i, j] = [Math.floor(x), Math.floor(y)];
+    const edge = (k) => Math.min(Math.max(k, 0), size - 1);
+    const at = (p, q) => texels[4 * (edge(q) * size + edge(p)) + c];
+    const bottom = at(i, j) + (at(i + 1, j) - at(i, j)) * (x - i);
+    const top = at(i, j + 1) + (at(i + 1, j + 1) - at(i, j + 1)) * (x - i);
+    return bottom + (top - bottom) * (y - j);
+  };
+  return [0, 1, 2].map((c) => {
+    const near = bilinear(mips[d], c);
+    return near + (bilinear(mips[d + 1], c) - near) * (lod - d);
+  });
 }
 

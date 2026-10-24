@@ -362,9 +362,10 @@ export function createIsland(rng, settings = config.world.island, sunsetYaw = co
   // green), `band`, how far into the green it lies (0 where the shore's band
   // ends, 1 where the scrub does, 2 where the palm belt does), the reef's
   // offset, and `sandy`, how much of the soil is sand: behind a beach, whose
-  // sand the wind carries inland, fading over zones.sandy metres. The one definition of the ground: world/heightmap.js keeps it per
-  // sample of its grids, for the GPU and for placement alike, and the zones
-  // follow from it (zoneFrom).
+  // sand the wind carries inland, fading over zones.sandy metres, and only as
+  // steep as sand holds. The one definition of the ground: world/heightmap.js
+  // keeps it per sample of its grids, for the GPU and for placement alike, and
+  // the zones follow from it (zoneFrom).
   const rockSlope = zones.rockSlope.map((deg) => Math.tan(deg * DEG));
   const sandSlope = zones.sandSlope.map((deg) => Math.tan(deg * DEG));
   function groundOf(s, slope, out = {}) {
@@ -376,13 +377,15 @@ export function createIsland(rng, settings = config.world.island, sunsetYaw = co
     const band = into < zones.scrub ? into / zones.scrub : 1 + (into - zones.scrub) / palmBelt;
     // The shore's band is sand as far as the shore is sandy and the ground
     // flat enough for sand to lie on, and rock otherwise; inland, ground too
-    // steep for soil is rock.
+    // steep for soil is rock. The sand in sandy soil gives way on slopes as
+    // the beach's does.
     const onShore = 1 - smoothstep(-zones.edge, zones.edge, into);
-    const sand = smoothstep(0.4, 0.6, b) * (1 - smoothstep(sandSlope[0], sandSlope[1], slope));
+    const holds = 1 - smoothstep(sandSlope[0], sandSlope[1], slope);
+    const sand = smoothstep(0.4, 0.6, b) * holds;
     const steep = smoothstep(rockSlope[0], rockSlope[1], slope);
     out.sand = onShore * sand;
     out.rock = onShore * (1 - sand) + (1 - onShore) * steep;
-    out.sandy = smoothstep(0.4, 0.6, b) * (1 - smoothstep(0, zones.sandy, into));
+    out.sandy = smoothstep(0.4, 0.6, b) * (1 - smoothstep(0, zones.sandy, into)) * holds;
     out.band = Math.min(Math.max(band, BAND_RANGE[0]), BAND_RANGE[1]);
     out.reef = Math.min(Math.max(s.reef, -REEF_RANGE), REEF_RANGE);
     return out;

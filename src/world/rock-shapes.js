@@ -26,15 +26,12 @@
 
 const DEG = Math.PI / 180;
 const EPS = 1e-9; // how near a plane a corner counts as on it
-const ATTEMPTS = 12; // draws for a shape or a cut before giving up on it
+const ATTEMPTS = 20; // draws for a shape or a cut before giving up on it
 const BOX = 10; // half-size of the cube the shapes are cut from, well beyond any of them
 
 // rng: a seeded stream (core/random.js). settings: config.world.rocks.shapes.
 // Returns [{ kind: 'block' | 'column', positions, normals (Float32Array, xyz),
-// index (Uint16Array, triangles), height, lower }]. `lower` (Float32Array, xyz)
-// holds points of its surface up to settings.lower.height of its height: a
-// ring round it at that height and the corners beneath. Sunk until they all
-// lie under the ground, it is buried that deep all round.
+// index (Uint16Array, triangles), height }].
 export function makeRockShapes(rng, settings) {
   const shapes = [
     ...Array.from({ length: settings.blocks.count }, () => ({ kind: 'block', poly: block(rng, settings) })),
@@ -57,7 +54,7 @@ function block(rng, s) {
     const planes = [{ n: [0, -1, 0], d: 0 }, { n: top, d: height * top[1] }];
     for (let i = 0; i < sides; i++) {
       const theta = (2 * Math.PI * (i + rng.range(-b.jitter, b.jitter))) / sides;
-      const lean = rng.range(-b.lean, b.lean) * DEG;
+      const lean = rng.range(...b.lean) * DEG;
       const n = [Math.cos(theta) * Math.cos(lean), Math.sin(lean), Math.sin(theta) * Math.cos(lean)];
       // Through the ellipse's tangent, at half height.
       const reach = Math.hypot(Math.cos(theta), width * Math.sin(theta)) * (1 + rng.range(-b.offset, b.offset));
@@ -289,32 +286,7 @@ function finish(kind, poly, s) {
       normals.set(n, 3 * vertex++);
     }
   }
-  const lower = lowerPart(verts, poly.faces, s.lower.height * height, s.lower.spacing);
-  return { kind, positions, normals, index, height, lower };
-}
-
-// Its surface up to `level`: the ring where it crosses that height, its points
-// no further apart than `spacing`, and the corners below it.
-function lowerPart(verts, faces, level, spacing) {
-  const ring = verts.filter((v) => v[1] === level);
-  for (const { loop } of faces) {
-    loop.forEach((a, k) => {
-      const b = loop[(k + 1) % loop.length];
-      const [ya, yb] = [verts[a][1] - level, verts[b][1] - level];
-      // Each edge once: it runs from a to b in one face, b to a in the other.
-      if (a < b && ya * yb < 0) ring.push(lerp(verts[a], verts[b], ya / (ya - yb)));
-    });
-  }
-  const centre = scale(ring.reduce(add, [0, 0, 0]), 1 / ring.length);
-  const around = (p) => Math.atan2(p[2] - centre[2], p[0] - centre[0]);
-  ring.sort((p, q) => around(p) - around(q));
-  const points = verts.filter((v) => v[1] < level);
-  ring.forEach((p, k) => {
-    const q = ring[(k + 1) % ring.length];
-    const steps = Math.ceil(length(sub(q, p)) / spacing);
-    for (let i = 0; i < steps; i++) points.push(lerp(p, q, i / steps));
-  });
-  return new Float32Array(points.flat());
+  return { kind, positions, normals, index, height };
 }
 
 // The smallest circle round points [x, z] (Welzl's, iteratively): the footprint's.

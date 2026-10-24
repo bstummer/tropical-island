@@ -41,6 +41,11 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const BUILT_HTML = join(ROOT, 'dist', 'index.html');
 const SHOTS = join(ROOT, 'screenshots');
 const READY_TIMEOUT_MS = 60_000;
+// Player mode and the benchmark draw in the same browser as the checks running
+// beside them, whose full-size frames take seconds each on SwiftShader: they
+// fail only once a page draws no frame for this long (untilDone), however
+// long they take.
+const STALL_MS = 60_000;
 // Player mode and the benchmark only have to work: small, as SwiftShader draws every pixel on the CPU.
 const PLAYER_MODE = { frames: 30, viewport: { width: 320, height: 180 } };
 const BENCH_SECONDS = 0.25; // per view: enough to prove the benchmark works
@@ -448,18 +453,32 @@ function toolCheckTasks(context, fileUrl, query, view, outDir) {
     }),
     // The heights and the ground the GPU draws are the ones JS knows
     // (src/fixtures/terrain.js), the comparison catches a sampler half a metre
-    // off, the drawn ground keeps close to the island's between samples, and
-    // the mesh's own height on the GPU is its JS twin's.
+    // off, the drawn ground keeps close to the island's between samples, the
+    // mesh's own height on the GPU is its JS twin's, and the light from below
+    // reads the ground's albedo JS expects where it expects it.
     () => checkFixture(context, fileUrl, { ...params, fixture: 'terrain' }, async (page, info, problems) => {
       const t = await page.evaluate(() => window.__TERRAIN__);
       for (const text of terrainProblems(t, config.capture.terrain)) problems.push({ kind: 'tool check', text: `terrain fixture: ${text}` });
-      const { limit, mesh } = config.capture.terrain;
+      const { limit, mesh, bounce } = config.capture.terrain;
       return (
         `${t.points} points: GPU vs world/heightmap.js off by ${t.gpu.toExponential(1)} m (limit ${limit}), ` +
         `${t.mistaken.toFixed(2)} m half a metre off; the ground at ${t.ground.gpu.toFixed(2)} of its limits ` +
         `(${Object.entries(t.ground.fields).map(([f, v]) => `${f} ${v.toFixed(2)}`).join(', ')}), ` +
         `${t.ground.mistaken.toFixed(1)} half a metre off; drawn vs world/island.js per level (median) ${t.island.map((l) => `${l.median.toFixed(3)} m`).join(', ')}; ` +
-        `the mesh's height at ${t.mesh.points} points off its twin by ${t.mesh.gpu.toExponential(1)} m (limit ${mesh}), ${t.mesh.mistaken.toFixed(2)} m for a camera 30 m off`
+        `the mesh's height at ${t.mesh.points} points off its twin by ${t.mesh.gpu.toExponential(1)} m (limit ${mesh}), ${t.mesh.mistaken.toFixed(2)} m for a camera 30 m off; ` +
+        `the light from below's albedo at ${t.bounce.points} points off world/albedo.js's by ${t.bounce.gpu.toExponential(1)} (limit ${bounce}), ${t.bounce.mistaken.toFixed(2)} half a texel off`
+      );
+    }),
+    // The rocks' GPU side puts them where JS knows they are (src/fixtures/rocks.js):
+    // their offsets in the mesh as drawn, and where their vertex shader draws them.
+    () => checkFixture(context, fileUrl, { ...params, fixture: 'rocks' }, async (page, info, problems) => {
+      const r = await page.evaluate(() => window.__ROCKS__);
+      for (const text of rockProblems(r, config.capture.rocks)) problems.push({ kind: 'tool check', text: `rocks fixture: ${text}` });
+      const { offsets, vertices } = config.capture.rocks;
+      return (
+        `${r.rocks} rocks for ${r.cameras} cameras: offsets at ${r.offsets.points} points off their twin by ${r.offsets.gpu.toExponential(1)} m (limit ${offsets}), ` +
+        `${r.offsets.mistaken.toFixed(2)} m read from the next rock's; ${r.vertices.pixels} pixels of ${r.vertices.rocks} rocks off their twin's surface by ` +
+        `${r.vertices.gpu.toExponential(1)} m (limit ${vertices}), ${r.vertices.mistaken.toFixed(2)} m turned the wrong way`
       );
     }),
     // The ground's tiles repeat (src/fixtures/surfaces.js), and the check would see if they didn't.
@@ -468,6 +487,12 @@ function toolCheckTasks(context, fileUrl, query, view, outDir) {
       for (const text of surfaceProblems(s, config.capture.surfaces)) problems.push({ kind: 'tool check', text: `surfaces fixture: ${text}` });
       const pct = (v) => `${(100 * v).toFixed(2)}%`;
       return Object.entries(s).map(([name, t]) => `${name} tile: ${pct(t.whole)} of texels change shifted a whole tile, ${pct(t.half)} half a tile`).join('; ');
+    }),
+    // The green's patches on the GPU are the ones JS knows (src/fixtures/patches.js).
+    () => checkFixture(context, fileUrl, { ...params, fixture: 'patches' }, async (page, info, problems) => {
+      const p = await page.evaluate(() => window.__PATCHES__);
+      for (const text of patchesProblems(p, config.capture.patches)) problems.push({ kind: 'tool check', text: `patches fixture: ${text}` });
+      return `${p.points} points: GPU vs world/green.js off by ${p.gpu.toExponential(1)} (limit ${config.capture.patches.limit}), ${p.mistaken.toFixed(2)} a tenth of a patch off`;
     }),
     // The sky's tables agree with the air they come from (src/fixtures/haze.js): from
     // the beach at golden hour, and from the hill at sunset, high enough above the
@@ -659,8 +684,9 @@ export function mathsMismatch(values) {
 // within `limit` of heightmap.js's and its ground within its limits (a share
 // of them, at most 1), the deliberate mistakes beyond them, and per level the
 // drawn ground's median miss of the island within islandMedian of the level's
-// spacing. Returns problem texts.
-export function terrainProblems(t, { limit, islandMedian, mesh }) {
+// spacing, and the light from below's albedo within `bounce`, its mistake
+// beyond it. Returns problem texts.
+export function terrainProblems(t, { limit, islandMedian, mesh, bounce }) {
   const problems = [];
   if (!(t.gpu <= limit)) problems.push(`GPU vs world/heightmap.js off by ${t.gpu?.toExponential(1)} m (limit ${limit})`);
   if (!(t.mistaken > limit)) problems.push(`a sampler half a metre off is only ${t.mistaken?.toExponential(1)} m off, within the limit: the check misses it`);
@@ -668,9 +694,25 @@ export function terrainProblems(t, { limit, islandMedian, mesh }) {
   if (!(t.ground?.mistaken > 1)) problems.push(`the ground half a metre off is only ${t.ground?.mistaken?.toFixed(2)} of its limits: the check misses it`);
   if (!(t.mesh?.gpu <= mesh)) problems.push(`the GPU's mesh height vs world/lod.js's twin off by ${t.mesh?.gpu?.toExponential(1)} m (limit ${mesh})`);
   if (!(t.mesh?.mistaken > mesh)) problems.push(`the mesh's height for a camera 30 m off is only ${t.mesh?.mistaken?.toExponential(1)} m off, within the limit: the check misses it`);
+  if (!(t.bounce?.gpu <= bounce)) problems.push(`the ground's albedo the GPU's light from below reads vs world/albedo.js's off by ${t.bounce?.gpu?.toExponential(1)} (limit ${bounce})`);
+  if (!(t.bounce?.mistaken > bounce)) problems.push(`the albedo map read half a texel off is only ${t.bounce?.mistaken?.toExponential(1)} off, within the limit: the check misses it`);
   for (const { texel, median } of t.island) {
     if (!(median <= islandMedian * texel)) problems.push(`the ${texel} m level misses world/island.js by ${median?.toFixed(3)} m (median; limit ${(islandMedian * texel).toFixed(2)})`);
   }
+  return problems;
+}
+
+// The rocks fixture's results (src/fixtures/rocks.js): the GPU's offsets and
+// the pixels its vertex shader draws within their limits of their JS twins,
+// the deliberate mistakes beyond them, and enough pixels drawn to tell.
+// Returns problem texts.
+export function rockProblems(r, { offsets, vertices, pixels }) {
+  const problems = [];
+  if (!(r?.offsets?.gpu <= offsets)) problems.push(`the GPU's offsets vs their JS twin off by ${r?.offsets?.gpu?.toExponential(1)} m (limit ${offsets})`);
+  if (!(r?.offsets?.mistaken > offsets)) problems.push(`offsets read from the next rock's block are only ${r?.offsets?.mistaken?.toExponential(1)} m off, within the limit: the check misses it`);
+  if (!(r?.vertices?.gpu <= vertices)) problems.push(`world/rocks.vert draws rocks ${r?.vertices?.gpu?.toExponential(1)} m off their twin's surface (limit ${vertices})`);
+  if (!(r?.vertices?.mistaken > vertices)) problems.push(`rocks turned the wrong way are only ${r?.vertices?.mistaken?.toExponential(1)} m off, within the limit: the check misses it`);
+  if (!(r?.vertices?.pixels >= pixels)) problems.push(`only ${r?.vertices?.pixels} pixels of rocks drawn (at least ${pixels}): the check measures too little`);
   return problems;
 }
 
@@ -684,6 +726,16 @@ export function surfaceProblems(s, { share, mistaken, tiles }) {
     if (!(t?.whole <= share)) problems.push(`the ${name} tile doesn't repeat: shifted a whole tile, ${(100 * t?.whole).toFixed(2)}% of its texels change (limit ${100 * share}%)`);
     if (!(t?.half > mistaken)) problems.push(`the ${name} tile shifted half a tile changes only ${(100 * t?.half).toFixed(2)}% of its texels: the check misses it`);
   }
+  return problems;
+}
+
+// The patches fixture's results (src/fixtures/patches.js): the GPU's patches
+// within `limit` of world/green.js's, and the deliberate mistake beyond it.
+// Returns problem texts.
+export function patchesProblems(p, { limit }) {
+  const problems = [];
+  if (!(p?.gpu <= limit)) problems.push(`GPU vs world/green.js off by ${p?.gpu?.toExponential(1)} (limit ${limit})`);
+  if (!(p?.mistaken > limit)) problems.push(`points a tenth of a patch off are only ${p?.mistaken?.toExponential(1)} off, within the limit: the check misses it`);
   return problems;
 }
 
@@ -804,24 +856,20 @@ async function checkPlayerMode(context, fileUrl, query, view) {
   await page.setViewportSize(PLAYER_MODE.viewport);
   await stubPointerLock(page);
   const { problems, consoleWarnings } = watchPage(page, fileUrl);
+  await countFrames(page);
   const params = new URLSearchParams({ ...query, view: view.name, stats: '1' }); // with the frame readout
   params.delete('capture');
   const started = Date.now();
   try {
     await page.goto(`${fileUrl}?${params}`);
-    // Polled once per animation frame, the same frames that drive the game loop.
-    await page.waitForFunction(
-      (frames) => (window.__PLAYER_FRAMES__ = (window.__PLAYER_FRAMES__ ?? 0) + 1) >= frames,
-      PLAYER_MODE.frames,
-      { polling: 'raf', timeout: READY_TIMEOUT_MS },
-    );
+    await untilDone(page, (frames) => window.__FRAMES__ >= frames, PLAYER_MODE.frames);
     if (!(await page.evaluate(() => document.getElementById('start').checkVisibility()))) {
       problems.push({ kind: 'player mode', text: 'the start screen is not showing' });
     }
     // The readout refreshes every config.readout.refreshSeconds; its key hides it.
-    await page
-      .waitForFunction(() => /\d+ draws/.test(document.getElementById('readout').textContent), null, { timeout: 10_000 })
-      .catch(() => problems.push({ kind: 'player mode', text: 'the frame readout shows no numbers' }));
+    await untilDone(page, () => /\d+ draws/.test(document.getElementById('readout').textContent)).catch(() =>
+      problems.push({ kind: 'player mode', text: 'the frame readout shows no numbers' }),
+    );
     await page.keyboard.press(config.readout.key); // a synthetic key event in the page, not the OS keyboard
     if (await page.evaluate(() => document.getElementById('readout').checkVisibility())) {
       problems.push({ kind: 'player mode', text: `${config.readout.key} does not hide the frame readout` });
@@ -834,22 +882,21 @@ async function checkPlayerMode(context, fileUrl, query, view) {
     await page.click('#start');
     await page.keyboard.press(config.readout.key);
     const where = (previous) =>
-      page
-        .waitForFunction(
-          (previous) => {
-            const m = document.getElementById('readout').textContent.match(/at (\S+), (\S+), (\S+) · (\S+) m above the ground/);
-            const at = m?.slice(1).map(Number);
-            return at && at.every(Number.isFinite) && (!previous || at.some((v, i) => v !== previous[i])) && at;
-          },
-          previous,
-          { timeout: 10_000 },
-        )
-        .then((handle) => handle.jsonValue());
+      untilDone(
+        page,
+        (previous) => {
+          const m = document.getElementById('readout').textContent.match(/at (\S+), (\S+), (\S+) · (\S+) m above the ground/);
+          const at = m?.slice(1).map(Number);
+          return at && at.every(Number.isFinite) && (!previous || at.some((v, i) => v !== previous[i])) && at;
+        },
+        previous,
+      );
     const start = await where(null);
     await page.keyboard.press(config.movement.walk.key);
     await page.keyboard.down('KeyW');
     await page.keyboard.down('Space');
-    await page.waitForFunction(() => (window.__PLAYER_FRAMES__ = (window.__PLAYER_FRAMES__ ?? 0) + 1) % 10 === 0, null, { polling: 'raf' });
+    const walking = await page.evaluate(() => window.__FRAMES__);
+    await untilDone(page, (frames) => window.__FRAMES__ >= frames, walking + 10);
     await page.keyboard.up('Space');
     await page.keyboard.up('KeyW');
     const walked = await where(start);
@@ -864,6 +911,39 @@ async function checkPlayerMode(context, fileUrl, query, view) {
   }
   await page.close();
   return { problems, consoleWarnings, ms: Date.now() - started };
+}
+
+// Counts the page's animation frames into window.__FRAMES__ from its start:
+// the frames that drive the game loop.
+function countFrames(page) {
+  return page.addInitScript(() => {
+    window.__FRAMES__ = 0;
+    const tick = () => {
+      window.__FRAMES__++;
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
+}
+
+// Resolves to what done(arg) returns in the page once it is truthy (it must
+// be serializable). Fails only if the page draws no frame for STALL_MS
+// (countFrames), or closes.
+async function untilDone(page, done, arg) {
+  let frames = -1;
+  let since = Date.now();
+  for (;;) {
+    const value = await page.evaluate(done, arg);
+    if (value) return value;
+    const now = await page.evaluate(() => window.__FRAMES__);
+    if (now !== frames) {
+      frames = now;
+      since = Date.now();
+    } else if (Date.now() - since > STALL_MS) {
+      throw new Error(`no frame drawn for ${STALL_MS / 1000} s`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
 }
 
 // Pointer lock that never reaches the browser: requestPointerLock() makes the
@@ -891,14 +971,14 @@ async function checkBenchmark(context, fileUrl, query, outDir) {
   const page = await context.newPage();
   await page.setViewportSize(PLAYER_MODE.viewport);
   const { problems, consoleWarnings } = watchPage(page, fileUrl);
+  await countFrames(page);
   const params = new URLSearchParams({ ...query, bench: '1', benchSeconds: String(BENCH_SECONDS) });
   params.delete('capture');
   const started = Date.now();
   let detail = 'did not finish';
   try {
     await page.goto(`${fileUrl}?${params}`);
-    const handle = await page.waitForFunction(() => window.__BENCH__?.done && window.__BENCH__, null, { timeout: READY_TIMEOUT_MS, polling: 100 });
-    const { summary, results } = await handle.jsonValue();
+    const { summary, results } = await untilDone(page, () => window.__BENCH__?.done && window.__BENCH__);
     writeFileSync(join(outDir, 'benchmark.txt'), `${summary}\n`);
     problems.push(...benchmarkProblems(summary, results, allViews.map((v) => v.name)));
     if (await page.evaluate(() => document.getElementById('start').checkVisibility())) {

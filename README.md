@@ -3,8 +3,8 @@
 A first-person walk around a procedurally generated tropical island. It runs in the browser from a single
 HTML file: no install, no downloads at runtime, and it works offline.
 
-> Early days: the sky, the light and the island's shape are in; the water, the beach's surfaces and the
-> plants are still to come.
+> Early days: the sky, the light, the island's shape and its ground (sand, rock and boulders, the green
+> inland) are in; the water and the plants are still to come.
 
 ## Play
 
@@ -28,7 +28,7 @@ URL parameters, such as `?view=overview&time=17.5`, jump to a named viewpoint or
 an hour of daylight (6 to 18) or one of `sunrise`, `midday`, `golden-hour` and `sunset`.
 
 **Benchmark:** add `?bench=1` to the address (for example
-https://bstummer.github.io/tropical-island/?bench=1). It shows each viewpoint in turn for about 30 seconds
+https://bstummer.github.io/tropical-island/?bench=1). It shows each viewpoint in turn for about 50 seconds
 in all, then a summary of frame times and the GPU, browser and resolution it ran on. Copy it into an issue or
 a development session.
 

@@ -1,7 +1,7 @@
 // Rock prototypes (world/rock-shapes.js), over seeds 1 to 20: each closed,
 // convex and facing out, flat-shaded, in its resting pose within its bounds
-// and vertex budget, its lower points on its surface; blocks and five- or
-// six-sided columns, no two alike, all chipped.
+// and vertex budget; blocks and five- or six-sided columns, no two alike, all
+// chipped.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { config } from '../src/config.js';
@@ -60,7 +60,7 @@ test('the same seed makes the same shapes, byte for byte', () => {
   a.forEach((shape, i) => {
     assert.equal(shape.kind, b[i].kind);
     assert.equal(shape.height, b[i].height);
-    for (const name of ['positions', 'normals', 'index', 'lower']) {
+    for (const name of ['positions', 'normals', 'index']) {
       assert.ok(Buffer.from(shape[name].buffer).equals(Buffer.from(b[i][name].buffer)), `${shape.kind} ${i}: ${name} differ`);
     }
   });
@@ -121,27 +121,6 @@ test('each lies within its bounds, from y = 0 to its height, half-width 1, withi
     assert.ok(Math.abs(Math.min(...ys)) < TOLERANCE, `${name}: lowest point at ${Math.min(...ys)}`);
     assert.ok(Math.abs(Math.max(...ys) - height) < TOLERANCE, `${name}: highest point ${Math.max(...ys)}, height ${height}`);
     assert.ok(Math.abs(Math.max(...reach) - 1) < TOLERANCE, `${name}: reaches ${Math.max(...reach)} from the y axis`);
-  }
-});
-
-test('the lower points lie on the surface, in its lower part, and ring it closely', () => {
-  for (const [name, shape] of everyShape()) {
-    const { lower, height } = shape;
-    const level = settings.lower.height * height;
-    const planes = triangles(shape).map(({ corners, stored }) => [stored[0], dot(stored[0], corners[0])]);
-    const points = Array.from({ length: lower.length / 3 }, (_, i) => at(lower, i));
-    assert.ok(points.length >= 3, `${name}: ${points.length} lower points`);
-    for (const p of points) {
-      const out = planes.map(([n, d]) => dot(n, p) - d);
-      assert.ok(Math.max(...out) < TOLERANCE, `${name}: a lower point ${Math.max(...out)} outside it`);
-      assert.ok(Math.max(...out) > -TOLERANCE, `${name}: a lower point ${-Math.max(...out)} inside it, not on its surface`);
-      assert.ok(p[1] < level + TOLERANCE, `${name}: a lower point at ${p[1]}, above ${level}`);
-    }
-    // The ring at the level goes all the way round, its points close together.
-    const ring = points.filter((p) => Math.abs(p[1] - level) < TOLERANCE);
-    const gaps = ring.map((p, k) => length(sub(ring[(k + 1) % ring.length], p)));
-    assert.ok(ring.length >= 6, `${name}: a ring of ${ring.length} points`);
-    assert.ok(Math.max(...gaps) < settings.lower.spacing + TOLERANCE, `${name}: ring points ${Math.max(...gaps)} apart`);
   }
 });
 

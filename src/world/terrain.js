@@ -11,7 +11,7 @@
 // It shares the grids with every scene material through ctx.frame.uniforms
 // (chunks/terrain.glsl: the water reads its depth from them), and puts
 // ctx.terrain on the context: { island, heightAt(x, z), heightmap, ready, mesh,
-// meshHeightAtCove, surfaces }.
+// meshHeightAtCove, surfaces, greenAt(x, z) }.
 // heightAt is the ground's height at its finest: the mesh matches it within
 // about 100 m of the camera, where you walk; farther out the mesh's coarser
 // levels stray from it, by centimetres at a few hundred metres and metres far
@@ -21,7 +21,9 @@
 // (chunks/terrain-mesh.glsl), for what stands on it far away, and
 // meshHeightAtCove its JS twin; surfaces: the uniforms of the ground's
 // surfaces (albedos, chunks/sand.glsl, rock.glsl, green.glsl), for whatever else is
-// made of them or lies on them.
+// made of them or lies on them; greenAt: whether the green inland is living
+// green or bare ground at world x, z, as drawn (world/green.js), once `ready`
+// resolved: 1 green, 0 bare.
 import * as THREE from 'three';
 import vertexShader from './terrain.vert';
 import fragmentShader from './terrain.frag';
@@ -29,9 +31,11 @@ import HeightmapWorker from './heightmap-worker.js?worker&inline';
 import { createIsland } from './island.js';
 import { createHeightmap, fillLush, fillRows, GROUND, layoutLevels } from './heightmap.js';
 import { albedoMap } from './albedo.js';
-import { createSandTextures, sandUniforms } from '../textures/sand.js';
-import { createRockTextures, rockUniforms } from '../textures/rock.js';
-import { createGreenTextures, greenUniforms } from '../textures/green.js';
+import { greenCover, greenPatches } from './green.js';
+import { createSurfaceTiles, tilesUniforms } from '../textures/surfaces.js';
+import { sandUniforms } from '../textures/sand.js';
+import { rockUniforms } from '../textures/rock.js';
+import { greenUniforms } from '../textures/green.js';
 import { createLod, createMeshHeight, lodRanges } from './lod.js';
 
 const built = new Map(); // seed -> Promise of the heightmap's grids
@@ -41,11 +45,14 @@ const TERRAIN_LEVELS = 4; // chunks/terrain.glsl's (tests/heightmap.test.js keep
 // where a pixel has none of it, but SwiftShader runs every line of a shader at
 // every pixel, branches or not. Sand, rock and green show their detail near
 // the camera only: SAND is sand with it, ROCK rock without, DETAIL adds
-// rock's, GREEN the green's (any shader has the green without it).
+// rock's, GREEN the green's (any shader has the green without it); WET is
+// sand without its detail, but with the sheen of wet sand, where a node far
+// away reaches down to sand the sea wets.
 const SAND = 1;
 const ROCK = 2;
 const DETAIL = 4;
 const GREEN = 8;
+const WET = 16;
 
 export function create(ctx) {
   const { scene, camera, frame, config, quality, params } = ctx;
@@ -77,20 +84,27 @@ export function create(ctx) {
   uniforms.uTerrainSamples.value = settings.samples;
   uniforms.uTerrainBlend.value = settings.blend;
 
+  // The surfaces show their detail as far as the preset has them (groundDetail).
+  const ranged = (surface) => ({ ...surface, range: surface.range * quality.groundDetail });
+  const sandSettings = ranged(settings.sand);
+  const rockSettings = ranged(settings.rock);
+  const greenSettings = ranged(settings.green);
   const { albedo } = settings;
   const looks = { albedo, green: settings.green, wetness: settings.sand.wetness, wetHeight: config.world.island.zones.wetSand, sea: config.sky.atmosphere.groundAlbedo };
   const linear = (rgb) => new THREE.Vector3(...rgb);
-  const sand = createSandTextures(ctx.renderer, ctx.rng('terrain/sand'), settings.sand, quality.sandTexture);
-  const rockTextures = createRockTextures(ctx.renderer, ctx.rng('terrain/rock'), settings.rock, quality.rockTexture);
-  const greenTextures = createGreenTextures(ctx.renderer, ctx.rng('terrain/green'), settings.green, quality.greenTexture);
+  const tiles = createSurfaceTiles(ctx.renderer, ctx.rng, 'terrain', settings, quality.surfaceTexture);
+  const patchRng = ctx.rng('terrain/green/patches');
+  const patchSeeds = [patchRng.int(0, 0xffffff), patchRng.int(0, 0xffffff)];
+  const patches = greenPatches(settings.green, patchSeeds);
   // The ground's surfaces, shared with what is made of them or lies on them.
   const surfaces = {
     uDrySand: { value: linear(albedo.drySand) },
     uWetSand: { value: linear(albedo.wetSand) },
     uRock: { value: linear(albedo.rock) },
-    ...sandUniforms(sand, settings.sand, looks.wetHeight, config.sky.sun.sunsetYaw),
-    ...rockUniforms(rockTextures, settings.rock),
-    ...greenUniforms(greenTextures, albedo, settings.green),
+    ...tilesUniforms(tiles),
+    ...sandUniforms(tiles.sand, sandSettings, looks.wetHeight, config.sky.sun.sunsetYaw),
+    ...rockUniforms(tiles.rock, rockSettings),
+    ...greenUniforms(tiles.green, albedo, greenSettings, patchSeeds),
   };
   const materialUniforms = { ...uniforms, ...drawn.uniforms, ...surfaces };
 
@@ -107,9 +121,11 @@ export function create(ctx) {
   if (settings.green.range > settings.sand.range) throw new Error('config.world.terrain: the green shows its detail further out than sand');
   const variants = new Map();
   const near = [0, SAND, ROCK | DETAIL, SAND | ROCK | DETAIL];
-  for (const surfaces of [...near, ROCK, ...near.map((s) => s | GREEN)]) {
+  // Beyond sand's detail: rock with or without its detail, either with wet sand.
+  const far = [ROCK, WET, ROCK | WET, ROCK | DETAIL | WET];
+  for (const surfaces of [...near, ...far, ...near.map((s) => s | GREEN)]) {
     const material = new THREE.ShaderMaterial({
-      name: ['terrain', surfaces & SAND && 'sand', surfaces & ROCK && 'rock', surfaces & DETAIL && 'detail', surfaces & GREEN && 'green'].filter(Boolean).join('-'),
+      name: ['terrain', surfaces & SAND && 'sand', surfaces & ROCK && 'rock', surfaces & DETAIL && 'detail', surfaces & GREEN && 'green', surfaces & WET && 'wet'].filter(Boolean).join('-'),
       vertexShader,
       fragmentShader,
       uniforms: materialUniforms,
@@ -119,6 +135,7 @@ export function create(ctx) {
         ...(surfaces & ROCK ? { TERRAIN_ROCK: 1 } : {}),
         ...(surfaces & DETAIL ? { ROCK_DETAIL: 1 } : {}),
         ...(surfaces & GREEN ? { GREEN_DETAIL: 1 } : {}),
+        ...(surfaces & WET ? { TERRAIN_WET: 1 } : {}),
       },
     });
     const meshes = [settings.grid, settings.grid / 2].map((quads) => {
@@ -141,6 +158,7 @@ export function create(ctx) {
   let failed = null;
   let disposed = false;
   const textures = [];
+  const groundScratch = {};
 
   const ready = heightmapFor(island, seed, settings).then(
     (grids) => {
@@ -148,7 +166,7 @@ export function create(ctx) {
       heightmap = grids;
       upload(grids);
       const tree = { origin: coarsest.origin, levels: lodLevels, leaf: settings.leaf, grid: settings.grid };
-      lod = createLod(tree, nodeBounds(grids));
+      lod = createLod(tree, nodeBounds(grids, settings.sand.wetness.dry));
       meshHeight = createMeshHeight(tree, { ranges, morphs }, grids.heightAtCove, levels.length);
       for (const mesh of allMeshes) mesh.visible = true;
     },
@@ -171,6 +189,10 @@ export function create(ctx) {
     // cam = [a, y, o] (lod.js createMeshHeight), once `ready` resolved.
     meshHeightAtCove: (a, o, cam) => meshHeight(a, o, cam),
     surfaces,
+    greenAt(x, z) {
+      const ground = heightmap.groundAt(x, z, groundScratch);
+      return patches.rank(x, z) < greenCover(ground.band, ground.lush, settings.green) ? 1 : 0;
+    },
   };
 
   function upload(grids) {
@@ -228,15 +250,15 @@ export function create(ctx) {
       return frustum.intersectsBox(box);
     }, selected);
     for (const mesh of allMeshes) mesh.geometry.instanceCount = 0;
-    const sandRange2 = settings.sand.range ** 2;
-    const rockRange2 = settings.rock.range ** 2;
-    const greenRange2 = settings.green.range ** 2;
+    const sandRange2 = sandSettings.range ** 2;
+    const rockRange2 = rockSettings.range ** 2;
+    const greenRange2 = greenSettings.range ** 2;
     for (const node of selected) {
       const size = node.spacing * (node.quarter ? settings.grid / 2 : settings.grid);
       const da = Math.max(node.a - ca, 0, ca - node.a - size);
       const dO = Math.max(node.o - co, 0, co - node.o - size);
       const near2 = da * da + dO * dO;
-      const sandy = node.surfaces & SAND && near2 < sandRange2 ? SAND : 0;
+      const sandy = node.surfaces & SAND ? (near2 < sandRange2 ? SAND : node.surfaces & WET) : 0;
       const rocky = node.surfaces & ROCK ? (near2 < rockRange2 ? ROCK | DETAIL : ROCK) : 0;
       const greeny = node.surfaces & GREEN && near2 < greenRange2 ? GREEN : 0;
       const variant = variants.get(sandy | rocky | greeny);
@@ -266,9 +288,7 @@ export function create(ctx) {
         mesh.geometry.dispose();
       }
       for (const { material } of variants.values()) material.dispose();
-      sand.dispose();
-      rockTextures.dispose();
-      greenTextures.dispose();
+      tiles.dispose();
       for (const texture of textures) texture.dispose();
       uniforms.uTerrainHeight.value = null;
       uniforms.uTerrainInfo.value = null;
@@ -310,8 +330,10 @@ function gridGeometry(quads, nodes, mirrored) {
 
 // The lowest and highest ground over a square of the quadtree, from every
 // grid that covers it, with a little room for the blends between them; and
-// the surfaces on it.
-function nodeBounds(heightmap) {
+// the surfaces on it: wet sand where sand lies below `dry` m above the sea, the
+// wet sand's reach (chunks/wet.glsl), with room for how far the waves reach
+// further and for the samples' spacing.
+function nodeBounds(heightmap, dry) {
   const { levels, samples } = heightmap;
   return (a0, o0, size) => {
     let min = Infinity;
@@ -329,7 +351,7 @@ function nodeBounds(heightmap) {
           if (h < min) min = h;
           if (h > max) max = h;
           const n = GROUND * (j * samples + i);
-          if (ground[n] > 0) surfaces |= SAND;
+          if (ground[n] > 0) surfaces |= h < dry + 0.5 && h > -1 ? SAND | WET : SAND;
           if (ground[n + 1] > 0) surfaces |= ROCK;
           if (ground[n] + ground[n + 1] < 0.85 * 255) surfaces |= GREEN; // a share worth its detail
         }

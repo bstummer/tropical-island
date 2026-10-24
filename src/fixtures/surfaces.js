@@ -9,7 +9,7 @@
 // config.movement.walk.eye below the camera. With the sky (main.js adds it).
 //
 // For tools/screenshot.js it also checks that the sand's, the rock's and the
-// green's tiles repeat (textures/sand.js, rock.js, green.js): made again shifted by a whole tile they
+// green's tiles repeat (textures/surfaces.js): made again shifted by a whole tile they
 // must be the same, and shifted by half a tile, a deliberate mistake, they
 // must not. The share of texels that changed by more than
 // config.capture.surfaces.levels, per tile, goes to window.__SURFACES__ (a
@@ -18,9 +18,10 @@
 import * as THREE from 'three';
 import vertexShader from './light.vert';
 import fragmentShader from './surfaces.frag';
-import { createSandTextures, sandUniforms } from '../textures/sand.js';
-import { createRockTextures, rockUniforms } from '../textures/rock.js';
-import { createGreenTextures, greenUniforms } from '../textures/green.js';
+import { createSurfaceTiles, LAYERS, tilesUniforms } from '../textures/surfaces.js';
+import { sandUniforms } from '../textures/sand.js';
+import { rockUniforms } from '../textures/rock.js';
+import { greenUniforms } from '../textures/green.js';
 
 const STRIPS = [0, 0.35, 0.6, 1]; // wetness: dry, damp, wet, a film
 const GREENS = [[0.3, 0.1, 0.8], [1.5, 0.3, 0.2], [3, 0.9, 0]]; // band, lush, sandy: the scrub behind a beach, the open palm belt, the lush jungle
@@ -33,9 +34,7 @@ export function create(ctx) {
   const { scene, camera, frame, config, renderer } = ctx;
   const { terrain } = config.world;
   const sandSettings = terrain.sand;
-  const textures = createSandTextures(renderer, ctx.rng('fixtures/surfaces'), sandSettings, ctx.quality.sandTexture);
-  const rockTextures = createRockTextures(renderer, ctx.rng('fixtures/surfaces/rock'), terrain.rock, ctx.quality.rockTexture);
-  const greenTextures = createGreenTextures(renderer, ctx.rng('fixtures/surfaces/green'), terrain.green, ctx.quality.greenTexture);
+  const tiles = createSurfaceTiles(renderer, ctx.rng, 'fixtures/surfaces', terrain, ctx.quality.surfaceTexture);
   window.__SURFACES__ = tileCheck(ctx, terrain);
 
   const yaw = new THREE.Euler().setFromQuaternion(camera.quaternion, 'YXZ').y;
@@ -43,9 +42,10 @@ export function create(ctx) {
   const right = new THREE.Vector2(-forward.y, forward.x);
   const shared = {
     ...frame.uniforms,
-    ...sandUniforms(textures, sandSettings, config.world.island.zones.wetSand, config.sky.sun.sunsetYaw),
-    ...rockUniforms(rockTextures, terrain.rock),
-    ...greenUniforms(greenTextures, terrain.albedo, terrain.green),
+    ...tilesUniforms(tiles),
+    ...sandUniforms(tiles.sand, sandSettings, config.world.island.zones.wetSand, config.sky.sun.sunsetYaw),
+    ...rockUniforms(tiles.rock, terrain.rock),
+    ...greenUniforms(tiles.green, terrain.albedo, terrain.green, [1, 2]),
     uDrySand: { value: new THREE.Vector3(...terrain.albedo.drySand) },
     uWetSand: { value: new THREE.Vector3(...terrain.albedo.wetSand) },
     uRock: { value: new THREE.Vector3(...terrain.albedo.rock) },
@@ -131,9 +131,7 @@ export function create(ctx) {
       scene.remove(group);
       for (const g of geometries) g.dispose();
       for (const m of materials) m.dispose();
-      textures.dispose();
-      rockTextures.dispose();
-      greenTextures.dispose();
+      tiles.dispose();
     },
   };
 }
@@ -143,13 +141,9 @@ export function create(ctx) {
 // per tile.
 function tileCheck(ctx, settings) {
   const make = (shift) => {
-    const t = createSandTextures(ctx.renderer, ctx.rng('fixtures/surfaces/tiles'), settings.sand, CHECK_SIZE, shift);
-    const r = createRockTextures(ctx.renderer, ctx.rng('fixtures/surfaces/tiles/rock'), settings.rock, CHECK_SIZE, shift);
-    const g = createGreenTextures(ctx.renderer, ctx.rng('fixtures/surfaces/tiles/green'), settings.green, CHECK_SIZE, shift);
-    const pixels = { grain: t.pixels('grain'), ripples: t.pixels('ripples'), rock: r.pixels(), grass: g.pixels('grass'), litter: g.pixels('litter') };
+    const t = createSurfaceTiles(ctx.renderer, ctx.rng, 'fixtures/surfaces/tiles', settings, CHECK_SIZE, shift);
+    const pixels = Object.fromEntries(Object.keys(LAYERS).map((name) => [name, t.pixels(name)]));
     t.dispose();
-    r.dispose();
-    g.dispose();
     return pixels;
   };
   const base = make([0, 0]);

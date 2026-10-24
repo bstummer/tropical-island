@@ -34,6 +34,8 @@ import * as mathsFixture from './fixtures/maths.js';
 import * as hazeFixture from './fixtures/haze.js';
 import * as terrainFixture from './fixtures/terrain.js';
 import * as surfacesFixture from './fixtures/surfaces.js';
+import * as patchesFixture from './fixtures/patches.js';
+import * as rocksFixture from './fixtures/rocks.js';
 
 // Updated in this order every frame. Each module exports create(ctx) -> { update(dt, t), dispose(), ready? }
 // where the optional `ready` promise is awaited before a capture starts.
@@ -58,6 +60,8 @@ const FIXTURES = {
   haze: [sky, hazeFixture],
   terrain: [sky, terrain, terrainFixture],
   surfaces: [sky, surfacesFixture],
+  patches: [patchesFixture],
+  rocks: [sky, terrain, rocks, rocksFixture],
 };
 
 let captureMode = false;
@@ -115,9 +119,16 @@ function boot() {
   // Everything that depends on the quality preset: the frame and the world.
   // Changing the preset tears it all down and builds it again.
   let world = [];
+  let ready = null;
   function build() {
     ctx.frame = createFrame(ctx, display);
     world = worldSystems(params.fixture).map((system) => system.create(ctx));
+    // In the game, every shader compiles once the world is in, rather than
+    // the first time something draws with it, mid-walk. Capture mode
+    // compiles and checks them itself (core/capture.js).
+    const { frame } = ctx;
+    ready = Promise.all(world.map((system) => system.ready)).then(() => params.capture || frame.compileAsync());
+    ready.catch(() => {}); // a system that fails says so itself
   }
   function teardown() {
     for (const system of world.reverse()) system.dispose();
@@ -141,7 +152,7 @@ function boot() {
   // Tools around the world: they stay through a quality change.
   const tools = [];
   if (!params.capture) {
-    if (params.bench) tools.push(benchmark.create(ctx, Promise.all(world.map((system) => system.ready))));
+    if (params.bench) tools.push(benchmark.create(ctx, ready));
     else tools.push(input.create(ctx));
     tools.push(readout.create(ctx));
     if (import.meta.env.DEV) tools.push(timeControl.create(ctx));

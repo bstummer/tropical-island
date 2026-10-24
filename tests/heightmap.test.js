@@ -31,8 +31,18 @@ const small = {
   levels: [8, 16, 32, 64].map((texel) => ({ texel, centre: [0, -300] })),
 };
 
+// The game's grids at a quarter of their resolution: the same levels over the
+// same ground, so the coarsest covers the whole island, each four times as
+// coarse. Quick to build for every seed. Their blends are a sample short of a
+// quarter, so each level still lies inside the next one's full share.
+const quarter = {
+  samples: settings.samples / 4,
+  blend: settings.blend / 4 - 1,
+  levels: settings.levels.map(({ texel, centre }) => ({ texel: 4 * texel, centre })),
+};
+
 test("each level lies inside the next coarser one's full share", () => {
-  for (const layout of [settings, small]) {
+  for (const layout of [settings, small, quarter]) {
     const levels = layoutLevels(layout);
     for (let k = 0; k < levels.length - 1; k++) {
       const full = box(levels[k + 1], layout.samples, layout.blend + 1);
@@ -192,17 +202,32 @@ test('rows filled in parts, as the workers fill them, are the rows filled whole'
   }
 });
 
-test("every sample's ground is the island's there, given the grid's slope", () => {
+// The steepest the drawn ground gets in the cells round sample i, j (rise
+// over run): bilinear, a cell is steepest at one of its corners, so here at
+// every corner of every cell.
+function steepestAround(heights, samples, texel, i, j) {
+  let steepest = 0;
+  for (const ci of [i - 1, i]) {
+    for (const cj of [j - 1, j]) {
+      if (ci < 0 || cj < 0 || ci >= samples - 1 || cj >= samples - 1) continue;
+      const h = (x, y) => heights[(cj + y) * samples + ci + x];
+      for (const [x, y] of [[0, 0], [1, 0], [0, 1], [1, 1]]) steepest = Math.max(steepest, Math.hypot(h(1, y) - h(0, y), h(x, 1) - h(x, 0)) / texel);
+    }
+  }
+  return steepest;
+}
+
+test("every sample's ground is the island's there, given the steepest the drawn ground gets round it", () => {
   for (const seed of SEEDS.slice(0, 4)) {
     const island = createIsland(createRandom(seed));
     const heightmap = buildHeightmap(island, small);
     const r = createRandom(seed)('test/ground');
     const out = {};
-    for (const { origin, texel, info, ground } of heightmap.levels) {
+    for (const { origin, texel, heights, info, ground } of heightmap.levels) {
       for (let k = 0; k < 300; k++) {
         const n = r.int(0, small.samples * small.samples - 1);
         const [i, j] = [n % small.samples, Math.floor(n / small.samples)];
-        const g = island.groundOf(island.evaluate(origin[0] + i * texel, origin[1] + j * texel, out), Math.hypot(info[4 * n], info[4 * n + 1]));
+        const g = island.groundOf(island.evaluate(origin[0] + i * texel, origin[1] + j * texel, out), steepestAround(heights, small.samples, texel, i, j));
         const rock = Math.round(g.rock * 255);
         assert.deepEqual(
           [ground[GROUND * n], ground[GROUND * n + 1], ground[GROUND * n + 3], info[4 * n + 2], info[4 * n + 3]],
@@ -211,6 +236,86 @@ test("every sample's ground is the island's there, given the grid's slope", () =
         );
       }
     }
+  }
+});
+
+const quarterMaps = new Map(); // seed -> heightmap, built once for the tests below
+function quarterMap(seed) {
+  if (!quarterMaps.has(seed)) quarterMaps.set(seed, buildHeightmap(createIsland(createRandom(seed)), quarter));
+  return quarterMaps.get(seed);
+}
+
+// Calls visit(a, o, ground, k) at a seeded point in every cell of every level
+// of a quarterMap, wherever that level has its say (none where a finer one has
+// all of it), with the ground drawn there.
+function everyCell(heightmap, r, visit) {
+  const { samples, blend } = quarter;
+  const last = samples - 1;
+  // How far inside a level's box a, o lies, in samples (0 at the edge of its say).
+  const inside = ({ origin, texel }, a, o) => {
+    const [fx, fy] = [(a - origin[0]) / texel, (o - origin[1]) / texel];
+    return Math.min(fx, fy, last - fx, last - fy) - 1;
+  };
+  const g = {};
+  const { levels } = heightmap;
+  levels.forEach((level, k) => {
+    const { origin, texel } = level;
+    for (let j = 0; j < last; j++) {
+      for (let i = 0; i < last; i++) {
+        const [a, o] = [origin[0] + (i + r.next()) * texel, origin[1] + (j + r.next()) * texel];
+        if (k < levels.length - 1 && inside(level, a, o) <= 0) continue;
+        if (levels.slice(0, k).some((finer) => inside(finer, a, o) >= blend)) continue;
+        visit(a, o, heightmap.groundAtCove(a, o, g), k);
+      }
+    }
+  });
+}
+
+const sandMax = Math.tan((config.world.island.zones.sandSlope[1] * Math.PI) / 180);
+const degrees = (slope) => (Math.atan(slope) * 180) / Math.PI;
+
+test('nowhere on the drawn island, at any level, does sand lie steeper than sand holds: not on cliffs far out, nor on the reef', () => {
+  for (const seed of SEEDS) {
+    const heightmap = quarterMap(seed);
+    const { levels } = heightmap;
+    // Per level, on land and under the sea: how many points of sand, and the steepest.
+    const found = levels.map(() => [0, 1].map(() => ({ count: 0, steepest: 0, at: '' })));
+    everyCell(heightmap, createRandom(seed)('test/island-sand'), (a, o, g, k) => {
+      // Drawn as sand where most of it is sand, as zoneFrom has it; under the sea too.
+      if (!(g.sand > g.rock && g.sand >= 1 - g.sand - g.rock)) return;
+      const slope = drawnSlope(heightmap, a, o, 1e-3 * levels[k].texel);
+      const f = found[k][heightmap.heightAtCove(a, o) < 0 ? 1 : 0];
+      f.count++;
+      if (slope > f.steepest) Object.assign(f, { steepest: slope, at: `${a.toFixed(1)}, ${o.toFixed(1)}` });
+    });
+    const steep = [];
+    found.forEach((both, k) =>
+      both.forEach(({ count, steepest, at }, sea) => {
+        const where = `the ${levels[k].texel} m level ${sea ? 'under the sea' : 'on land'}`;
+        if (steepest > sandMax) steep.push(`${where}, ${degrees(steepest).toFixed(1)}° at ${at}`);
+        // Every level has sand to judge (little on land far out, where the coast is coarse).
+        assert.ok(count > (sea ? 500 : 5), `seed ${seed}: only ${count} points of sand on ${where}`);
+      }),
+    );
+    assert.deepEqual(steep, [], `seed ${seed}: sand steeper than sand holds on ${steep.join('; ')}`);
+  }
+});
+
+test('nowhere on the drawn island, at any level, is the soil sandy steeper than sand holds: not in the hollows of a cliff behind a beach', () => {
+  for (const seed of SEEDS) {
+    const heightmap = quarterMap(seed);
+    const { levels } = heightmap;
+    let count = 0;
+    const steep = [];
+    everyCell(heightmap, createRandom(seed)('test/island-sandy'), (a, o, g, k) => {
+      // Where some of the ground is green, its bare ground more sand than soil.
+      if (!(g.sandy > 0.5 && 1 - g.sand - g.rock > 1e-3) || heightmap.heightAtCove(a, o) < 0) return;
+      count++;
+      const slope = drawnSlope(heightmap, a, o, 1e-3 * levels[k].texel);
+      if (slope > sandMax) steep.push(`the ${levels[k].texel} m level, ${degrees(slope).toFixed(1)}° at ${a.toFixed(1)}, ${o.toFixed(1)}`);
+    });
+    assert.ok(count > 100, `seed ${seed}: only ${count} points of sandy soil`);
+    assert.deepEqual(steep, [], `seed ${seed}: sandy soil steeper than sand holds on ${steep.slice(0, 5).join('; ')}${steep.length > 5 ? ` and ${steep.length - 5} more` : ''}`);
   }
 });
 
@@ -259,8 +364,7 @@ function drawnSlope(heightmap, a, o, step = 0.25) {
   return Math.hypot(h(step, 0) - h(-step, 0), h(0, step) - h(0, -step)) / (2 * step);
 }
 
-test('on the drawn ground the zones keep their order inland, and sand lies no steeper than sand holds', () => {
-  const sandMax = Math.tan((config.world.island.zones.sandSlope[1] * Math.PI) / 180);
+test('on the drawn ground the zones keep their order inland, and sand and sandy soil lie no steeper than sand holds', () => {
   for (const seed of SEEDS) {
     const { island, heightmap } = coveMap(seed);
     // From the waterline, walk up the beach and on inland on the 1 and 2 m
@@ -293,18 +397,24 @@ test('on the drawn ground the zones keep their order inland, and sand lies no st
       }
     }
     assert.ok(walks > 30, `seed ${seed}: only ${walks} walks inland`);
-    // Sand where the drawn ground is too steep for it would slide.
+    // Sand where the drawn ground is too steep for it would slide, and so
+    // would the sand in sandy soil: in the hollows of the headland's cliff.
     const r = createRandom(seed)('test/drawn-sand');
+    const g = {};
     let sand = 0;
+    let soil = 0;
     for (let k = 0; k < 20_000; k++) {
       const [a, o] = [r.range(-170, 280), r.range(-170, 170)];
       const zone = heightmap.zoneAtCove(a, o);
-      if (zone !== 'wet-sand' && zone !== 'dry-sand') continue;
-      sand++;
+      heightmap.groundAtCove(a, o, g);
+      const sandy = g.sandy > 0.5 && 1 - g.sand - g.rock > 1e-3 && heightmap.heightAtCove(a, o) >= 0; // green on bare ground more sand than soil
+      if (zone !== 'wet-sand' && zone !== 'dry-sand' && !sandy) continue;
+      if (sandy) soil++;
+      else sand++;
       const slope = drawnSlope(heightmap, a, o);
-      assert.ok(slope <= sandMax, `seed ${seed}: ${zone} drawn on a slope of ${((Math.atan(slope) * 180) / Math.PI).toFixed(1)}° at ${a.toFixed(1)}, ${o.toFixed(1)}`);
+      assert.ok(slope <= sandMax, `seed ${seed}: ${sandy ? 'sandy soil' : zone} drawn on a slope of ${degrees(slope).toFixed(1)}° at ${a.toFixed(1)}, ${o.toFixed(1)}`);
     }
-    assert.ok(sand > 1000, `seed ${seed}: only ${sand} points of drawn sand`);
+    assert.ok(sand > 1000 && soil > 500, `seed ${seed}: only ${sand} points of drawn sand and ${soil} of sandy soil`);
   }
 });
 

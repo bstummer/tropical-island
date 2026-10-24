@@ -8,6 +8,7 @@
 attribute vec4 aPlace; // world position of its base; its texel of the offsets, counted row by row
 attribute vec4 aTurn; // rotation, a quaternion
 attribute vec4 aScale; // and how tall it is, m
+attribute float aTop; // how far its highest point stands above its base, m
 
 uniform highp sampler2D uRockOffsets;
 
@@ -27,6 +28,13 @@ void main() {
   float offset = 1e9;
   for (int j = 0; j < 3; j++) {
     for (int i = 0; i < 3; i++) offset = min(offset, texelFetch(uRockOffsets, block + ivec2(i, j), 0).r);
+  }
+  // TEMPORARY, with world/placeholder.js: its opaque water hides a rock wholly
+  // under it, so such a rock isn't drawn: all its corners lie outside the
+  // view. Stage 6's water shows the seabed: remove this then.
+  if (aPlace.y + aTop + offset < -0.1) {
+    gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+    return;
   }
   vec3 world = aPlace.xyz + turn(aTurn, position * aScale.xyz);
   world.y += offset - planetDrop(aPlace.xz);

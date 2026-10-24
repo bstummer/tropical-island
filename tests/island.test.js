@@ -325,16 +325,21 @@ test('the ground is shares of sand and rock that never make more than the whole,
   }
 });
 
-test('the soil is sandy behind a beach, less so further inland, and not behind a rocky shore', () => {
+test('the soil is sandy behind a beach, less so further inland, not behind a rocky shore, and no steeper than sand holds', () => {
   const island = make(1);
   const r = createRandom(1)('test/sandy');
+  const [, sandMax] = settings.zones.sandSlope.map((deg) => Math.tan((deg * Math.PI) / 180));
   for (let n = 0; n < 20_000; n++) {
     const s = { coast: r.range(-20, 200), beach: r.range(0, 1), reef: -100, a: r.range(-1500, 1500), o: r.range(-1500, 1500) };
-    const g = island.groundOf(s, r.range(0, 0.5));
+    const slope = r.range(0, 1.5);
+    const g = island.groundOf(s, slope);
     assert.ok(g.sandy >= 0 && g.sandy <= 1, `${g.sandy}`);
     assert.ok(island.groundOf({ ...s, coast: s.coast + 5 }, 0).sandy <= island.groundOf(s, 0).sandy, `${s.coast.toFixed(1)} m inland`);
     assert.equal(island.groundOf({ ...s, beach: 0 }, 0).sandy, 0, 'behind a rocky shore');
     if (s.coast > settings.zones.shore + settings.zones.shoreSwing + settings.zones.sandy) assert.equal(g.sandy, 0, `${s.coast.toFixed(1)} m inland`);
+    // Its sand gives way on slopes as the beach's does.
+    assert.ok(island.groundOf(s, slope + 0.05).sandy <= g.sandy, `steeper than ${slope.toFixed(2)}`);
+    if (slope >= sandMax) assert.equal(g.sandy, 0, `a slope of ${((Math.atan(slope) * 180) / Math.PI).toFixed(0)}°`);
   }
   assert.ok(island.groundOf({ coast: settings.zones.shore - 5, beach: 1, reef: -100, a: 0, o: 0 }, 0).sandy > 0.9, 'right behind a beach');
 });

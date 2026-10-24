@@ -1,6 +1,9 @@
 // Seeded 2D gradient noise for the island's shape (world/island.js), and a
-// hash for things scattered one per cell of a grid. JS only: the GPU gets the
-// island as a heightmap and never evaluates this. Pure and Node-importable.
+// hash for things scattered one per cell of a grid. The island's noise is JS
+// only: the GPU gets the island as a heightmap. The hash's noise
+// (seededNoise) is chunks/noise.glsl seededNoiseD's twin, bit for bit in its
+// lattice, for what the GPU draws and placement has to know (world/green.js).
+// Pure and Node-importable.
 
 // Sixteen unit gradients, evenly around the circle.
 const GX = new Float64Array(16);
@@ -70,7 +73,33 @@ export function fbm(noise, x, y, octaves) {
 // murmur3's finaliser, so neighbouring cells and consecutive seeds (one per
 // property of a thing in a cell) come out independent.
 export function cellHash(i, j, seed) {
-  return (fmix(fmix(fmix(seed) ^ i) ^ j) >>> 0) / 4294967296;
+  return cellBits(i, j, seed) / 4294967296;
+}
+
+// The same as 32 bits, an unsigned integer.
+export function cellBits(i, j, seed) {
+  return fmix(fmix(fmix(seed) ^ i) ^ j) >>> 0;
+}
+
+// Gradient noise in about [-1, 1] whose lattice's gradients are cellBits of
+// each point and the seed, its halves in [-1, 1]: chunks/noise.glsl
+// seededNoiseD's value.
+export function seededNoise(x, y, seed) {
+  const i = Math.floor(x);
+  const j = Math.floor(y);
+  x -= i;
+  y -= j;
+  const dot = (di, dj) => {
+    const h = cellBits(i + di, j + dj, seed);
+    return ((h & 65535) / 32767.5 - 1) * (x - di) + ((h >>> 16) / 32767.5 - 1) * (y - dj);
+  };
+  const a = dot(0, 0);
+  const b = dot(1, 0);
+  const c = dot(0, 1);
+  const d = dot(1, 1);
+  const u = x * x * x * (x * (x * 6 - 15) + 10);
+  const v = y * y * y * (y * (y * 6 - 15) + 10);
+  return 1.4 * (a + u * (b - a) + v * (c - a) + u * v * (a - b - c + d));
 }
 
 // murmur3's 32-bit finaliser: a bijection that spreads every bit into every other.

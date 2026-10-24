@@ -6,6 +6,7 @@
 
 #include "chunks/scene-output.glsl"
 #include "chunks/lighting.glsl"
+#include "chunks/wet.glsl"
 #include "chunks/sand.glsl"
 #include "chunks/rock.glsl"
 #include "chunks/green.glsl"
@@ -27,7 +28,8 @@ void main() {
   vec3 dPdy = dFdy(vWorldPos);
   vec3 view = normalize(cameraPosition - vWorldPos);
 #ifdef SURFACE_ROCK
-  Rock r = rock(vWorldPos, uAboveSea + vWorldPos.y - uGround, normalize(vNormal), view, uRock, dPdx, dPdy);
+  float aboveSea = uAboveSea + vWorldPos.y - uGround;
+  Rock r = rock(vWorldPos, aboveSea, groundWet(vWorldPos.xz, aboveSea, fwidth(aboveSea)), normalize(vNormal), view, uRock, dPdx, dPdy);
   float kernel = specularKernel(r.normal);
   vec3 radiance = r.albedo / PI * (sunLight(vWorldPos, r.normal) + skyIrradiance(vWorldPos, r.normal));
   radiance += rockShine(r, vWorldPos, r.normal, view, kernel);
@@ -36,7 +38,7 @@ void main() {
   vec3 radiance = g.albedo / PI * (sunLight(vWorldPos, g.normal) + skyIrradiance(vWorldPos, g.normal));
 #else
   float aboveSea = uAboveSea + 0.1 * dot(vWorldPos.xz, uAcross);
-  Sand s = sand(vWorldPos, aboveSea, normalize(vNormal), uWetness, uDrySand, uWetSand, dPdx.xz, dPdy.xz);
+  Sand s = sand(vWorldPos, aboveSea, normalize(vNormal), wetAt(uWetness), uDrySand, uWetSand, dPdx.xz, dPdy.xz);
   float kernel = specularKernel(s.normal);
   vec3 radiance = sandDiffuse(s, s.normal, view) / PI * (sunLight(vWorldPos, s.normal) + skyIrradiance(vWorldPos, s.normal));
   radiance += sandShine(s, vWorldPos, s.normal, view, kernel);

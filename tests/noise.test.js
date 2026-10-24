@@ -1,10 +1,10 @@
-// The island's noise and cell hash (world/noise.js): properties a noise and a
+// The island's noise, the cell hash and its seeded noise (world/noise.js): properties a noise and a
 // hash must have, checked statistically on fixed seeds, with bounds loose
 // enough for chance (a 99.9% chi-square bound) and tight enough for a flaw.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRandom } from '../src/core/random.js';
-import { cellHash, createNoise, fbm } from '../src/world/noise.js';
+import { cellBits, cellHash, createNoise, fbm, seededNoise } from '../src/world/noise.js';
 
 const noise = createNoise(createRandom(1)('test/noise'));
 
@@ -91,4 +91,40 @@ test('the cell hash is even, and independent across neighbouring cells, swapped 
       assert.ok(chi2(counts) < bound999(99), `seed ${seed}: tied to ${name}, chi-square ${chi2(counts).toFixed(0)}`);
     }
   }
+});
+
+test('the seeded noise stays within about [-1, 1], averages 0, is zero on the lattice and smooth across it', () => {
+  let sum = 0;
+  let max = 0;
+  const points = spread(100_000, 300);
+  for (const [x, y] of points) {
+    const v = seededNoise(x - 150, y - 150, 7);
+    sum += v;
+    max = Math.max(max, Math.abs(v));
+  }
+  // Its gradients come from a square, up to 1.41 long: a little past 1 at the most.
+  assert.ok(max <= 1.2 && max > 0.6, `max |noise| ${max}`);
+  assert.ok(Math.abs(sum / points.length) < 0.01, `mean ${sum / points.length}`);
+  for (let i = -20; i <= 20; i += 3) for (let j = -20; j <= 20; j += 5) assert.ok(seededNoise(i, j, 7) === 0, `${seededNoise(i, j, 7)} at ${i}, ${j}`);
+  for (let k = 0; k < 500; k++) {
+    const x = (k % 41) - 20;
+    const y = ((k * 0.618) % 30) - 15;
+    assert.ok(Math.abs(seededNoise(x - 1e-7, y, 3) - seededNoise(x + 1e-7, y, 3)) < 1e-5, `a step at ${x}, ${y}`);
+  }
+});
+
+test('the seeded noise takes its lattice from the cell bits, and the seed picks the noise', () => {
+  for (let k = 0; k < 200; k++) {
+    const [i, j, seed] = [(k * 37) % 101 - 50, (k * 53) % 89 - 44, k];
+    assert.equal(cellHash(i, j, seed), cellBits(i, j, seed) / 4294967296);
+    assert.ok(cellBits(i, j, seed) >= 0 && cellBits(i, j, seed) < 2 ** 32 && Number.isInteger(cellBits(i, j, seed)));
+    // Next to a lattice point the noise follows its gradient, the bits' halves.
+    const h = cellBits(i, j, seed);
+    const e = 1e-4;
+    const g = [(h & 65535) / 32767.5 - 1, (h >>> 16) / 32767.5 - 1];
+    assert.ok(Math.abs(seededNoise(i + e, j, seed) / (1.4 * e) - g[0]) < 1e-3 && Math.abs(seededNoise(i, j + e, seed) / (1.4 * e) - g[1]) < 1e-3, `gradient at ${i}, ${j}`);
+  }
+  let differ = 0;
+  for (const [x, y] of spread(1000, 50)) if (seededNoise(x, y, 1) !== seededNoise(x, y, 2)) differ++;
+  assert.ok(differ > 990, `${differ} of 1000 points differ between seeds`);
 });
