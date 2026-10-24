@@ -183,23 +183,33 @@ async function boot() {
     ctx.stats.endFrame();
   }
 
-  if (import.meta.env.DEV) installShaderHotSwap(() => [...scene.meshes(undefined, [], true).map((m) => m.material), ...ctx.frame.outputMaterials]);
-
+  let resume = () => {};
   if (params.capture) {
     runCapture(ctx, display, app, frame).catch(fail);
   } else {
     // The next frame is asked for only after this one ran, so an error stops the loop.
+    let next = 0;
     const loop = () => {
+      next = 0;
       if (stopped) return;
       try {
         if (lit) frame();
-        requestAnimationFrame(loop);
+        next = requestAnimationFrame(loop);
       } catch (err) {
         fail(err, 'Stopped.');
       }
     };
-    requestAnimationFrame(loop);
+    next = requestAnimationFrame(loop);
+    // Dev: a shader fixed and swapped in after an error gets another go.
+    resume = () => {
+      if (next) return;
+      stopped = false;
+      document.getElementById('error').hidden = true;
+      next = requestAnimationFrame(loop);
+    };
   }
+
+  if (import.meta.env.DEV) installShaderHotSwap(() => [...scene.meshes(undefined, [], true).map((m) => m.material), ...ctx.frame.outputMaterials], () => resume());
 }
 
 function preset(name) {
@@ -234,9 +244,10 @@ function fail(err, title = 'Could not start.') {
 }
 
 // Dev only: when a .wgsl module hot-updates (see vite.config.js), swap the
-// source into every material that uses it. Falls back to a reload when the
+// source into every material that uses it, and restart a game an error
+// stopped (a typo saved a moment ago, say). Falls back to a reload when the
 // shader isn't found on a material in the scene or the frame's passes.
-function installShaderHotSwap(materials) {
+function installShaderHotSwap(materials, resume) {
   window.addEventListener('shader-hot-swap', ({ detail: { prev, next } }) => {
     let swapped = 0;
     for (const material of new Set(materials())) {
@@ -245,7 +256,11 @@ function installShaderHotSwap(materials) {
       material.needsUpdate = true;
       swapped++;
     }
-    if (swapped) console.info(`[hmr] shader updated in ${swapped} material(s)`);
-    else window.location.reload();
+    if (!swapped) {
+      window.location.reload();
+      return;
+    }
+    console.info(`[hmr] shader updated in ${swapped} material(s)`);
+    resume();
   });
 }

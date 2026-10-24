@@ -24,7 +24,7 @@
 // made of them or lies on them, their tiles' averages filled once `ready`
 // resolved; greenAt: whether the green inland is living green or bare ground
 // at world x, z, as drawn (world/green.js), once `ready` resolved: 1 green, 0 bare.
-import { Box3, DataUtils, Frustum, Matrix4, Vector2, Vector3, Vector4, WebGPUCoordinateSystem } from 'three';
+import { Box3, DataUtils, Frustum, Matrix4, Vector3, Vector4, WebGPUCoordinateSystem } from 'three';
 import shader from './terrain.wgsl';
 import HeightmapWorker from './heightmap-worker.js?worker&inline';
 import { Material } from '../gpu/material.js';
@@ -77,7 +77,7 @@ export function create(ctx) {
   const drawn = {
     overrides: { LOD_LEVELS: lodLevels },
     uniforms: {
-      uMorph: { value: padded(morphs.map(([start, end]) => new Vector2(start, end)), () => new Vector2()) },
+      uMorph: { value: padded(morphs.map(([start, end]) => new Vector4(start, end, 0, 0)), () => new Vector4()) },
       uLodRange: { value: padded(ranges.map((range) => new Vector4(range, 0, 0, 0)), () => new Vector4()) },
       uLodTree: { value: new Vector4(coarsest.origin[0], coarsest.origin[1], settings.leaf, settings.grid) },
     },

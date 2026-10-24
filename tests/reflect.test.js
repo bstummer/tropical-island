@@ -81,7 +81,7 @@ test('writeField packs numbers, vectors, matrices and arrays', () => {
   writeField(view, 0, fields.uSunDirection, { x: 1, y: 2, z: 3 });
   writeField(view, 0, fields.uExposure, 0.5);
   writeField(view, 0, fields.uSkySH, Array.from({ length: 9 }, (_, k) => [k, k + 0.5, k + 0.25]));
-  writeField(view, 0, fields.uWeights, [[7], [8]]);
+  writeField(view, 0, fields.uWeights, [[7, 0, 0, 0], [8, 0, 0, 0]]);
   writeField(view, 0, fields.uNormal, { elements: [1, 2, 3, 4, 5, 6, 7, 8, 9] });
   writeField(view, 0, fields.uFlag, true);
   const f = (at) => view.getFloat32(at, true);
@@ -91,6 +91,33 @@ test('writeField packs numbers, vectors, matrices and arrays', () => {
   assert.deepEqual([f(320), f(324), f(328), f(336), f(352), f(360)], [1, 2, 3, 4, 7, 9]);
   assert.equal(view.getUint32(376, true), 1);
   assert.throws(() => writeField(view, 0, fields.uSkySH, [[1, 2, 3]]), /has 1 elements, the shader 9/);
+});
+
+test('writeField refuses values that would land half-written or wrapped', () => {
+  const { structs } = reflect(SOURCE);
+  const fields = Object.fromEntries(structLayout('Light', structs).map((f) => [f.name, f]));
+  const view = new DataView(new ArrayBuffer(structSize('Light', structs)));
+  // A vector with more or fewer components than the field, also in an array.
+  assert.throws(() => writeField(view, 0, fields.uSunDirection, { x: 1, y: 2 }), /"uSunDirection" \(vec3f\) got 2 components/);
+  assert.throws(() => writeField(view, 0, fields.uSunDirection, { x: 1, y: 2, z: 3, w: 4 }), /got 4 components/);
+  assert.throws(() => writeField(view, 0, fields.uWeights, [{ x: 1, y: 2 }, [1, 2, 3, 4]]), /"uWeights\[0\]" \(vec4f\) got 2/);
+  // A matrix of the wrong size: a Matrix4's elements into a mat3x3f.
+  assert.throws(() => writeField(view, 0, fields.uNormal, { elements: new Array(16).fill(0) }), /needs 9 elements, got 16/);
+  // Whole numbers in range only, and booleans only as u32.
+  assert.throws(() => writeField(view, 0, fields.uFlag, -1), /-1 is no u32/);
+  assert.throws(() => writeField(view, 0, fields.uFlag, 1.5), /1.5 is no u32/);
+  assert.throws(() => writeField(view, 0, fields.uExposure, true), /expected a number for f32/);
+});
+
+test('layouts that differ between browsers are refused', () => {
+  // Under uniform_buffer_standard_layout these sit closer than core WGSL puts them.
+  const nested = reflect('struct In { x: f32 } struct Out { a: f32, s: In, b: f32 }').structs;
+  assert.throws(() => structLayout('Out', nested), /struct In in a uniform struct aligns to 4 bytes/);
+  assert.equal(structLayout('Out', { ...nested, In: [{ name: 'x', type: 'vec4f' }] })[2].offset, 32);
+  assert.throws(() => structLayout('M', reflect('struct M { a: f32, m: array<mat2x2f, 2> }').structs), /array of mat2x2f/);
+  // Attributes the layout doesn't know.
+  assert.throws(() => reflect('struct S { a: f32, @size(16) b: f32, c: f32 }'), /@align\/@size in struct S/);
+  assert.throws(() => reflect('struct S { @align(16) a: f32 }'), /@align\/@size in struct S/);
 });
 
 test('a uniform array of elements narrower than 16 bytes is refused', () => {

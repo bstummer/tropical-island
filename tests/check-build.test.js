@@ -110,14 +110,15 @@ test('source lint flags three.js methods that call Math.random internally', (t) 
       'export const tilt = new Vector3().randomDirection();',
       'export const spin = new Quaternion().random();',
       'export const offset = new Vector2().random ();',
+      'export const id = MathUtils.generateUUID();',
       'export const once = Math.random(); // reported by its own rule only',
       'export const fine = { randomize: () => 1 }.randomize();',
     ].join('\n'),
   });
   const failures = checkSources(dir);
-  assert.equal(failures.filter((f) => f.rule === 'three-random').length, 3);
+  assert.equal(failures.filter((f) => f.rule === 'three-random').length, 4);
   assert.equal(failures.filter((f) => f.rule === 'math-random').length, 1);
-  assert.equal(failures.length, 4);
+  assert.equal(failures.length, 5);
 });
 
 test('source lint allows performance.now only in core/clock.js', (t) => {
@@ -158,12 +159,20 @@ test('source lint takes only maths from three.js, by name', (t) => {
     'addons.js': "import { OrbitControls } from 'three/addons/controls/OrbitControls.js';\n",
     'webgpu.js': "import { Vector3 } from 'three/webgpu';\nimport 'three';\n",
     'reexport.js': "export * from 'three';\n",
+    'tight.js': "import{WebGLRenderer}from'three';\nexport*from\"three\";\n",
+    'dynamic.js': "export const load = () => import('three');\nexport const later = async () => await import( `three/webgpu` );\n",
+    'path.js': "import { Mesh } from '../node_modules/three/build/three.module.js';\nimport { Scene } from '/node_modules/three/src/Three.js';\n",
+    'typed.ts': "import { WebGLRenderer } from 'three';\n",
+    'others.js': "import { three } from './three.js';\nimport { a } from './threejs-like.js';\nexport { b } from './x.js';\n",
   });
   const failures = checkSources(dir);
   assert.deepEqual(ids(failures), ['three-maths']);
   assert.deepEqual(
     failures.map((f) => f.message.match(/src\/(\S+)/)[1]).sort(),
-    ['addons.js', 'namespace.js', 'reexport.js', 'renderer.js', 'webgpu.js', 'webgpu.js'],
+    [
+      ...['addons.js', 'dynamic.js', 'dynamic.js', 'namespace.js', 'path.js', 'path.js', 'reexport.js', 'renderer.js'],
+      ...['tight.js', 'tight.js', 'typed.ts', 'webgpu.js', 'webgpu.js'],
+    ],
   );
 });
 

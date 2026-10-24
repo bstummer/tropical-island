@@ -22,6 +22,8 @@ export function reflect(source) {
   const structs = {};
   for (const [, name, body] of code.matchAll(/\bstruct\s+(\w+)\s*\{([^}]*)\}/g)) {
     structs[name] = splitTop(body).map((field) => {
+      // The layout below knows nothing of them: a field would be written elsewhere than read.
+      if (/@(align|size)\s*\(/.test(field)) throw new Error(`reflect: @align/@size in struct ${name}: lay the fields out without them`);
       const location = /@location\((\d+)\)/.exec(field);
       const [, fieldName, type] = /(\w+)\s*:\s*(.+)$/.exec(field.replace(/@\w+(\([^)]*\))?/g, '').trim());
       return { name: fieldName, type: type.trim(), ...(location && { location: Number(location[1]) }) };
@@ -100,18 +102,18 @@ export function typeLayout(type, structs = {}) {
   }
   m = ARRAY.exec(type);
   if (m) {
-    // A uniform array's elements must lie 16 bytes apart, as core WGSL wants
-    // them. Narrower ones (f32, vec2f) lie closer where the browser has
-    // uniform_buffer_standard_layout and fail to compile where it hasn't:
-    // hold them in vec4f instead.
+    // A uniform array's elements must be aligned to 16 bytes and lie 16 apart,
+    // as core WGSL wants them. Narrower ones (f32, vec2f, mat2x2f) lie closer
+    // where the browser has uniform_buffer_standard_layout and fail to compile
+    // where it hasn't: hold them in vec4f instead.
     const element = typeLayout(m[1].trim(), structs);
     const stride = roundUp(element.size, element.align);
-    if (stride % 16) throw new Error(`reflect: a uniform array of ${m[1].trim()} (${stride} bytes apart); use vec4f elements`);
-    return { align: Math.max(element.align, 16), size: stride * Number(m[2]), stride, element: m[1].trim(), count: Number(m[2]) };
+    if (stride % 16 || element.align % 16) throw new Error(`reflect: a uniform array of ${m[1].trim()} (${stride} bytes apart); use vec4f elements`);
+    return { align: element.align, size: stride * Number(m[2]), stride, element: m[1].trim(), count: Number(m[2]) };
   }
   if (structs[type]) {
     const fields = structLayout(type, structs);
-    const align = Math.max(16, ...fields.map((f) => f.align));
+    const align = Math.max(...fields.map((f) => f.align));
     const end = fields.length ? fields.at(-1).offset + fields.at(-1).size : 0;
     return { align, size: roundUp(end, align), fields };
   }
@@ -123,6 +125,8 @@ export function structLayout(name, structs) {
   let offset = 0;
   return structs[name].map((field) => {
     const layout = typeLayout(field.type, structs);
+    // Likewise a struct within one: aligned to 16 bytes by a field of its own.
+    if (layout.fields && layout.align % 16) throw new Error(`reflect: struct ${field.type} in a uniform struct aligns to ${layout.align} bytes; give it a vec3f or vec4f field`);
     offset = roundUp(offset, layout.align);
     const placed = { ...field, ...layout, offset };
     offset += layout.size;
@@ -130,8 +134,9 @@ export function structLayout(name, structs) {
   });
 }
 
+// A whole uniform buffer's size, rounded up to 16 bytes.
 export function structSize(name, structs) {
-  return typeLayout(name, structs).size;
+  return roundUp(typeLayout(name, structs).size, 16);
 }
 
 function roundUp(n, align) {
@@ -147,7 +152,8 @@ export function writeField(view, base, field, value, structs = {}) {
   let m = VECTOR.exec(type);
   if (m) {
     const scalar = m[2] ?? { f: 'f32', i: 'i32', u: 'u32' }[m[3]];
-    const values = components(value, Number(m[1]));
+    const values = components(value);
+    if (values.length !== Number(m[1])) throw new Error(`reflect: "${field.name}" (${type}) got ${values.length} components`);
     values.forEach((v, i) => writeScalar(view, at + 4 * i, scalar, v));
     return;
   }
@@ -156,6 +162,7 @@ export function writeField(view, base, field, value, structs = {}) {
     const [columns, rows] = [Number(m[1]), Number(m[2])];
     const stride = rows === 2 ? 8 : 16;
     const elements = value?.elements ?? value; // three.js matrices are column-major, as WGSL's
+    if (elements?.length !== columns * rows) throw new Error(`reflect: "${field.name}" (${type}) needs ${columns * rows} elements, got ${elements?.length}`);
     for (let c = 0; c < columns; c++) for (let r = 0; r < rows; r++) view.setFloat32(at + c * stride + 4 * r, elements[c * rows + r], true);
     return;
   }
@@ -163,7 +170,7 @@ export function writeField(view, base, field, value, structs = {}) {
     const element = { type: field.element, offset: 0, ...typeLayout(field.element, structs) };
     for (let i = 0; i < field.count; i++) {
       if (value[i] === undefined) throw new Error(`reflect: "${field.name}" has ${value.length} elements, the shader ${field.count}`);
-      writeField(view, at + i * field.stride, element, value[i], structs);
+      writeField(view, at + i * field.stride, { ...element, name: `${field.name}[${i}]` }, value[i], structs);
     }
     return;
   }
@@ -174,17 +181,23 @@ export function writeField(view, base, field, value, structs = {}) {
   throw new Error(`reflect: can't write "${field.name}" of type ${type}`);
 }
 
+// A number as f32, or a whole number in range as i32 or u32; booleans only as
+// u32 (WGSL's bool has no layout).
 function writeScalar(view, at, type, value) {
-  const v = typeof value === 'boolean' ? Number(value) : value;
-  if (typeof v !== 'number') throw new Error(`reflect: expected a number, got ${value}`);
-  if (type === 'f32') view.setFloat32(at, v, true);
-  else if (type === 'i32') view.setInt32(at, v, true);
+  const v = typeof value === 'boolean' && type === 'u32' ? Number(value) : value;
+  if (typeof v !== 'number') throw new Error(`reflect: expected a number for ${type}, got ${value}`);
+  if (type === 'f32') return view.setFloat32(at, v, true);
+  const [min, max] = type === 'i32' ? [-(2 ** 31), 2 ** 31 - 1] : [0, 2 ** 32 - 1];
+  if (!Number.isInteger(v) || v < min || v > max) throw new Error(`reflect: ${v} is no ${type}`);
+  if (type === 'i32') view.setInt32(at, v, true);
   else view.setUint32(at, v, true);
 }
 
-function components(value, n) {
-  if (Array.isArray(value) || ArrayBuffer.isView(value)) return Array.from(value).slice(0, n);
-  if (value?.isColor) return [value.r, value.g, value.b, 1].slice(0, n);
-  if (value && typeof value === 'object' && 'x' in value) return [value.x, value.y, value.z ?? 0, value.w ?? 0].slice(0, n);
+// A vector's components: an array's, a colour's r, g, b, or the x, y, z, w a
+// vector (three.js's or a plain object) has.
+function components(value) {
+  if (Array.isArray(value) || ArrayBuffer.isView(value)) return Array.from(value);
+  if (value?.isColor) return [value.r, value.g, value.b];
+  if (value && typeof value === 'object' && 'x' in value) return ['x', 'y', 'z', 'w'].filter((k) => k in value).map((k) => value[k]);
   throw new Error(`reflect: expected a vector, got ${value}`);
 }

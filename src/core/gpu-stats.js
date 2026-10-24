@@ -2,6 +2,8 @@
 // so it sees every pass the game encodes, its own internal ones included. Per
 // frame: draw calls, triangles, render passes (passes that draw or clear),
 // blits (passes that only resolve, and texture copies) and pipelines used.
+// Only render passes and their draw()/drawIndexed() count: compute passes,
+// render bundles and indirect draws need counting here before anything uses them.
 // Live: the memory of textures, render targets (textures drawn into, the
 // canvas) and buffers, and the objects alive by kind, for teardown checks.
 // Byte counts are what the formats need, before any padding the driver adds.

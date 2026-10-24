@@ -163,35 +163,29 @@ const mipPipelines = new WeakMap(); // device -> Map(format -> pipeline)
 
 function generateMipmaps(gpu, texture) {
   const { device } = gpu;
+  if (texture.dimension === '3d') throw new Error(`texture ${texture.name}: mipmaps of 3D textures aren't made`);
   if (!mipPipelines.has(device)) mipPipelines.set(device, new Map());
   const pipelines = mipPipelines.get(device);
   if (!pipelines.has(texture.format)) {
     const module = device.createShaderModule({ label: 'mipmap', code: mipmapShader });
+    const constants = { UNORM8: Number(texture.format === 'rgba8unorm') };
     pipelines.set(
       texture.format,
       device.createRenderPipeline({
         label: `mipmap ${texture.format}`,
         layout: 'auto',
         vertex: { module, entryPoint: 'vertexMain' },
-        fragment: { module, entryPoint: 'fragmentMain', targets: [{ format: texture.format }] },
+        fragment: { module, entryPoint: 'fragmentMain', targets: [{ format: texture.format }], constants },
         primitive: { topology: 'triangle-list' },
       }),
     );
   }
   const pipeline = pipelines.get(texture.format);
-  const sampler = gpu.sampler({ mag: 'linear', min: 'linear' });
-  const layers = texture.dimension === '3d' ? 1 : texture.depth;
   const encoder = device.createCommandEncoder({ label: `mipmaps ${texture.name}` });
-  for (let layer = 0; layer < layers; layer++) {
+  for (let layer = 0; layer < texture.depth; layer++) {
     for (let level = 1; level < texture.mipLevelCount; level++) {
       const source = texture.texture.createView({ dimension: '2d', baseArrayLayer: layer, arrayLayerCount: 1, baseMipLevel: level - 1, mipLevelCount: 1 });
-      const group = device.createBindGroup({
-        layout: pipeline.getBindGroupLayout(0),
-        entries: [
-          { binding: 0, resource: source },
-          { binding: 1, resource: sampler },
-        ],
-      });
+      const group = device.createBindGroup({ layout: pipeline.getBindGroupLayout(0), entries: [{ binding: 0, resource: source }] });
       const pass = encoder.beginRenderPass({ colorAttachments: [{ ...texture.attachment(layer, level), loadOp: 'clear', clearValue: [0, 0, 0, 0], storeOp: 'store' }] });
       pass.setPipeline(pipeline);
       pass.setBindGroup(0, group);

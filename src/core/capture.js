@@ -90,7 +90,7 @@ export async function runCapture(ctx, display, app, frame) {
       await window.__CAPTURE__.render();
     },
     resources() {
-      return { objects: ctx.stats.objects(), ...ctx.stats.memory(), sceneObjects: scene.children.length };
+      return { objects: { ...ctx.stats.objects(), ShaderModule: ctx.gpu.liveModules }, ...ctx.stats.memory(), sceneObjects: scene.children.length };
     },
     teardown() {
       app.teardown();

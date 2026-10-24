@@ -617,10 +617,12 @@ baseline: on the branch nothing runs it any more, and `adee91b` keeps it for sid
     - the `beach`, `shoreline`, `jungle-edge`, `overview`, `into-the-sun` and `sand` views match
       `webgl-final`, far ground included;
     - captures take no longer than `webgl-final`'s.
-  - Done 2026-10-24. 76–99.8% of each view's pixels are identical to `webgl-final`, and at most 0.44%
+  - Done 2026-10-24. 92–99.8% of each view's pixels are identical to `webgl-final`, and at most 0.44%
     are more than 8 levels off: single pixels of fine detail (the rock's streaks, glints, the green's
-    dithered edges) where float rounding crosses a threshold. No edge or shape moved. Two traps cost
-    time:
+    dithered edges) where float rounding crosses a threshold, and edges (see the known flaws). No
+    shape moved. Three traps cost time:
+    - 8-bit mips round halves to even in WebGL, but up in a WebGPU render pass, so every level came out
+      brighter. `gpu/mipmap.wgsl` now rounds as WebGL did, which reproduces its levels exactly.
     - A uniform array of `f32` or `vec2f` doesn't have GLSL's layout (it broke the mesh's height and
       the rocks' offsets). Uniform arrays now hold `vec4f`, and `gpu/reflect.js` refuses others.
     - Frames took 50% longer on SwiftShader until the heights were read with one `textureGather`
@@ -640,9 +642,20 @@ baseline: on the branch nothing runs it any more, and `adee91b` keeps it for sid
     - every tool check still catches its bad case;
     - the quality change (high → low → high) leaks nothing and gives the same picture.
   - Done 2026-10-24. The cost numbers equal `webgl-final`'s on every view (draws, triangles, passes,
-    overdraw, memory), but for 26 pipelines against 25 programs: the frame's depth resolve, a blit in
-    three, is a pipeline made up front. CI's build job took 12.5 minutes (`adee91b`: 21.7), and its
-    captures are byte-identical to the Linux container's.
+    overdraw, texture memory), apart from these:
+    - 26 pipelines against 25 programs: the frame's depth resolve, a blit in three, is a pipeline made
+      up front.
+    - 0.13 MB more in render targets: a second set of transmittance and multiple-scattering tables,
+      so a time change lands whole.
+
+    Overdraw was 1% off until the draw order was three's again. Under reversed depth, three negates
+    the depth it sorts by, which the port had missed: opaque meshes drew far to near and transparent
+    ones near to far (`gpu/scene.js drawOrder`, tested).
+
+    CI's build job took 12.5 and 24.9 minutes on two runs of the same code. GitHub's runners differ
+    about twofold in speed, in every view, check and test alike, and `adee91b`'s run (21.7 minutes)
+    landed in between. In the same container, frames take as long as WebGL's. CI's captures are
+    byte-identical to the container's.
 - [x] **W.5 Cut-over.**
   - Delete what's left of three's renderer and of WebGL: the depth fallback's fixture, check and
     `nearFallback`, `?depth=`, and the MSAA knob.
@@ -671,12 +684,30 @@ baseline: on the branch nothing runs it any more, and `adee91b` keeps it for sid
     - Player mode waits for the sky's first light: the first frames were black.
     - A sky that fails to land its light, and shaders that fail to compile outside the scene, now say so.
 
+    A second round, at the user's request, took four other angles: the JS around the shaders; the
+    checks themselves; WebGPU's layout and semantics; and both builds run side by side under 75
+    conditions the captures don't cover (presets, sizes, tonemaps, exposures, times, seeds, fixtures).
+    Fixed from it:
+    - the draw order and the mip rounding (W.3, W.4);
+    - in dev, a shader fixed after an error now restarts the game, as WebGL's did;
+    - `reflect.js` refuses layouts and values it would get wrong silently;
+    - the three.js lint catches dynamic and unspaced imports;
+    - the errors check proves the tool still recognises the browser's own WebGPU warnings;
+    - player mode compares what its canvas shows with the capture of the same view (0.2 levels off);
+    - shader modules join the teardown's counts;
+    - a game that never starts drawing fails the tool instead of hanging it.
+
 **Known flaws** (for review):
-- With an odd drawing-buffer height, derivatives pair other rows than in WebGL, whose targets were
-  stored bottom-up: footprint-filtered detail shifts by a row there. The medium and low presets hit it
-  at 900 rows; captures at `high` don't, so no image shows it yet.
-- The mip chains are the project's own box filter, which may round a level by 1/255 otherwise than
-  WebGL's did.
+- WebGL stored its targets bottom-up, WebGPU top-down, and two things follow. Edges and detail differ
+  from WebGL's in single pixels; nothing is better or worse. Rendering the frame upside down would match
+  WebGL, at the cost of a flip in every pass from then on, so the port doesn't.
+  - MSAA's sample pattern is mirrored. Edges at shallow angles get other coverage: the silhouette
+    fixture has 0.85% of pixels more than 8 levels off.
+  - With an odd drawing-buffer height (the low and medium presets at 900 rows), derivatives pair other
+    rows, so footprint-filtered detail shifts by a row. The rocks view at low has 2.1% of pixels more
+    than 2 levels off, against 1.9% at an even height.
+- The low preset has 4 samples now (Decisions), so its render targets take 46.9 MB at 1600×900 instead
+  of 31.9.
 - Behaviours of three's renderer that nothing uses yet are missing: a change of render state needs
   `needsUpdate`, double-sided transparent meshes draw in one pass, a mirroring transform doesn't flip
   the front face, alpha-to-coverage needs a target with samples, and a destroyed texture keeps its cached
@@ -1089,8 +1120,8 @@ open, next step. Details belong in code comments.
 - **2026-10-24, Stage 4b planned in detail and built (W.1–W.5), on branch `webgpu`:** raw WebGPU with
   a renderer of the project's own (`src/gpu/`), every shader in WGSL, three for maths only (linted).
   Views and named times match `webgl-final` within float noise, every check passes and catches its bad
-  case, and CI's job takes 12.5 minutes (was 21.7). Outside reviews found no shader port error; their
-  renderer findings are fixed or listed as known flaws. Open: the user's hand-over (benchmark on real
+  case, and frames take as long as WebGL's (CI's runners vary twofold). Two rounds of outside reviews
+  found no shader port error; their findings are fixed or listed as known flaws. Open: the user's hand-over (benchmark on real
   hardware against the last WebGL build, the four browsers, merge). Next: 4.8.
 - **2026-10-24, Stage 4b planned: the WebGPU port.** The user moved the game to raw WebGPU and WGSL
   (Decisions); the port runs on a branch before 4.8. W.0 done: CI green on `adee91b`, baseline

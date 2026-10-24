@@ -5,8 +5,8 @@ import { Color } from 'three';
 import shader from './basic.wgsl';
 import { Material } from '../gpu/material.js';
 
-// color: anything three.js's Color takes (linear for numbers, sRGB for hex
-// strings); map: a Texture; fog: [start, end] in metres from the camera.
+// color: anything three.js's Color takes (hex numbers and strings are sRGB,
+// made linear); map: a Texture; fog: [start, end] in metres from the camera.
 export function basicMaterial({ name = 'fixture-basic', color = 0xffffff, opacity = 1, map = null, fog = [0, 0], raw = false, ...options } = {}) {
   return new Material({
     name,

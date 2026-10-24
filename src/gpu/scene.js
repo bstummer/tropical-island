@@ -2,7 +2,7 @@
 // graph, whose meshes each draw a geometry with a material in one of the
 // frame's passes (post/frame.js): 'opaque', 'afterOpaque' or 'translucent'.
 // Draw order follows three.js's: by renderOrder, then material, then distance;
-// transparent ones back to front (renderer.js).
+// transparent ones back to front (drawOrder).
 import { Euler, Matrix4, Quaternion, Vector3 } from 'three';
 
 let nextId = 0;
@@ -104,6 +104,19 @@ export class Mesh extends Node {
     this.renderOrder = 0;
     this.frustumCulled = true; // false: drawn wherever its bounding sphere is (instanced meshes cull themselves)
   }
+}
+
+// The order three.js draws a pass in (WebGLRenderLists): opaque meshes by
+// renderOrder, material, then near to far; transparent ones by renderOrder,
+// then far to near. entries: [{ mesh, z }], z the clip-space depth of the
+// mesh's bounding sphere's centre, which shrinks with distance under reversed
+// depth (so three negates it then).
+export function drawOrder(entries, reversedDepth) {
+  const far = (e) => (reversedDepth ? -e.z : e.z);
+  const [opaque, transparent] = [entries.filter((e) => !e.mesh.material.transparent), entries.filter((e) => e.mesh.material.transparent)];
+  opaque.sort((a, b) => a.mesh.renderOrder - b.mesh.renderOrder || a.mesh.material.id - b.mesh.material.id || far(a) - far(b) || a.mesh.id - b.mesh.id);
+  transparent.sort((a, b) => a.mesh.renderOrder - b.mesh.renderOrder || far(b) - far(a) || a.mesh.id - b.mesh.id);
+  return [...opaque, ...transparent];
 }
 
 export class Scene extends Node {

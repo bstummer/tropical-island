@@ -23,6 +23,7 @@ import { reflect, structLayout, writeField } from './reflect.js';
 import { Bindings, layoutEntry } from './bindings.js';
 import { Geometry } from './geometry.js';
 import { signature } from './texture.js';
+import { drawOrder } from './scene.js';
 import frameSource from '../shaders/chunks/frame.wgsl';
 import objectSource from '../shaders/chunks/object.wgsl';
 
@@ -297,9 +298,7 @@ export function createRenderer(gpu) {
     }
     const meshes = Array.isArray(scene) ? scene : scene.meshes(pass);
 
-    // three.js's lists: opaque by renderOrder, material, distance; transparent back to front.
-    const opaque = [];
-    const transparent = [];
+    const entries = [];
     for (const mesh of meshes) {
       if (!mesh.visible) continue;
       if (cam && mesh.frustumCulled !== false) {
@@ -308,11 +307,9 @@ export function createRenderer(gpu) {
       }
       let depth = 0;
       if (cam) depth = z.copy(boundingSphere(mesh.geometry).center).applyMatrix4(mesh.matrixWorld).applyMatrix4(projScreen).z;
-      (mesh.material.transparent ? transparent : opaque).push({ mesh, z: depth });
+      entries.push({ mesh, z: depth });
     }
-    opaque.sort((a, b) => a.mesh.renderOrder - b.mesh.renderOrder || a.mesh.material.id - b.mesh.material.id || a.z - b.z || a.mesh.id - b.mesh.id);
-    transparent.sort((a, b) => a.mesh.renderOrder - b.mesh.renderOrder || b.z - a.z || a.mesh.id - b.mesh.id);
-    const items = [...opaque, ...transparent];
+    const items = drawOrder(entries, Boolean(cam?.reversedDepth));
 
     // Uniforms first: everything written before this pass is submitted applies to it.
     const frameGroup = frameBindings.update(globals);

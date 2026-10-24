@@ -58,6 +58,7 @@ export function create(ctx) {
   const ready = Promise.all([
     tiles.ready.then((averages) => {
       for (const [name, { value }] of Object.entries(surfaceUniforms(averages))) shared[name].value = value;
+      group.visible = true;
     }),
     tileCheck(ctx, terrain).then((result) => (window.__SURFACES__ = result)),
   ]);
@@ -86,6 +87,7 @@ export function create(ctx) {
   const group = new Node();
   group.position.set(camera.position.x, camera.position.y - config.movement.walk.eye, camera.position.z);
   group.rotation.y = yaw;
+  group.visible = false; // until the averages are in: the shading divides by them
   scene.add(group);
   const geometries = [];
   const plane = (width, length, segments) => {

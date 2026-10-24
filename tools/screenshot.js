@@ -35,7 +35,7 @@ import { views as allViews } from '../src/views.js';
 import { config } from '../src/config.js';
 import { sunPath } from '../src/sky/sun.js';
 import { measureCost, measureShimmer, measureView, renderFrame, stopAnalysis } from './measure.js';
-import { decodeDataUrl, encodePng } from './png.js';
+import { decodeDataUrl, decodePng, encodePng } from './png.js';
 import { bandedShare, bandingView, brightestNear, meanColor, overdrawImage } from './image.js';
 import { blendLayout, cardSpan } from '../src/fixtures/blend-layout.js';
 import { coefficients, directions, texels } from '../src/fixtures/maths-cases.js';
@@ -48,11 +48,14 @@ const SHOTS = join(ROOT, 'screenshots');
 const READY_TIMEOUT_MS = 60_000;
 // Player mode and the benchmark draw in the same browser as the checks running
 // beside them, whose full-size frames take seconds each on SwiftShader: they
-// fail only once a page draws no frame for this long (untilDone), however
-// long they take.
+// fail once a page draws no frame for this long (untilDone), not when slow.
 const STALL_MS = 60_000;
+// And what they wait for must happen within this, frames or not: a game that
+// never starts drawing (its loop waits for the sky's light) fails, not hangs.
+const DONE_MS = 600_000;
 // Player mode and the benchmark only have to work: small, as SwiftShader draws every pixel on the CPU.
-const PLAYER_MODE = { frames: 30, viewport: { width: 320, height: 180 } };
+// meanLevels: how far the canvas's mean colour may be from the capture's of the same view.
+const PLAYER_MODE = { frames: 30, viewport: { width: 320, height: 180 }, meanLevels: 4 };
 const BENCH_SECONDS = 0.25; // per view: enough to prove the benchmark works
 const CHECKS_AT_ONCE = 2; // see runChecks()
 const SHEET_ORIGIN = 'http://contact-sheet.local';
@@ -141,7 +144,8 @@ async function capture(args) {
         delete check.consoleWarnings;
       }
       outputs.push(join(outDir, 'tool-check', '*.png'));
-      report('player mode', player.ms, `${views[0].name}, real-time loop without ?capture`, player.problems, player.consoleWarnings);
+      const canvas = player.canvasOff === null ? '' : `, its canvas ${player.canvasOff.toFixed(1)} levels off the capture's mean colour`;
+      report('player mode', player.ms, `${views[0].name}, real-time loop without ?capture${canvas}`, player.problems, player.consoleWarnings);
       report('benchmark', bench.ms, bench.detail, bench.problems, bench.consoleWarnings);
     }
 
@@ -328,7 +332,7 @@ function shoot(page, path) {
 async function runChecks(context, fileUrl, query, view, outDir) {
   const tasks = [
     () => checkBenchmark(context, fileUrl, query, outDir),
-    () => checkPlayerMode(context, fileUrl, query, view),
+    () => checkPlayerMode(context, fileUrl, query, view, outDir),
     ...toolCheckTasks(context, fileUrl, query, view, outDir),
   ];
   // SCREENSHOT_PROGRESS=1 says when each check is done, for finding one that hangs.
@@ -586,6 +590,8 @@ async function checkErrors(context, fileUrl, params) {
     ['a material without sceneOutput()', (p) => /without sceneOutput\(\): fixture-unwrapped/.test(p.text)],
     ['a material that blends outside the translucent pass', (p) => /blend outside the translucent pass.*: fixture-blended/.test(p.text)],
     ['a validation error', (p) => p.kind === 'webgpu error' && /MAP_WRITE|MapWrite|usage/i.test(p.text)],
+    // The browser reports it too, as a console warning: proves GPU_ERROR still knows its words.
+    ["the browser's warning of it", (p) => p.kind === 'webgpu warning' && /MAP_WRITE|MapWrite|usage/i.test(p.text)],
     ['a lost device', (p) => p.kind === 'device lost'],
   ];
   try {
@@ -859,7 +865,7 @@ export function describeWarning({ metric, value, limit }) {
 // Capture mode freezes time and skips input, so it never runs the game the way
 // players get it. Run it that way for a few frames: no errors or requests, and
 // the start screen must be up.
-async function checkPlayerMode(context, fileUrl, query, view) {
+async function checkPlayerMode(context, fileUrl, query, view, outDir) {
   const page = await context.newPage();
   await page.setViewportSize(PLAYER_MODE.viewport);
   await stubPointerLock(page);
@@ -868,6 +874,7 @@ async function checkPlayerMode(context, fileUrl, query, view) {
   const params = new URLSearchParams({ ...query, view: view.name, stats: '1' }); // with the frame readout
   params.delete('capture');
   const started = Date.now();
+  let canvasOff = null; // how far the canvas's mean colour is from the capture's
   try {
     await page.goto(`${fileUrl}?${params}`);
     await untilDone(page, (frames) => window.__FRAMES__ >= frames, PLAYER_MODE.frames);
@@ -881,6 +888,20 @@ async function checkPlayerMode(context, fileUrl, query, view) {
     await page.keyboard.press(config.readout.key); // a synthetic key event in the page, not the OS keyboard
     if (await page.evaluate(() => document.getElementById('readout').checkVisibility())) {
       problems.push({ kind: 'player mode', text: `${config.readout.key} does not hide the frame readout` });
+    }
+    // What the player sees, the canvas without the overlays, against the capture of
+    // the same view (the same framing, more pixels): the game draws its output
+    // straight onto the canvas, captures into a texture of their own (post/frame.js).
+    const reference = join(outDir, `${view.name}.png`);
+    if (existsSync(reference)) {
+      const shown = await canvasMean(page);
+      const captured = decodePng(readFileSync(reference));
+      const expected = meanColor(captured, 0, 0, captured.width, captured.height);
+      const off = (canvasOff = Math.max(...shown.map((v, c) => Math.abs(v - expected[c]))));
+      if (!(off <= PLAYER_MODE.meanLevels)) {
+        const levels = (c) => c.map((v) => v.toFixed(1)).join(', ');
+        problems.push({ kind: 'player mode', text: `the canvas's mean colour (${levels(shown)}) is ${off.toFixed(1)} levels off the capture's (${levels(expected)}; limit ${PLAYER_MODE.meanLevels})` });
+      }
     }
     // Start, walk on the ground for a few frames, and fly again. The pointer
     // lock is stubbed (stubPointerLock), so no real mouse is captured. The
@@ -918,7 +939,19 @@ async function checkPlayerMode(context, fileUrl, query, view) {
     problems.push({ kind: 'player mode', text: err.message.split('\n')[0] });
   }
   await page.close();
-  return { problems, consoleWarnings, ms: Date.now() - started };
+  return { problems, consoleWarnings, ms: Date.now() - started, canvasOff };
+}
+
+// The mean colour of the page's canvas as shown, with everything over it hidden for the shot.
+async function canvasMean(page) {
+  await page.evaluate(() => {
+    for (const el of document.body.children) if (el.id !== 'view') el.style.visibility = 'hidden';
+  });
+  const image = decodePng(await page.locator('#view').screenshot());
+  await page.evaluate(() => {
+    for (const el of document.body.children) el.style.visibility = '';
+  });
+  return meanColor(image, 0, 0, image.width, image.height);
 }
 
 // Counts the page's animation frames into window.__FRAMES__ from its start:
@@ -935,14 +968,16 @@ function countFrames(page) {
 }
 
 // Resolves to what done(arg) returns in the page once it is truthy (it must
-// be serializable). Fails only if the page draws no frame for STALL_MS
-// (countFrames), or closes.
+// be serializable). Fails if the page draws no frame for STALL_MS
+// (countFrames), if it isn't done within DONE_MS, or if it closes.
 async function untilDone(page, done, arg) {
   let frames = -1;
   let since = Date.now();
+  const deadline = since + DONE_MS;
   for (;;) {
     const value = await page.evaluate(done, arg);
     if (value) return value;
+    if (Date.now() > deadline) throw new Error(`not done in ${DONE_MS / 1000} s`);
     const now = await page.evaluate(() => window.__FRAMES__);
     if (now !== frames) {
       frames = now;
@@ -1028,7 +1063,7 @@ function watchPage(page, fileUrl) {
   const consoleWarnings = [];
   page.on('console', (msg) => {
     if (msg.type() === 'error') problems.push(classify(msg.text()));
-    else if (msg.type() === 'warning' && GPU_ERROR.test(msg.text())) problems.push({ kind: 'webgpu error', text: msg.text() });
+    else if (msg.type() === 'warning' && GPU_ERROR.test(msg.text())) problems.push({ kind: 'webgpu warning', text: msg.text() });
     else if (msg.type() === 'warning') consoleWarnings.push(msg.text());
   });
   page.on('pageerror', (err) => problems.push({ kind: 'page error', text: err.stack ?? err.message }));
@@ -1158,9 +1193,9 @@ async function launch(mode) {
         throw new Error('WebGPU has a SwiftShader adapter on Linux only: run this in a Linux container (node tools/linux.js node tools/screenshot.js ...)');
       }
       browser = await chromium.launch({ headless: true, args: BACKENDS[kind] });
-      const gl = await probeWebGPU(browser);
+      const { gl, fallback } = (await probeWebGPU(browser)) ?? {};
       if (!gl) throw new Error('no WebGPU adapter');
-      if (kind === 'hardware' && SOFTWARE_GPU.test(gl)) throw new Error(`got a software adapter instead (${gl})`);
+      if (kind === 'hardware' && (SOFTWARE_GPU.test(gl) || fallback)) throw new Error(`got a software adapter instead (${gl})`);
       if (kind === 'swiftshader' && !/swiftshader/i.test(gl)) throw new Error(`got another adapter instead (${gl})`);
       return { browser, kind, gl };
     } catch (err) {
@@ -1181,7 +1216,8 @@ export function explainLaunchError(message) {
   return message.split('\n')[0];
 }
 
-// The adapter as gpu/device.js describes it ("google swiftshader"), or null without one.
+// { gl: the adapter as gpu/device.js describes it ("google swiftshader"),
+// fallback: whether it is a fallback (software) one }, or null without one.
 // WebGPU needs a secure context: the page is the built game's own file:// URL.
 async function probeWebGPU(browser) {
   const page = await browser.newPage();
@@ -1190,8 +1226,8 @@ async function probeWebGPU(browser) {
     return await page.evaluate(async () => {
       const adapter = await navigator.gpu?.requestAdapter({ powerPreference: 'high-performance' });
       if (!adapter) return null;
-      const { vendor, architecture, device, description } = adapter.info ?? {};
-      return [vendor, architecture, device, description].filter(Boolean).join(' ') || 'unknown adapter';
+      const { vendor, architecture, device, description, isFallbackAdapter } = adapter.info ?? {};
+      return { gl: [vendor, architecture, device, description].filter(Boolean).join(' ') || 'unknown adapter', fallback: Boolean(isFallbackAdapter) };
     });
   } finally {
     await page.close();

@@ -43,17 +43,26 @@ export const SOURCE_RULES = [
   { id: 'performance-now', name: 'performance.now', re: /\bperformance\.now\b/g, except: ['core/clock.js'] },
   { id: 'three-clock', name: 'three.js Clock/Timer', re: /\bnew\s+(THREE\.)?(Clock|Timer)\b/g },
   // MathUtils helpers, and the .random()/.randomDirection() of three's vectors and quaternions.
-  { id: 'three-random', name: 'three.js random helper', re: /\b(randInt|randFloat|randFloatSpread|seededRandom)\b|(?<!\bMath)\.random(Direction)?\s*\(/g },
-  // gpu/ draws; three.js is there for its maths only (CLAUDE.md §2): named
-  // imports from 'three' of THREE_MATHS, no namespace or subpath imports.
+  { id: 'three-random', name: 'three.js random helper', re: /\b(randInt|randFloat|randFloatSpread|seededRandom|generateUUID)\b|(?<!\bMath)\.random(Direction)?\s*\(/g },
+  // gpu/ draws; three.js is there for its maths only (CLAUDE.md §2). Every
+  // import or export from a module, and every import('...'), is matched; one
+  // that names three.js passes only as named imports from 'three' of THREE_MATHS.
   {
     id: 'three-maths',
     name: 'three.js beyond its maths',
-    re: /\b(?:import|export)\s+([^;]*?)\s*from\s*['"](three(?:\/[^'"]*)?)['"]|\bimport\s*['"]three\b[^'"]*['"]/g,
-    allow: (m) => m[2] === 'three' && /^\{[^}]*\}$/.test(m[1]) && importedNames(m[1]).every((name) => THREE_MATHS.has(name)),
+    re: /\b(?:import|export)\b\s*(?<clause>[^;'"`()]*?)\s*\bfrom\s*(['"])(?<from>[^'"]*)\2|\bimport\s*(?:\(\s*)?(['"`])(?<bare>[^'"`]*)\4/g,
+    allow: ({ groups: { clause, from, bare } }) => {
+      if (!namesThree(from ?? bare)) return true;
+      return from === 'three' && /^\{[^}]*\}$/.test(clause) && importedNames(clause).every((name) => THREE_MATHS.has(name));
+    },
     hint: 'import only its maths (THREE_MATHS), by name',
   },
 ];
+
+// Whether a module specifier is three.js: the package, a path into it, or its builds by path.
+function namesThree(specifier) {
+  return /^three(\/|$)|(^|\/)node_modules\/three(\/|$)|(^|\/)three\/(build|src)\//.test(specifier);
+}
 
 // What src/ may import from three.js: its maths (src/math/), DataUtils for
 // half floats, and the WebGPU clip space for the camera's projection.
@@ -104,11 +113,12 @@ export function checkSize(bytes, budget) {
   return { level: 'ok', message: '' };
 }
 
-// Source lint (SOURCE_RULES) over every .js file under srcDir. Comments are ignored.
+// Source lint (SOURCE_RULES) over every script under srcDir (.js, and the
+// other extensions Vite would compile). Comments are ignored.
 export function checkSources(srcDir) {
   const failures = [];
   for (const name of readdirSync(srcDir, { recursive: true })) {
-    if (!/\.(js|mjs)$/.test(name)) continue;
+    if (!/\.(js|mjs|cjs|jsx|ts|tsx|mts|cts)$/.test(name)) continue;
     const path = relative(srcDir, join(srcDir, name)).replaceAll('\\', '/');
     // Without comments, so docs may mention the forbidden APIs.
     const code = blankComments(readFileSync(join(srcDir, name), 'utf8'));
