@@ -131,9 +131,9 @@ const BLOCK = [0, 3, 1, 1, 3, 4, 1, 4, 2, 2, 4, 5, 3, 6, 4, 4, 6, 7, 4, 7, 5, 5,
 // coarser levels stray from the finest height by centimetres to metres, and
 // whatever stands on the ground must stand on what is drawn. tree as
 // createLod's; ranges and morphs from lodRanges; heightAtCove(a, o, from) samples
-// the grids as the GPU does (world/heightmap.js), heightLevels of them. Returns
-// meshHeight(a, o, cam) for a camera at cam = [a, y, o]: the height before the
-// planet's bend, NaN off the root. It allocates nothing.
+// the grids as the GPU does (world/heightmap.js), from grid heightLevels[L] at
+// level L. Returns meshHeight(a, o, cam) for a camera at cam = [a, y, o]: the
+// height before the planet's bend, NaN off the root. It allocates nothing.
 export function createMeshHeight({ origin, levels, leaf, grid }, { ranges, morphs }, heightAtCove, heightLevels) {
   // Quarters pair their quads into the coarser grid's, as whole nodes do.
   if (grid % 4) throw new Error(`terrain grid ${grid}: a quarter of a node needs an even number of quads`);
@@ -150,9 +150,9 @@ export function createMeshHeight({ origin, levels, leaf, grid }, { ranges, morph
     const a = a0 + ga[n] * spacing;
     const o = o0 + go[n] * spacing;
     const k = ks[n];
-    const fine = Math.min(level, heightLevels - 1);
+    const fine = heightLevels[level];
     if (k === 0) return heightAtCove(a, o, fine);
-    const coarse = heightAtCove(a, o, Math.min(level + 1, heightLevels - 1));
+    const coarse = heightAtCove(a, o, heightLevels[Math.min(level + 1, top)]);
     return k < 1 ? heightAtCove(a, o, fine) * (1 - k) + coarse * k : coarse;
   }
 

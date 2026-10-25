@@ -15,14 +15,14 @@ override LOD_LEVELS: i32 = 8;
 // length must be a literal for gpu/reflect.js).
 struct TerrainMesh {
   uMorph: array<vec4f, 16>, // per level, .xy: the distances over which it morphs into the next
-  uLodRange: array<vec4f, 16>, // per level, .x: how far it reaches (uniform arrays hold vec4f: reflect.js)
+  uLodRange: array<vec4f, 16>, // per level, .x: how far it reaches, .y: the grid its heights come from (uniform arrays hold vec4f: reflect.js)
   uLodTree: vec4f, // the quadtree's origin a, o; its leaves' size (m); quads across a node
 }
 
 @group(1) @binding(15) var<uniform> terrainMesh: TerrainMesh;
 
 fn terrainHeightLevel(level: i32) -> i32 {
-  return min(level, TERRAIN_LEVELS - 1);
+  return i32(terrainMesh.uLodRange[min(level, LOD_LEVELS - 1)].y);
 }
 
 // A vertex of a node at `level`, `grid` whole quads from `corner`, `spacing`

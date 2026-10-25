@@ -1,6 +1,7 @@
 // One mip level from the one above it (texture.js): each texel the average of
 // the four under it, as WebGL's generateMipmap made them (every mipmapped
-// texture here is a power of two across). An 8-bit target gets the average of
+// texture here is a power of two across, or for world/heightmap.js's grids a
+// multiple of 32, whose first five levels halve it exactly). An 8-bit target gets the average of
 // their 8-bit levels rounded half to even, WebGL's rounding: the GPU's own
 // conversion rounds halves up, and each level would come out brighter.
 

@@ -130,8 +130,8 @@ function drawPanel(island, heightmap, { name, u: [u0, u1], o: [o0, o1] }) {
   const width = Math.round((u1 - u0) * scale);
   const height = Math.round((o1 - o0) * scale);
   const side = island.settings.cove.headlandSide;
-  const { origin, texel } = heightmap.levels.at(-1);
-  const reach = (heightmap.samples - 1) * texel;
+  const { origin, texel, samples } = heightmap.levels.at(-1);
+  const reach = (samples - 1) * texel;
 
   // Per pixel the height, and the zone: drawn, or beyond the grids the
   // island's sample, whose zone waits for the slope across the pixels.
@@ -235,7 +235,7 @@ function describe(island) {
     last = { a, o, beach: s.beach };
   }
   // Beyond the cove: the coast traced in from the sea along rays from the
-  // island's middle, and its sandy stretches.
+  // island's middle, and its rocky stretches.
   const centre = [0, settings.coast.lobes.front - settings.size / 2];
   const outer = [];
   for (let k = 0; k < 720; k++) {
@@ -246,26 +246,29 @@ function describe(island) {
     const [a, o] = [centre[0] + r * Math.sin(t), centre[1] - r * Math.cos(t)];
     if (Math.hypot(a, o) >= settings.cove.radius + settings.cove.blend) outer.push({ a, o, sandy: at(r).beach > 0.5 });
   }
-  const beaches = [];
+  // Start the walk on sand, so a rocky stretch isn't split where the list wraps.
+  const start = Math.max(0, outer.findIndex((p) => p.sandy));
+  const rocky = [];
   let run = 0;
-  outer.forEach((p, i) => {
-    const q = outer[(i + 1) % outer.length];
+  for (let k = 0; k < outer.length; k++) {
+    const p = outer[(start + k) % outer.length];
+    const q = outer[(start + k + 1) % outer.length];
     const step = Math.hypot(q.a - p.a, q.o - p.o);
-    if (p.sandy && step < 50) run += step;
+    if (!p.sandy && step < 50) run += step;
     else if (run) {
-      beaches.push(run);
+      rocky.push(run);
       run = 0;
     }
-  });
-  if (run) beaches.push(run);
-  const long = beaches.filter((m) => m >= 100);
+  }
+  if (run) rocky.push(run);
+  const long = rocky.filter((m) => m >= 50);
   const b = island.bounds;
   return [
     `size ${settings.size} m, island bounds ${Math.round(b.maxX - b.minX)} x ${Math.round(b.maxZ - b.minZ)} m (world x, z)`,
     `highest point ${peak.height.toFixed(0)} m, ${Math.round(Math.hypot(peak.a, peak.o))} m from the beach`,
     `reef crest straight out from the beach: ${reefAt === null ? 'none' : `${reefAt} m`}`,
     `sandy shore around the cove: about ${Math.round(beach)} m`,
-    `beyond the cove: ${long.length} beaches of 100 m or more (${long.map((m) => Math.round(m / 10) * 10).join(', ')} m), ${Math.round((100 * outer.filter((p) => p.sandy).length) / outer.length)}% of the coast sand`,
+    `beyond the cove: ${long.length} rocky stretches of 50 m or more (${long.map((m) => Math.round(m / 10) * 10).join(', ')} m), ${Math.round((100 * outer.filter((p) => p.sandy).length) / outer.length)}% of the coast sand`,
   ];
 }
 

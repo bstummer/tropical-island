@@ -76,6 +76,13 @@ test('findView returns the view or throws with the known names', () => {
   assert.throws(() => findView('underwater'), /Unknown view "underwater".*beach/);
 });
 
+test('a disabled view is found by name but left out of the runs over the views', () => {
+  const disabled = findView('summit');
+  assert.equal(disabled.disabled, true);
+  assert.ok(!views.includes(disabled));
+  assert.ok(views.length > 0 && views.every((v) => !v.disabled));
+});
+
 test('config defaults point at things that exist', () => {
   assert.doesNotThrow(() => findView(config.defaults.view));
   assert.ok(config.quality.presets[config.quality.default]);
@@ -87,11 +94,21 @@ test('config defaults point at things that exist', () => {
   assert.ok(config.post.exposure > 0);
 });
 
-test('the haze reaches past the horizon from every view', () => {
-  const { groundRadius } = config.sky.atmosphere;
+test('the haze reaches as far as every view sees: past the horizon, or the farthest ground in its frame', () => {
+  const R = config.sky.atmosphere.groundRadius; // km
+  const ASPECT = 21 / 9; // as wide as screens come
   for (const view of views) {
-    const horizon = Math.sqrt(2 * groundRadius * (view.position[1] / 1000)); // km
-    assert.ok(config.sky.aerialRange > horizon, `${view.name}: horizon ${horizon.toFixed(1)} km, aerial range ${config.sky.aerialRange} km`);
+    const h = view.position[1] / 1000; // km
+    const p = (view.pitch * Math.PI) / 180;
+    const t = Math.tan(((view.fov ?? config.camera.fov) * Math.PI) / 360);
+    // The frame's top corners look highest: how far below level.
+    const down = -Math.atan2(Math.sin(p) + t * Math.cos(p), Math.hypot(t * ASPECT, Math.cos(p) - t * Math.sin(p)));
+    // Where a ray that far down meets the sea, on the round planet; the horizon
+    // if it looks up or passes over it.
+    const b = (R + h) * Math.sin(down);
+    const reach = b * b - (2 * R * h + h * h);
+    const farthest = b > 0 && reach >= 0 ? b - Math.sqrt(reach) : Math.sqrt(2 * R * h + h * h);
+    assert.ok(config.sky.aerialRange > farthest, `${view.name}: it sees ${farthest.toFixed(1)} km, aerial range ${config.sky.aerialRange} km`);
   }
 });
 

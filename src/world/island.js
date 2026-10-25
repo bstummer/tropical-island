@@ -5,10 +5,14 @@
 //
 // Everything hangs off the coast: a signed distance to the shore (positive
 // inland) built from shapes, from which the beach, the seabed and the zones
-// follow by how far a point lies from the water. The reef follows a line of
-// its own, smoother than the coast. The hills are a volcano, a steep cone on a
-// broad shield cut by valleys that radiate from the summit, one of them
-// running down to the cove, with the ridges that frame the cove on top.
+// follow by how far a point lies from the water, and the green's bands also
+// by how far the hills have risen. The coast is beach but for the headland's
+// cliff and a rocky cape or two beyond the cove, where a coastal flat of
+// changing width lies before the hills. The reef follows a line of its own,
+// smoother than the coast. The hills are a volcano, a steep cone on a broad
+// shield cut by valleys that radiate from the summit, one of them running
+// down to the cove, with the ridges that frame the cove on top, all cut by
+// gullies running straight down their slopes.
 //
 // The cove is art-directed in a frame of its own: its beach is the world's
 // origin, and it looks out to sea towards the setting sun
@@ -20,9 +24,9 @@
 //
 // Units are metres, heights above sea level. Settings: config.world.island.
 //
-// What is drawn is the heightmap made from this (world/heightmap.js), which
-// misses it by centimetres in the bay and up to decimetres, on cliffs metres,
-// on the coarser grids: anything that stands on the ground takes its height
+// What is drawn is the heightmap made from this (world/heightmap.js), its
+// samples 2 m apart over the land and the shallows, which misses it by
+// centimetres, on cliffs by up to metres: anything that stands on the ground takes its height
 // from ctx.terrain.heightAt, the ground as drawn. The coast's distance is the
 // shapes' and only roughly metres: across the shore it changes by 0.5 to 1.7
 // a metre, so bands measured in it (the zones) vary in width on the ground.
@@ -38,6 +42,10 @@ export const ZONES = [...SEA_ZONES, 'rock', ...LAND_ZONES];
 
 const DEG = Math.PI / 180;
 
+// How fast the noise (and its fbm) typically changes a unit across: where it
+// crosses zero, 1.27; to turn metres into noise.
+const NOISE_SLOPE = 1.25;
+
 // The ground's band and reef offset (groundOf) are held within these: beyond
 // them they tell nothing more, and on the GPU their half floats stay precise.
 const BAND_RANGE = [-1, 4];
@@ -46,7 +54,7 @@ const REEF_RANGE = 250;
 // rng: a seeded random factory (core/random.js createRandom), so the seed shapes
 // the island. sunsetYaw: the view yaw (views.js) looking into the setting sun.
 export function createIsland(rng, settings = config.world.island, sunsetYaw = config.sky.sun.sunsetYaw) {
-  const { size, cove, coast, hills, shore, seabed, zones } = settings;
+  const { size, cove, coast, hills, roughness, shore, seabed, zones } = settings;
   if (!(size >= settings.minSize)) throw new Error(`world.island.size ${size} m is below minSize ${settings.minSize} m`);
   const side = cove.headlandSide;
   if (side !== 1 && side !== -1) throw new Error(`world.island.cove.headlandSide must be 1 or -1, not ${side}`);
@@ -74,6 +82,7 @@ export function createIsland(rng, settings = config.world.island, sunsetYaw = co
   const channel = segments(alongPath(seabed.channel.path));
   const ridges = hills.ridges.flatMap(segments);
   const coveAngle = Math.atan2(-summitA, -summitO); // from the summit down to the beach
+  const capes = findCapes(rng('island/capes'));
 
   // How much the rest of the island has its say at a point: 0 in the cove,
   // where nothing may depend on the size, 1 beyond its blend band.
@@ -117,49 +126,175 @@ export function createIsland(rng, settings = config.world.island, sunsetYaw = co
 
   // How sandy the shore is, 0 (rock) to 1 (beach). It changes slowly along the
   // coast: how steeply the hills come down to the shore follows it, and a
-  // sudden change would leave a cliff running inland.
-  function beachiness(a, o, w, broad) {
+  // sudden change would leave a cliff running inland. In the cove the headland
+  // is rock; beyond it the coast is sand but for the capes.
+  function beachiness(a, o, w) {
     const { sand } = cove;
-    let b = (1 - smoothstep(sand.headland[0], sand.headland[1], a)) * (sand.far[2] + (1 - sand.far[2]) * smoothstep(sand.far[0], sand.far[1], a));
+    let b = 1 - smoothstep(sand.headland[0], sand.headland[1], a) * smoothstep(sand.back[1], sand.back[0], o);
     b *= 1 - smoothstep(-sand.fade, 0, capsuleInside(a, o, headland));
     if (w > 0) {
-      const { islandSand } = shore;
-      const n = zoneNoise(a / islandSand.wavelength, o / islandSand.wavelength);
-      const island = smoothstep(...islandSand.edges, islandSand.noise * n + bayness(a, o, broad));
+      let island = 1;
+      for (const c of capes) {
+        const da = a - c.a;
+        const dz = o - c.o;
+        island = Math.min(island, smoothstep(c.radius, c.radius + shore.capes.fade, Math.sqrt(da * da + dz * dz)));
+      }
       b += w * (island - b);
     }
     return b;
   }
 
   // How much the coast curves round the water near a, o, per km: positive in a
-  // bay, negative on a point. The broad coast's Laplacian over bayScale metres,
-  // only near the shore, where it decides the beach; it fades out away from it.
-  function bayness(a, o, broad) {
+  // bay, negative on a point. The broad coast's Laplacian over `scale` metres,
+  // only near the shore, where it shapes the zones; it fades out away from it.
+  function bayness(a, o, broad, scale = shore.bayScale) {
     const near = 1 - smoothstep(250, 350, Math.abs(broad));
     if (near === 0) return 0;
-    const s = shore.islandSand.bayScale;
     const at = (da, dO) => broadCoast(a + da, o + dO, islandWeight(a + da, o + dO));
-    return (near * 1000 * (at(s, 0) + at(-s, 0) + at(0, s) + at(0, -s) - 4 * broad)) / (s * s);
+    return (near * 1000 * (at(scale, 0) + at(-scale, 0) + at(0, scale) + at(0, -scale) - 4 * broad)) / (scale * scale);
   }
+
+  // Beyond the cove, what the flat behind a beach adds to its plain, d metres
+  // inland: the ridges old beaches have left, parallel to the shore, their
+  // spacing and how far inland they reach changing along the coast, and
+  // hummocks over them (shore.beach.island).
+  function oldBeaches(d, a, o) {
+    const { ridges, spacing, from, to, hummocks } = shore.beach.island;
+    const along = (dx, dz, length) => smoothstep(-0.5, 0.5, hillNoise(a / length + dx, o / length + dz));
+    const reach = between(to, along(-3.3, 19.4, 500));
+    const there = smoothstep(from, from + 20, d) * (1 - smoothstep(reach - 60, reach, d));
+    const crests = 0.5 - 0.5 * Math.cos((2 * Math.PI * d) / between(spacing, along(12.9, -77.1, 300)));
+    const [high, wavelength] = hummocks;
+    return ridges * there * crests + high * smoothstep(from, from + 30, d) * fbm(hillNoise, a / wavelength + 91.1, o / wavelength - 14.4, 2);
+  }
+
+  // Beyond the cove, how far a beach's plain lies flat before the hills rise
+  // (shore.plain.flat), changing slowly along the coast.
+  function flatAt(a, o) {
+    const { flat, wavelength } = shore.plain;
+    return flat[0] + (flat[1] - flat[0]) * smoothstep(-0.5, 0.5, hillNoise(a / wavelength + 61.1, o / wavelength - 23.4));
+  }
+
+  // The rocky capes beyond the cove (shore.capes): the coast traced in from the
+  // sea along rays from the island's middle, and the points where it juts out
+  // furthest, kept apart from each other and from the headland's root. In the
+  // cove's frame, so the headland's side doesn't change them.
+  function findCapes(r) {
+    const { count, length, scale, spacing, rays } = shore.capes;
+    if (count === 0) return [];
+    const radii = Array.from({ length: count }, () => r.range(...length) / 2);
+    const broadAt = (a, o) => broadCoast(a, o, islandWeight(a, o));
+    const centre = lobes[0];
+    let far = 0;
+    for (const l of lobes) far = Math.max(far, Math.hypot(l.a - centre.a, l.o - centre.o) + Math.max(l.ra, l.ro));
+    far += coast.island.swing + coast.lobeBlend;
+    const points = [];
+    for (let k = 0; k < rays; k++) {
+      const t = (2 * Math.PI * k) / rays;
+      const [da, dO] = [Math.sin(t), -Math.cos(t)];
+      let lo = far;
+      while (lo > 0 && broadAt(centre.a + lo * da, centre.o + lo * dO) < 0) lo -= 20;
+      let hi = lo + 20;
+      for (let i = 0; i < 12; i++) {
+        const mid = (lo + hi) / 2;
+        if (broadAt(centre.a + mid * da, centre.o + mid * dO) > 0) lo = mid;
+        else hi = mid;
+      }
+      const [a, o] = [centre.a + lo * da, centre.o + lo * dO];
+      if (Math.hypot(a, o) < cove.radius + cove.blend) continue; // the cove's own
+      points.push({ a, o, bay: bayness(a, o, broadAt(a, o), scale) });
+    }
+    points.sort((p, q) => p.bay - q.bay);
+    const [rootA, rootO] = cove.headland.path[0];
+    const kept = [{ a: rootA, o: rootO }];
+    for (const p of points) {
+      if (kept.length > count) break;
+      if (kept.every((c) => Math.hypot(c.a - p.a, c.o - p.o) >= spacing)) kept.push(p);
+    }
+    return kept.slice(1).map((p, i) => ({ a: p.a, o: p.o, radius: radii[i] }));
+  }
+
+  // The slope of the shape the last volcano() or ridgeHeight() worked out:
+  // the land's lie at the scale of its valleys and spurs, not of its bumps.
+  let shapeSlope = 0;
+  const ridgeOut = { slope: 0 };
+  // hillHeight()'s: the slope of whichever of its shapes stands highest
+  // there, blended where they meet as smax blends them, so it runs on.
+  let hillSlope = 0;
 
   // The hills, as heights above sea level before they meet the shore.
   function hillHeight(a, o, w) {
-    const { warp, detail, gullies } = hills;
+    const { warp, detail, creases } = hills;
     const wa = a + warp.amplitude * hillNoise(a / warp.wavelength + 5.2, o / warp.wavelength);
     const wo = o + warp.amplitude * hillNoise(a / warp.wavelength - 7.4, o / warp.wavelength + 3.3);
 
     // The main volcano, its valley down to the cove, and older, lower ones on
     // the island's other lobes.
     let h = volcano(wa, wo, summit, true);
-    if (w > 0) for (const p of peaks) h = smax(h, w * volcano(wa, wo, p, false), hills.join);
+    hillSlope = shapeSlope;
+    // Joins x, of this slope, onto h.
+    const join = (x, slope) => {
+      hillSlope += Math.min(Math.max(0.5 + (0.5 * (x - h)) / hills.join, 0), 1) * (slope - hillSlope);
+      h = smax(h, x, hills.join);
+    };
+    if (w > 0) for (const p of peaks) join(w * volcano(wa, wo, p, false, h - hills.join), w * shapeSlope);
 
     // The ridges that frame the cove.
-    for (const s of ridges) h = smax(h, ridgeHeight(wa, wo, s, hills), hills.join);
-    if (h <= 0) return 0;
+    for (const s of ridges) join(ridgeHeight(wa, wo, s, hills, gully, ridgeOut), ridgeOut.slope);
+    if (h <= 0) {
+      hillSlope = 0;
+      return 0;
+    }
 
     const bumps = (detail.share * h + detail.base) * fbm(hillNoise, wa / detail.wavelength, wo / detail.wavelength, detail.octaves);
-    const groove = 1 - Math.abs(fbm(hillNoise, wa / gullies.wavelength + 50.1, wo / gullies.wavelength - 20.7, 3));
-    return Math.max(0, h + bumps - gullies.share * h * groove * groove);
+    const crease = 1 - softAbs(fbm(hillNoise, wa / creases.wavelength + 50.1, wo / creases.wavelength - 20.7, 3), (creases.round * NOISE_SLOPE) / creases.wavelength);
+    return Math.max(0, h + bumps - creases.share * h * crease * crease);
+  }
+
+  // How high the ground's roughness stands at a, o (roughness), where the
+  // land's shape has this slope and the land stands this high: rougher on
+  // steep ground than on flats and valley floors, more in some stretches than
+  // others, and with room only down to roughness.floor above the sea.
+  function roughHeight(a, o, slope, land) {
+    const { base, flat, steep, patches, floor } = roughness;
+    const room = land - floor;
+    if (room <= 0) return 0;
+    const patch = smoothstep(-0.4, 0.4, hillNoise(a / patches.wavelength + 71.3, o / patches.wavelength - 22.9));
+    const high = base * between(patches.range, patch) * (flat + (1 - flat) * smoothstep(steep[0], steep[1], slope));
+    return room * (1 - Math.exp(-high / room)); // `high` where there's room, and never more than the room
+  }
+
+  // Roughness over `wavelength` and roughness.octaves finer ones, each `gain`
+  // as high as the last, about -1 to 1.
+  function roughAt(a, o, wavelength) {
+    const { octaves, gain } = roughness;
+    let sum = hillNoise(a / wavelength - 61.7, o / wavelength + 27.3);
+    let x = a / wavelength;
+    let y = o / wavelength;
+    let amplitude = 1;
+    for (let k = 0; k < octaves; k++) {
+      const nx = 2 * (0.8 * x - 0.6 * y) + 13.1;
+      y = 2 * (0.6 * x + 0.8 * y) - 7.9;
+      x = nx;
+      amplitude *= gain;
+      sum += amplitude * hillNoise(x, y);
+    }
+    return sum / 1.5;
+  }
+
+  // A gully, 0 to 1, from noise n that changes `across` a metre across it:
+  // sharp grooves where it crosses zero, their floors rounded over
+  // gullies.round metres.
+  function groove(n, across) {
+    return (1 - softAbs(n, hills.gullies.round * across)) ** hills.gullies.sharp;
+  }
+
+  // A gully at `across` metres along the slope's contour and `down` metres
+  // down it: the noise changes slowly down the slope, so the gullies run
+  // straight down it, wandering.
+  function gully(across, down) {
+    const { spacing, length } = hills.gullies;
+    return groove(hillNoise(across / spacing + 17.3, down / length - 41.9), NOISE_SLOPE / spacing);
   }
 
   // A volcano worn down by valleys that radiate from its top: a steep cone on a
@@ -167,7 +302,10 @@ export function createIsland(rng, settings = config.world.island, sunsetYaw = co
   // seam) is far from zero. Ridges run where it crosses zero, sharp; the
   // valleys between them are broad. Further down there is room for more, and
   // the valleys branch. With `toCove`, one valley runs down to the cove's beach.
-  function volcano(wa, wo, v, toCove) {
+  // Below `floor` its valleys and gullies aren't worked out: they only lower
+  // it, and what it is joined to lies a join's width above it there. Its
+  // profile's slope there, worn down as it is, goes to shapeSlope.
+  function volcano(wa, wo, v, toCove, floor = -Infinity) {
     const { valleys } = hills;
     const da = wa - v.a;
     const dz = wo - v.o;
@@ -175,8 +313,14 @@ export function createIsland(rng, settings = config.world.island, sunsetYaw = co
     const r = Math.sqrt(r2);
     const fromTop = Math.sqrt(r2 + hills.summitRound * hills.summitRound) - hills.summitRound;
     let h = 0;
-    for (const [share, falloff] of v.profile) h += share * v.height * Math.exp(-fromTop / falloff);
-    if (r <= valleys.from) return h;
+    let fall = 0; // how fast it falls with r
+    for (const [share, falloff] of v.profile) {
+      const part = share * v.height * Math.exp(-fromTop / falloff);
+      h += part;
+      fall += part / falloff;
+    }
+    shapeSlope = (fall * r) / (fromTop + hills.summitRound);
+    if (r <= valleys.from || h <= floor) return h;
     const c = dz / r;
     const s = da / r;
     let open = 0;
@@ -185,28 +329,68 @@ export function createIsland(rng, settings = config.world.island, sunsetYaw = co
       const weight = k === 0 ? 1 : smoothstep(valleys.branch[k - 1][0], valleys.branch[k - 1][1], r);
       if (weight === 0) break;
       const around = (v.valleys << k) / (2 * Math.PI);
-      open += weight * Math.abs(hillNoise(around * c + r / valleys.length + 13.7 * k + v.a / 97, around * s - 4.1 * k + v.o / 89));
+      open += weight * softAbs(hillNoise(around * c + r / valleys.length + 13.7 * k + v.a / 97, around * s - 4.1 * k + v.o / 89), valleys.round);
       total += weight;
     }
-    let cut = valleys.depth * Math.min(1, open / total / valleys.saturate);
+    // The ridges between the valleys rounded on top, and their floors into their sides.
+    let cut = valleys.depth * smin(open / total / valleys.saturate, 1, valleys.round / valleys.saturate);
     if (toCove) {
       const off = Math.atan2(s * Math.cos(coveAngle) - c * Math.sin(coveAngle), c * Math.cos(coveAngle) + s * Math.sin(coveAngle));
       const along = Math.exp(-((off / (valleys.cove.width * DEG)) ** 2));
       cut += along * (valleys.cove.depth - cut);
     }
-    return h * (1 - cut * smoothstep(valleys.from, valleys.full, r));
+    const worn = 1 - cut * smoothstep(valleys.from, valleys.full, r);
+    h *= worn;
+    shapeSlope *= worn;
+    // Gullies down the flanks, radiating from the top: their number round the
+    // circle gives them `spacing` where they are full, and doubles beyond each
+    // of the valleys' branch bands, so they stay about as close further down.
+    const { gullies } = hills;
+    if (r <= gullies.from) return h;
+    // Read round a circle, as the valleys are, so they wrap without a seam.
+    let grooves = 0;
+    let weights = 0;
+    for (let k = 0; k < valleys.branch.length + 1; k++) {
+      const weight = k === 0 ? 1 : smoothstep(valleys.branch[k - 1][0], valleys.branch[k - 1][1], r);
+      if (weight === 0) break;
+      const around = (k === 0 ? gullies.full : valleys.branch[k - 1][1]) / gullies.spacing;
+      grooves += weight * groove(hillNoise(around * c + r / gullies.length + 29.1 * (k + 1) + v.a / 61, around * s - 15.7 * (k + 1) + v.o / 53), (NOISE_SLOPE * around) / r);
+      weights += weight;
+    }
+    const gullied = 1 - gullies.depth * smoothstep(gullies.from, gullies.full, r) * (grooves / weights);
+    shapeSlope *= gullied;
+    return h * gullied;
+  }
+
+  // How sheer a rocky shore is at a, o, 0 to 1, changing slowly along the
+  // coast: its wall's height and how close the hills come follow it
+  // (shore.rocky). The headland's face towards the bay is sheer. Not worked
+  // out where the shore is all sand.
+  function sheerAt(a, o, b, w) {
+    if (b >= 1) return 0;
+    const { wavelength } = shore.rocky;
+    const sheer = smoothstep(-0.5, 0.5, hillNoise(a / wavelength + 83.1, o / wavelength - 52.6));
+    return Math.max(sheer, (1 - w) * (1 - smoothstep(...cove.headland.sheer, a)));
   }
 
   // The shore's own rise inland: a beach with a berm and a gentle plain behind
-  // it, or a steep rocky shore.
-  function shoreHeight(d, b, a, o) {
+  // it, or a rocky shore's wall and the rise behind it, both beyond the cove
+  // (w) as shore.beach.island and shore.rocky.island have them.
+  function shoreHeight(d, b, a, o, w, sheer) {
     const { beach, rocky, undulation } = shore;
     // The plain rises from plainFrom metres inland, eased in: less the ease's
     // own little rise at the waterline, so the beach starts at the sea.
     const plainIn = softplus(d - beach.plainFrom, 10) - softplus(-beach.plainFrom, 10);
-    const sandy = beach.berm * Math.tanh(d / beach.bermWidth) + beach.plain * (1 - Math.exp(-plainIn / beach.plainReach));
-    const rockyRise = rocky.lip * Math.tanh(d / rocky.lipWidth) + rocky.rise * (1 - Math.exp(-d / rocky.reach));
+    const berm = beach.berm + w * (beach.island.berm - beach.berm);
+    const bermWidth = beach.bermWidth + w * (beach.island.bermWidth - beach.bermWidth);
+    const plain = beach.plain + w * (beach.island.plain - beach.plain);
+    let sandy = berm * Math.tanh(d / bermWidth) + plain * (1 - Math.exp(-plainIn / beach.plainReach));
+    if (w > 0 && d > beach.island.from) sandy += w * oldBeaches(d, a, o);
     const swell = undulation.amplitude * smoothstep(...undulation.from, d) * hillNoise(a / undulation.wavelength - 40.2, o / undulation.wavelength + 8.8);
+    if (b >= 1) return Math.max(sandy + swell, 0.02 * d);
+    const wall = between(rocky.wall, sheer) + w * (between(rocky.island.wall, sheer) - between(rocky.wall, sheer));
+    const rise = rocky.rise + w * (rocky.island.rise - rocky.rise);
+    const rockyRise = wall * Math.tanh(d / rocky.wallWidth) + rise * (1 - Math.exp(-d / rocky.reach));
     // Never below the water: the waterline is where the coast says.
     return Math.max(rockyRise + b * (sandy - rockyRise + swell), 0.02 * d);
   }
@@ -327,15 +511,46 @@ export function createIsland(rng, settings = config.world.island, sunsetYaw = co
     const w = islandWeight(a, o);
     const broad = broadCoast(a, o, w);
     const d = coastDistance(a, o, w, broad);
-    const b = beachiness(a, o, w, broad);
+    const b = beachiness(a, o, w);
     const reef = reefOffset(a, o, w, broad);
     let height;
     if (d >= 0) {
-      const base = shoreHeight(d, b, a, o);
-      const taper = smoothstep(0, shore.rocky.hillReach + b * (shore.beach.hillReach - shore.rocky.hillReach), d);
-      height = smax(base, hillHeight(a, o, w) * taper, shore.hillJoin * taper);
+      const sheer = sheerAt(a, o, b, w);
+      const base = shoreHeight(d, b, a, o, w, sheer);
+      const hills = hillHeight(a, o, w);
+      // The hills come down to a rocky shore the closer the sheerer it is.
+      const near = between(shore.rocky.hillReach, 1 - sheer);
+      const rocky = near + w * (between(shore.rocky.island.hillReach, 1 - sheer) - near);
+      let reach = rocky + b * (shore.beach.hillReach - rocky);
+      let from = 0;
+      if (w > 0) {
+        // Beyond the cove a beach's plain lies flat before the hills rise, and
+        // they rise over plain.ramp, or further for tall ones, no steeper than
+        // plain.slope (the taper's steepest is 1.5 x their height over its
+        // reach), but over no more than plain.reach, so the peaks further in
+        // keep their height. No cliffs but the capes'.
+        const { plain } = shore;
+        const island = smin(smax(rocky + b * (plain.ramp - rocky), (1.5 * hills) / plain.slope, plain.ease), plain.reach, plain.ease);
+        reach += w * (island - reach);
+        from = w * b * flatAt(a, o);
+      }
+      const taper = smoothstep(from, from + reach, d);
+      height = smax(base, hills * taper, shore.hillJoin * taper);
+      out.rise = height - base;
+      out.land = height;
+      // The ground's roughness, the shore's and the hills' alike: on the hills,
+      // where they fade out towards the shore, it would fade with them. As
+      // steep as the hills' shapes, tapered, and as they rise out of the plain
+      // (the taper's own slope).
+      if (d > roughness.from[0]) {
+        const u = Math.min(Math.max((d - from) / reach, 0), 1);
+        const steepness = hillSlope * taper + (hills * 6 * u * (1 - u)) / reach;
+        height += roughHeight(a, o, steepness, height) * smoothstep(...roughness.from, d) * roughAt(a, o, roughness.wavelength);
+      }
     } else {
       height = seabedHeight(-d, reef, b, a, o);
+      out.rise = 0;
+      out.land = height;
     }
     out.height = height;
     out.coast = d;
@@ -358,7 +573,8 @@ export function createIsland(rng, settings = config.world.island, sunsetYaw = co
   }
 
   // What the ground is at a sampled point, given its slope there (rise over
-  // run), into `out`: how much of it is sand and how much rock (the rest is
+  // run) and the slope of the land under its roughness (`land`, evaluate's
+  // out.land), into `out`: how much of it is sand and how much rock (the rest is
   // green), `band`, how far into the green it lies (0 where the shore's band
   // ends, 1 where the scrub does, 2 where the palm belt does), the reef's
   // offset, and `sandy`, how much of the soil is sand: behind a beach, whose
@@ -368,23 +584,72 @@ export function createIsland(rng, settings = config.world.island, sunsetYaw = co
   // the zones follow from it (zoneFrom).
   const rockSlope = zones.rockSlope.map((deg) => Math.tan(deg * DEG));
   const sandSlope = zones.sandSlope.map((deg) => Math.tan(deg * DEG));
-  function groundOf(s, slope, out = {}) {
-    const { coast: d, beach: b, a, o } = s;
-    // The bands' edges inland swing with the same slow noise, so they keep their order.
-    const n = zoneNoise(a / zones.wavelength + 70.3, o / zones.wavelength - 15.1);
-    const into = d - (zones.shore + zones.shoreSwing * n);
-    const palmBelt = zones.palmBelt + zones.palmBeltSwing * n;
-    const band = into < zones.scrub ? into / zones.scrub : 1 + (into - zones.scrub) / palmBelt;
+  const cliffSlope = zones.cliffSlope.map((deg) => Math.tan(deg * DEG));
+  // The bands' widest (a bay adds at most 2 x `bay`). Out at sea beyond the
+  // shore's narrowest less the scrub's widest, the band is the lowest of
+  // BAND_RANGE and the point in the shore's band, whatever the widths; inland
+  // beyond the shore's and the scrub's widest and three of the palm belt's,
+  // the band is the highest and the shore's band far behind. There the widths
+  // aren't worked out, which saves most of the grids' samples their noise.
+  const { shore: sh, scrub: sc, palmBelt: pb } = zones;
+  const widest = {
+    shore: sh.width + sh.swing[1] + 2 * sh.bay + sh.ragged[0],
+    scrub: sc.width + sc.swing + 2 * sc.bay + sc.ragged[0],
+    palmBelt: pb.width + pb.swing + pb.ragged[0],
+  };
+  const outAtSea = sh.min - widest.scrub;
+  const deepInland = widest.shore + widest.scrub + (BAND_RANGE[1] - 1) * widest.palmBelt;
+  function groundOf(s, slope, out = {}, land = slope) {
+    const { coast: d, beach: b, rise, a, o } = s;
+    // Each band's width swings along the coast with a noise of its own, and its
+    // inland edge frays. Each edge lies inland of the last, and none changes
+    // faster across the ground than the shore falls behind, so walking inland
+    // the bands come in order: the noise stays gentle, and the land does the
+    // rest (below).
+    let shoreWidth = sh.width;
+    let scrub = sc.width;
+    let palmBelt = pb.width;
+    if (d > outAtSea && d < deepInland) {
+      const w = islandWeight(a, o);
+      const curve = w > 0 ? w * Math.min(Math.max(bayness(a, o, broadCoast(a, o, w)), -2), 2) : 0;
+      const swing = (dx, dz) => zoneNoise(a / zones.wavelength + dx, o / zones.wavelength + dz);
+      const fray = ([metres, wavelength], dx, dz) => metres * fbm(zoneNoise, a / wavelength + dx, o / wavelength + dz, 2);
+      const shoreSwing = sh.swing[0] + w * (sh.swing[1] - sh.swing[0]);
+      shoreWidth = Math.max(sh.min, sh.width + shoreSwing * swing(70.3, -15.1) + sh.bay * curve + fray(sh.ragged, 12.3, -41.9));
+      scrub = Math.max(sc.min, sc.width + sc.swing * swing(-33.6, 52.8) - sc.bay * curve + fray(sc.ragged, -27.4, 8.6));
+      palmBelt = Math.max(pb.min, pb.width + pb.swing * swing(45.2, 91.7) + fray(pb.ragged, 63.9, -70.2));
+    }
+    const into = d - shoreWidth;
+    // The palm belt holds the low ground behind the shore and ends as the hills
+    // rise above the shore's plain, narrowed by 1 + rise / palmBelt.rise: it
+    // covers the coastal flats and reaches up valley floors, and the jungle
+    // comes down the spurs.
+    const band = into < scrub ? into / scrub : 1 + ((into - scrub) / palmBelt) * (1 + rise / pb.rise);
     // The shore's band is sand as far as the shore is sandy and the ground
-    // flat enough for sand to lie on, and rock otherwise; inland, ground too
-    // steep for soil is rock. The sand in sandy soil gives way on slopes as
-    // the beach's does.
+    // flat enough for sand to lie on, and rock otherwise; inland, land too
+    // steep for soil is rock. Sand, and the sand in sandy soil, goes by the
+    // ground's slope as it is; rock by the land's under its roughness, so it
+    // stands out where the land is steep, not on the sides of its bumps.
     const onShore = 1 - smoothstep(-zones.edge, zones.edge, into);
-    const holds = 1 - smoothstep(sandSlope[0], sandSlope[1], slope);
+    // Beyond the reef's crest the seabed drops off steeper than a coarse grid
+    // sees, its cells spanning the drop: judged by at least the steepest the
+    // drop-off gets within its own width of the point, no level lays sand on it.
+    const { fore } = seabed.reef;
+    const drop = d < 0 && s.reef > 0 ? (fore.drop / fore.dropWidth) * Math.exp(-Math.max(0, s.reef - fore.dropWidth) / fore.dropWidth) + fore.slope : 0;
+    const holds = 1 - smoothstep(sandSlope[0], sandSlope[1], Math.max(slope, drop));
     const sand = smoothstep(0.4, 0.6, b) * holds;
-    const steep = smoothstep(rockSlope[0], rockSlope[1], slope);
+    const steep = smoothstep(rockSlope[0], rockSlope[1], land);
+    // Where the shore's band isn't sand, it is bare rock as far as it is a
+    // cliff, the waves and their spray reach it, or rock fallen from a sheer
+    // cliff lies at its foot (where the hills have risen little yet), and
+    // green elsewhere: the green comes down to a cliff's edge and over gentler
+    // slopes to the spray, not to a line along the shore.
+    const cliff = smoothstep(cliffSlope[0], cliffSlope[1], land);
+    const spray = 1 - smoothstep(zones.splash[0], zones.splash[1], s.height);
+    const fallen = b < 1 ? sheerAt(a, o, b, islandWeight(a, o)) * (1 - smoothstep(zones.talus[0], zones.talus[1], rise)) : 0;
+    const bare = Math.max(cliff, spray, fallen);
     out.sand = onShore * sand;
-    out.rock = onShore * (1 - sand) + (1 - onShore) * steep;
+    out.rock = onShore * (1 - sand) * bare + (1 - onShore) * steep;
     out.sandy = smoothstep(0.4, 0.6, b) * (1 - smoothstep(0, zones.sandy, into)) * holds;
     out.band = Math.min(Math.max(band, BAND_RANGE[0]), BAND_RANGE[1]);
     out.reef = Math.min(Math.max(s.reef, -REEF_RANGE), REEF_RANGE);
@@ -422,16 +687,19 @@ export function createIsland(rng, settings = config.world.island, sunsetYaw = co
     return g.band < 1 ? 'scrub' : g.band < 2 ? 'palm-belt' : 'jungle';
   }
 
-  // The zone of a sampled point, given the ground's slope there.
-  const zoneOf = (s, slope) => zoneFrom(groundOf(s, slope), s.height);
+  // The zone of a sampled point, given the ground's slope there, and the land's.
+  const zoneOf = (s, slope, land = slope) => zoneFrom(groundOf(s, slope, {}, land), s.height);
 
   const scratch = {};
-  const heightAt = (x, z) => evaluate(side * (x * right[0] + z * right[1]), x * forward[0] + z * forward[1], scratch).height;
+  const at = (x, z) => evaluate(side * (x * right[0] + z * right[1]), x * forward[0] + z * forward[1], scratch);
+  const heightAt = (x, z) => at(x, z).height;
 
-  // Slope (rise over run) by central differences over `step` metres.
-  function slope(x, z, step = 0.5) {
-    const gx = (heightAt(x + step, z) - heightAt(x - step, z)) / (2 * step);
-    const gz = (heightAt(x, z + step) - heightAt(x, z - step)) / (2 * step);
+  // Slope (rise over run) by central differences over `step` metres: of the
+  // ground, and with `land` of the land under its roughness.
+  function slope(x, z, step = 0.5, land = false) {
+    const h = land ? (px, pz) => at(px, pz).land : heightAt;
+    const gx = (h(x + step, z) - h(x - step, z)) / (2 * step);
+    const gz = (h(x, z + step) - h(x, z - step)) / (2 * step);
     return Math.sqrt(gx * gx + gz * gz);
   }
 
@@ -446,20 +714,24 @@ export function createIsland(rng, settings = config.world.island, sunsetYaw = co
     evaluate,
     // Height above sea level at world x, z (not as drawn: see the top).
     height: heightAt,
-    // { height, coast, beach, reef, a, o }: the height, the signed distance to the
-    // shore (positive inland), how sandy the shore is (0 to 1), the distance out
-    // to sea from the reef's crest, and the point in the cove's frame.
+    // { height, land, coast, beach, rise, reef, a, o }: the height, the height
+    // of the land under its roughness, the signed distance to the shore
+    // (positive inland), how sandy the shore is (0 to 1), how far the hills
+    // have risen above the shore's own rise, the distance out to sea from the
+    // reef's crest, and the point in the cove's frame.
     sample: (x, z) => sampleCove(...toCove(x, z)),
-    // The ground of a sample, given its slope (groundOf); the zone of a ground
-    // and height; the zone of a sample, given its slope; and at world x, z
-    // (five evaluations, about 7 µs: placement reads the drawn ground's,
-    // world/heightmap.js zoneAt, which is also what the GPU draws).
+    // The rocky capes beyond the cove: [{ a, o, radius }] in the cove's frame.
+    capes,
+    // The ground of a sample, given its slope and the land's (groundOf); the
+    // zone of a ground and height; the zone of a sample, given its slopes; and
+    // at world x, z (nine evaluations, about 12 µs: placement reads the drawn
+    // ground's, world/heightmap.js zoneAt, which is also what the GPU draws).
     groundOf,
     // How lush the green is, given the ground and its relief (lushOf).
     lushOf,
     zoneFrom,
     zoneOf,
-    zone: (x, z) => zoneOf(sampleCove(...toCove(x, z)), slope(x, z)),
+    zone: (x, z) => zoneOf(sampleCove(...toCove(x, z)), slope(x, z), slope(x, z, 0.5, true)),
     slope,
     // The box outside which there is only deep sea: in world x, z, and in the
     // cove's frame ({ minA, maxA, minO, maxO }).
@@ -506,24 +778,37 @@ function alongPath(points) {
   return points.map(([a, o], i) => [a, o, (run += lengths[i]) / total]);
 }
 
-// A polyline of [a, o, height] points as segments.
+// A polyline of [a, o, height] points as segments, each with its length and
+// how far along the polyline it starts.
 function segments(points) {
+  let start = 0;
   return points.slice(1).map((p, i) => {
     const [ax, ao, ha] = points[i];
     const [bx, bo, hb] = p;
-    return { ax, ao, bx, bo, ha, hb };
+    const length = Math.hypot(bx - ax, bo - ao);
+    const s = { ax, ao, bx, bo, ha, hb, start, length };
+    start += length;
+    return s;
   });
 }
 
 // A ridge along a segment: rounded on top, its flanks steepest about 0.7 x
-// its width out and gone by three widths.
-function ridgeHeight(a, o, s, { crestRadius, flankSlope, width: [minWidth, maxWidth] }) {
+// its width out and gone by three widths, cut by gullies down its flanks
+// (gully(along the ridge, out from its crest)). Its shape's slope there, across
+// and along it, goes to out.slope.
+function ridgeHeight(a, o, s, { crestRadius, flankSlope, width: [minWidth, maxWidth], gullies }, gully, out) {
   const { t, dist } = segment(a, o, s.ax, s.ao, s.bx, s.bo);
   const H = s.ha + (s.hb - s.ha) * t;
   const width = Math.min(Math.max((0.86 * H) / flankSlope, minWidth), maxWidth);
-  const off = (Math.sqrt(dist * dist + crestRadius * crestRadius) - crestRadius) / width;
+  const round = Math.sqrt(dist * dist + crestRadius * crestRadius);
+  const off = (round - crestRadius) / width;
+  out.slope = 0;
   if (off > 3) return 0;
-  return H * Math.exp(-off * off);
+  const flank = smoothstep(0.3, 1.1, off);
+  const cut = flank > 0 ? gullies.depth * flank * gully(s.start + t * s.length, dist) : 0;
+  const fall = Math.exp(-off * off);
+  out.slope = (1 - cut) * Math.hypot((2 * off * H * fall * dist) / (round * width), (fall * (s.hb - s.ha)) / s.length);
+  return H * fall * (1 - cut);
 }
 
 // Past the land, the widest reef and the noise on the coast, and on to where the
@@ -596,6 +881,11 @@ function segment(px, pz, ax, az, bx, bz) {
   return hit;
 }
 
+// The value t of the way from range[0] to range[1].
+function between([from, to], t) {
+  return from + (to - from) * t;
+}
+
 export function smoothstep(e0, e1, x) {
   if (e0 === e1) return x < e0 ? 0 : 1; // a step, not 0 / 0
   const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0)));
@@ -611,6 +901,12 @@ export function smin(a, b, k) {
 
 export function smax(a, b, k) {
   return -smin(-a, -b, k);
+}
+
+// |x| with its corner at 0 rounded off within about `round` of it: a fold
+// made of it is a curve, not an edge.
+function softAbs(x, round) {
+  return (x * x) / Math.sqrt(x * x + round * round);
 }
 
 function softplus(x, k) {

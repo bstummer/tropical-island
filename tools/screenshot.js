@@ -31,7 +31,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { views as allViews } from '../src/views.js';
+import { findView, views as allViews } from '../src/views.js';
 import { config } from '../src/config.js';
 import { sunPath } from '../src/sky/sun.js';
 import { measureCost, measureShimmer, measureView, renderFrame, stopAnalysis } from './measure.js';
@@ -513,13 +513,15 @@ function toolCheckTasks(context, fileUrl, query, view, outDir) {
       return `${p.points} points: GPU vs world/green.js off by ${p.gpu.toExponential(1)} (limit ${config.capture.patches.limit}), ${p.mistaken.toFixed(2)} a tenth of a patch off`;
     }),
     // The sky's tables agree with the air they come from (src/fixtures/haze.js): from
-    // the beach at golden hour, and from the hill at sunset, high enough above the
-    // sea for tables that ignore the camera's height to show. And the sunlight in
-    // the last minutes of daylight, when the hills keep the sun the beach is losing.
+    // the beach at golden hour, and at sunset from 190 m up off the headland (a
+    // view kept for it, disabled or not), high enough above the sea for tables
+    // that ignore the camera's height to show, as high as the hills. And the
+    // sunlight in the last minutes of daylight, when the hills keep the sun the
+    // beach is losing.
     ...[
       ['beach', 'golden-hour', {}],
-      ['overview', 'sunset', { high: true }],
-      ['overview', (sunPath.daylight.end - 0.002).toFixed(4), { sunOnly: true }],
+      ['headland', 'sunset', { high: true }],
+      ['headland', (sunPath.daylight.end - 0.002).toFixed(4), { sunOnly: true }],
     ].map(([view, time, cases]) => () =>
       checkFixture(context, fileUrl, { ...params, fixture: 'haze', view, time, name: `haze ${view} ${time}` }, async (page, info, problems) => {
         const haze = await page.evaluate(() => window.__HAZE__);
@@ -561,9 +563,10 @@ function toolCheckTasks(context, fileUrl, query, view, outDir) {
 
 // The named time a view changes to for the time check: the next one in turn by
 // the view's place in views.js, so a full run covers them all and a view checks
-// the same time in any run, but never the view's own (`hours`).
+// the same time in any run, but never the view's own (`hours`). A disabled view
+// takes the first in turn.
 export function timeChangeTarget(view, hours) {
-  const i = allViews.findIndex((v) => v.name === view);
+  const i = Math.max(allViews.findIndex((v) => v.name === view), 0);
   const names = ['golden-hour', 'sunrise', 'sunset', 'midday'];
   for (let k = 0; k < names.length; k++) {
     const name = names[(i + k) % names.length];
@@ -1441,13 +1444,10 @@ export function parseArgs(argv) {
   return out;
 }
 
+// The views a run captures: all but the disabled ones (views.js), or those named, disabled or not.
 function selectViews(list) {
   if (!list || list === 'all') return allViews;
-  return list.split(',').map((name) => {
-    const view = allViews.find((v) => v.name === name.trim());
-    if (!view) throw new Error(`unknown view "${name}". Views: ${allViews.map((v) => v.name).join(', ')}`);
-    return view;
-  });
+  return list.split(',').map((name) => findView(name.trim()));
 }
 
 function parseSize(text) {

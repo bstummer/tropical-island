@@ -33,15 +33,15 @@ const BOUNCE = { points: 1024, off: 0.5 }; // seeded points over the island; the
 
 export function create(ctx) {
   const { renderer, config } = ctx;
-  const { blend, samples } = config.world.terrain;
+  const { blend } = config.world.terrain;
   const { offset, ground: groundLimits } = config.capture.terrain;
 
   const ready = ctx.terrain.ready.then(async () => {
     const { heightmap, island } = ctx.terrain;
     const r = ctx.rng('fixtures/terrain');
     const points = []; // [a, o, level, from]: from 0 unless read from a coarser level
-    const last = samples - 1;
-    heightmap.levels.forEach(({ origin, texel }, k) => {
+    heightmap.levels.forEach(({ origin, texel, samples }, k) => {
+      const last = samples - 1;
       const at = (fx, fy, from = 0) => [origin[0] + fx * texel, origin[1] + fy * texel, k, from];
       const coarsest = k === heightmap.levels.length - 1;
       // Where this level has its full say, and the bands where it fades out.
@@ -195,9 +195,9 @@ async function meshCheck(ctx, r) {
 async function bounceCheck(ctx, r) {
   const { renderer, frame, config, terrain } = ctx;
   const { heightmap, island } = terrain;
-  const { samples, bounceReach, albedo, green, sand } = config.world.terrain;
+  const { bounceReach, albedo, green, sand } = config.world.terrain;
   const coarsest = heightmap.levels.at(-1);
-  const { origin, texel } = coarsest;
+  const { origin, texel, samples } = coarsest;
   const looks = { albedo, green, wetness: sand.wetness, wetHeight: config.world.island.zones.wetSand, sea: config.sky.atmosphere.groundAlbedo };
   const lod = Math.log2(bounceReach / texel);
   const mips = halfMips(albedoMap(coarsest, looks), samples, Math.floor(lod) + 2);
@@ -241,8 +241,10 @@ async function bounceCheck(ctx, r) {
 }
 
 // An RGBA map of size x size texels as the GPU keeps it: half floats, and
-// `count` levels of mips, each texel of one the mean of four of the one before.
+// `count` levels of mips, each texel of one the mean of four of the one before
+// (the map's size halves exactly that often: heightmap.js lays it out so).
 function halfMips(map, size, count) {
+  if (size % 2 ** (count - 1)) throw new Error(`fixture terrain: a ${size} texel map has no ${count} levels of mips that halve it exactly`);
   const half = (v) => fromHalfFloat(toHalfFloat(v));
   const mips = [{ size, texels: map.map(half) }];
   while (mips.length < count) {

@@ -1,21 +1,21 @@
-// The heightmap's grids (world/heightmap.js): how they nest and cover the
-// island, that they hold the island's heights and ground however their rows
-// arrive, that the drawn
-// height has no seams, and that the drawn ground keeps the zones' rules. The
-// GPU's side is checked in the browser (src/fixtures/terrain.js).
+// The heightmap's grids (world/heightmap.js): how they are laid out for the
+// island, nest and cover it, that they hold the island's heights and ground
+// however their rows arrive, that the drawn height has no seams, and that the
+// drawn ground keeps the zones' rules. The GPU's side is checked in the
+// browser (src/fixtures/terrain.js).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createRandom } from '../src/core/random.js';
 import { config } from '../src/config.js';
 import { createIsland, LAND_ZONES } from '../src/world/island.js';
-import { buildHeightmap, createGrids, fillRows, GROUND, layoutLevels } from '../src/world/heightmap.js';
+import { buildHeightmap, createGrids, fillRows, GROUND, layoutLevel } from '../src/world/heightmap.js';
 
 const settings = config.world.terrain;
 const SEEDS = Array.from({ length: 20 }, (_, i) => i + 1);
 
 // The box a level covers, shrunk by `inset` samples.
-function box({ origin, texel }, samples, inset = 0) {
+function box({ origin, texel, samples }, inset = 0) {
   return {
     minA: origin[0] + inset * texel,
     maxA: origin[0] + (samples - 1 - inset) * texel,
@@ -24,30 +24,57 @@ function box({ origin, texel }, samples, inset = 0) {
   };
 }
 const contains = (outer, inner) => outer.minA <= inner.minA && outer.maxA >= inner.maxA && outer.minO <= inner.minO && outer.maxO >= inner.maxO;
+const holds = (b, a, o) => a >= b.minA && a <= b.maxA && o >= b.minO && o <= b.maxO;
 
-// A small layout, quick to build in a test, laid out like the game's.
+// A small layout, quick to build in a test: its levels where it puts them.
 const small = {
   samples: 64,
   blend: 4,
   levels: [8, 16, 32, 64].map((texel) => ({ texel, centre: [0, -300] })),
 };
+const smallLevels = (island) => small.levels.map((_, k) => layoutLevel(island, small, k));
 
-// The game's grids at a quarter of their resolution: the same levels over the
-// same ground, so the coarsest covers the whole island, each four times as
-// coarse. Quick to build for every seed. Their blends are a sample short of a
-// quarter, so each level still lies inside the next one's full share.
-const quarter = {
-  samples: settings.samples / 4,
-  blend: settings.blend / 4 - 1,
-  levels: settings.levels.map(({ texel, centre }) => ({ texel: 4 * texel, centre })),
-};
+// The game's grids at a quarter of their resolution, laid out for each
+// island as the game's are: quick to build for every seed.
+const quarter = { blend: settings.blend / 4, levels: settings.levels.map((level) => ({ ...level, texel: 4 * level.texel })) };
+
+// The game's layout for a seed: the coarse grid built, the fine one laid out on it.
+const gameLayouts = new Map();
+function gameLayout(seed) {
+  if (!gameLayouts.has(seed)) {
+    const island = createIsland(createRandom(seed));
+    const coarse = layoutLevel(island, settings, 1);
+    const n = coarse.samples ** 2;
+    const heights = new Float32Array(n);
+    fillRows(island, coarse, 0, coarse.samples, heights, new Float32Array(4 * n), new Uint8Array(GROUND * n));
+    gameLayouts.set(seed, { island, levels: [layoutLevel(island, settings, 0, { ...coarse, heights }), coarse] });
+  }
+  return gameLayouts.get(seed);
+}
+
+// Round the cove, the game's grids but smaller, quick to build for every
+// seed: 2 m apart over the beach, the bay and the headland, where sand meets rock.
+const cove = { samples: 256, blend: 8, levels: settings.levels.map(({ texel }) => ({ texel, centre: [55, 0] })) };
+const coveMaps = new Map(); // seed -> { island, heightmap }, built once for the tests
+function coveMap(seed) {
+  if (!coveMaps.has(seed)) {
+    const island = createIsland(createRandom(seed));
+    coveMaps.set(seed, { island, heightmap: buildHeightmap(island, cove) });
+  }
+  return coveMaps.get(seed);
+}
 
 test("each level lies inside the next coarser one's full share", () => {
-  for (const layout of [settings, small, quarter]) {
-    const levels = layoutLevels(layout);
+  const layouts = [
+    { blend: small.blend, levels: smallLevels(null) },
+    ...[1, 2].map((seed) => ({ blend: settings.blend, levels: gameLayout(seed).levels })),
+    ...SEEDS.map((seed) => ({ blend: quarter.blend, levels: quarterMap(seed).levels })),
+  ];
+  for (const { blend, levels } of layouts) {
     for (let k = 0; k < levels.length - 1; k++) {
-      const full = box(levels[k + 1], layout.samples, layout.blend + 1);
-      assert.ok(contains(full, box(levels[k], layout.samples)), `level ${k} reaches into level ${k + 1}'s blend band`);
+      // The coarsest has its full say but at its last sample.
+      const full = box(levels[k + 1], k + 1 === levels.length - 1 ? 1 : blend + 1);
+      assert.ok(contains(full, box(levels[k])), `the ${levels[k].texel} m level reaches into the ${levels[k + 1].texel} m level's blend band`);
     }
   }
 });
@@ -59,13 +86,23 @@ test('the shaders know as many levels as config.world.terrain lays out', () => {
   assert.equal(Number(js.match(/const TERRAIN_LEVELS = (\d+);/)[1]), settings.levels.length, 'world/terrain.js');
 });
 
-test('the coarsest level reaches past the island and its reef into deep water, and the finer ones cover the bay and the hills', () => {
-  const levels = layoutLevels(settings);
-  const { samples, blend } = settings;
-  const edge = box(levels.at(-1), samples, 1);
+test('the grids laid out for an island halve exactly for their mipmaps, and their samples lie on one set of lines', () => {
+  for (const seed of [1, 2]) {
+    const { levels } = gameLayout(seed);
+    const coarse = levels.at(-1);
+    for (const { texel, origin, samples } of levels) {
+      assert.equal(samples % 32, 0, `seed ${seed}: the ${texel} m grid is ${samples} samples across`);
+      // On the coarse grid's lines, so where both have a sample it is the same.
+      for (const c of [0, 1]) assert.ok(origin[c] % coarse.texel === 0, `seed ${seed}: the ${texel} m grid's corner ${origin}`);
+    }
+  }
+});
+
+test('the coarse grid reaches past the island and its reef into deep water', () => {
   const out = {};
   for (const seed of SEEDS) {
     const island = createIsland(createRandom(seed));
+    const edge = box(layoutLevel(island, settings, settings.levels.length - 1), 1);
     for (let t = 0; t <= 1; t += 0.005) {
       for (const [a, o] of [
         [edge.minA + t * (edge.maxA - edge.minA), edge.minO],
@@ -74,13 +111,62 @@ test('the coarsest level reaches past the island and its reef into deep water, a
         [edge.maxA, edge.minO + t * (edge.maxO - edge.minO)],
       ]) {
         const h = island.evaluate(a, o, out).height;
-        assert.ok(h < -30, `seed ${seed}: ${h.toFixed(1)} m at the coarsest level's edge, ${a.toFixed(0)}, ${o.toFixed(0)}`);
+        assert.ok(h < -30, `seed ${seed}: ${h.toFixed(1)} m at the coarse grid's edge, ${a.toFixed(0)}, ${o.toFixed(0)}`);
       }
     }
   }
-  // In the cove's frame: the beach and bay on the 1 m grid, the hills up to the summit on the 2 m grid.
-  assert.ok(contains(box(levels[0], samples, blend + 1), { minA: -200, maxA: 200, minO: -60, maxO: 190 }), 'the bay is not all on the finest grid');
-  assert.ok(contains(box(levels[1], samples, blend + 1), { minA: -350, maxA: 300, minO: -650, maxO: 0 }), 'the hills are not all on the 2 m grid');
+});
+
+test('the fine grid has its full say over all the land and the sea shallower than its depth, the cove no different', () => {
+  // Wherever the fine grid hasn't, the ground lies deeper: checked every 8 m
+  // with the game's layout, for its seed and the next, and every 16 m with
+  // the quarter's, for every seed.
+  const cases = [
+    ...[1, 2].map((seed) => ({ seed, ...gameLayout(seed), blend: settings.blend, step: 8 })),
+    ...SEEDS.map((seed) => ({ seed, island: createIsland(createRandom(seed)), levels: quarterMap(seed).levels, blend: quarter.blend, step: 16 })),
+  ];
+  const out = {};
+  for (const { seed, island, levels, blend, step } of cases) {
+    const [fine, coarse] = levels;
+    const full = box(fine, blend + 1);
+    const all = box(coarse, 1);
+    let outside = 0;
+    for (let a = all.minA; a <= all.maxA; a += step) {
+      for (let o = all.minO; o <= all.maxO; o += step) {
+        if (holds(full, a, o)) continue;
+        outside++;
+        const h = island.evaluate(a, o, out).height;
+        assert.ok(h <= -settings.levels[0].depth, `seed ${seed}: ${h.toFixed(1)} m at ${a}, ${o}, off the ${fine.texel} m grid's full say`);
+      }
+    }
+    assert.ok(outside > 1000, `seed ${seed}: only ${outside} points off the fine grid`);
+    // The cove's bay, beach and hills are on it like the rest.
+    assert.ok(contains(full, { minA: -350, maxA: 300, minO: -650, maxO: 190 }), `seed ${seed}: the cove is not all on the fine grid`);
+  }
+});
+
+test('a level fitted to a coarser one is laid out, and its rows handed out, once that one is in', () => {
+  const island = createIsland(createRandom(3));
+  const laidOut = [];
+  const grids = createGrids(island, quarter, { onLayout: (k, layout) => laidOut.push([k, layout]) });
+  assert.deepEqual(laidOut.map(([k]) => k), [1], 'the coarse grid first, alone');
+  const coarse = laidOut[0][1];
+  assert.deepEqual(coarse, layoutLevel(island, quarter, 1));
+  // Its rows in two blocks: the fine grid waits for the second.
+  const half = coarse.samples >> 1;
+  const blocks = [[0, half], [half, coarse.samples]].map(([j0, j1]) => {
+    const n = (j1 - j0) * coarse.samples;
+    const block = { level: 1, j0, heights: new Float32Array(n), info: new Float32Array(4 * n), ground: new Uint8Array(GROUND * n) };
+    fillRows(island, coarse, j0, j1, block.heights, block.info, block.ground);
+    return block;
+  });
+  grids.store(blocks[0]);
+  assert.equal(laidOut.length, 1, 'the fine grid laid out before the coarse one is in');
+  grids.store(blocks[1]);
+  assert.deepEqual(laidOut.map(([k]) => k), [1, 0]);
+  assert.deepEqual(laidOut[1][1], layoutLevel(island, quarter, 0, grids.levels[1]));
+  assert.throws(() => grids.finish(), /rows missing/);
+  assert.equal(layoutLevel(island, quarter, 0), null, 'a fine grid laid out without the coarse one');
 });
 
 test("every sample is the island's height there", () => {
@@ -122,24 +208,54 @@ test('the drawn height has no seams: it changes smoothly across the edges of eve
 
 test("between the samples, the drawn height stays close to the island's", () => {
   // Bilinear between samples, it misses a little on curved ground; shifted
-  // half a sample, in JS and GLSL alike, it misses by far more.
+  // half a sample, in JS and GLSL alike, it misses by far more. On the game's
+  // spacings, each where the game draws from it: the island's relief reaches
+  // down to four of the fine grid's samples, and the coarse one draws only
+  // the deep sea, smooth at its spacing.
   for (const seed of SEEDS.slice(0, 4)) {
-    const island = createIsland(createRandom(seed));
-    const heightmap = buildHeightmap(island, small);
+    const { island, heightmap } = coveMap(seed);
     const r = createRandom(seed)('test/between');
     const out = {};
-    const last = small.samples - 1;
-    heightmap.levels.forEach(({ origin, texel }, k) => {
-      const full = k === heightmap.levels.length - 1 ? [1, last - 1] : [small.blend + 1, last - small.blend - 1];
+    const { depth } = settings.levels[0];
+    heightmap.levels.forEach(({ origin, texel, samples }, k) => {
+      const last = samples - 1;
+      const coarsest = k === heightmap.levels.length - 1;
+      const full = coarsest ? [1, last - 1] : [cove.blend + 1, last - cove.blend - 1];
       const misses = [];
-      for (let n = 0; n < 400; n++) {
+      while (misses.length < 400) {
         const [a, o] = [origin[0] + r.range(...full) * texel, origin[1] + r.range(...full) * texel];
-        misses.push(Math.abs(heightmap.heightAtCove(a, o) - island.evaluate(a, o, out).height));
+        const h = island.evaluate(a, o, out).height;
+        if (coarsest && h > -depth) continue;
+        misses.push(Math.abs(heightmap.heightAtCove(a, o, k) - h));
       }
       misses.sort((p, q) => p - q);
       const median = misses[misses.length >> 1];
       assert.ok(median <= 0.04 * texel, `seed ${seed}: the ${texel} m level misses the island by ${median.toFixed(2)} m (median)`);
     });
+  }
+});
+
+test('the drawn ground has no corners at its samples: its slope runs on across them', () => {
+  // A curve through the samples, not straight lines between them, which
+  // would turn the slope at every sample: on a skyline up close, a polygon.
+  const e = 1e-3;
+  for (const seed of SEEDS.slice(0, 4)) {
+    const { heightmap } = coveMap(seed);
+    const { origin, texel, samples } = heightmap.levels[0];
+    const r = createRandom(seed)('test/corners');
+    const h = (a, o) => heightmap.heightAtCove(a, o);
+    let worst = 0;
+    for (let n = 0; n < 400; n++) {
+      // On a line of samples one way, anywhere along it the other.
+      const i = r.int(cove.blend + 2, samples - cove.blend - 3);
+      const g = r.range(cove.blend + 2, samples - cove.blend - 3);
+      for (const [a, o, da, dO] of [[origin[0] + i * texel, origin[1] + g * texel, e, 0], [origin[0] + g * texel, origin[1] + i * texel, 0, e]]) {
+        const before = (h(a, o) - h(a - da, o - dO)) / e;
+        const after = (h(a + da, o + dO) - h(a, o)) / e;
+        worst = Math.max(worst, Math.abs(after - before));
+      }
+    }
+    assert.ok(worst < 0.01, `seed ${seed}: the slope turns by ${worst.toFixed(3)} across a sample`);
   }
 });
 
@@ -185,11 +301,11 @@ test("the slopes are the grid's own", () => {
 test('rows filled in parts, as the workers fill them, are the rows filled whole', () => {
   const island = createIsland(createRandom(1));
   const { samples } = small;
-  for (const level of layoutLevels(small)) {
+  for (const level of smallLevels(island)) {
     const fill = (j0, j1) => {
       const rows = j1 - j0;
       const part = { heights: new Float32Array(rows * samples), info: new Float32Array(4 * rows * samples), ground: new Uint8Array(GROUND * rows * samples) };
-      fillRows(island, level, samples, j0, j1, part.heights, part.info, part.ground);
+      fillRows(island, level, j0, j1, part.heights, part.info, part.ground);
       return part;
     };
     const whole = fill(0, samples);
@@ -207,7 +323,7 @@ test('rows stored in any order, as the workers return them, make the grids built
   const island = createIsland(createRandom(2));
   const whole = buildHeightmap(island, small);
   const { samples } = small;
-  const levels = layoutLevels(small);
+  const levels = smallLevels(island);
   // Every level in blocks of 5 rows, shuffled.
   const blocks = [];
   levels.forEach((level, k) => {
@@ -215,7 +331,7 @@ test('rows stored in any order, as the workers return them, make the grids built
       const j1 = Math.min(j0 + 5, samples);
       const rows = j1 - j0;
       const block = { level: k, j0, heights: new Float32Array(rows * samples), info: new Float32Array(4 * rows * samples), ground: new Uint8Array(GROUND * rows * samples) };
-      fillRows(island, level, samples, j0, j1, block.heights, block.info, block.ground);
+      fillRows(island, level, j0, j1, block.heights, block.info, block.ground);
       blocks.push(block);
     }
   });
@@ -228,9 +344,11 @@ test('rows stored in any order, as the workers return them, make the grids built
     for (const kind of ['heights', 'info', 'ground']) assert.deepEqual(level[kind], whole.levels[k][kind], `level ${k}'s ${kind} ${when}`);
   };
   const handed = [];
-  const grids = createGrids(island, small, (k, level) => {
-    same(level, k, 'when handed on');
-    handed.push(k);
+  const grids = createGrids(island, small, {
+    onLevel(k, level) {
+      same(level, k, 'when handed on');
+      handed.push(k);
+    },
   });
   const lastBlock = levels.map((_, k) => blocks.findLastIndex((block) => block.level === k));
   blocks.forEach((block, i) => {
@@ -246,19 +364,20 @@ test('rows stored in any order, as the workers return them, make the grids built
 // The steepest the drawn ground gets in the cells round sample i, j (rise
 // over run): bilinear, a cell is steepest at one of its corners, so here at
 // every corner of every cell.
-function steepestAround(heights, samples, texel, i, j) {
+// height(i, j): a sample's height, of the ground or of the land under its roughness.
+function steepestAround(height, samples, texel, i, j) {
   let steepest = 0;
   for (const ci of [i - 1, i]) {
     for (const cj of [j - 1, j]) {
       if (ci < 0 || cj < 0 || ci >= samples - 1 || cj >= samples - 1) continue;
-      const h = (x, y) => heights[(cj + y) * samples + ci + x];
+      const h = (x, y) => height(ci + x, cj + y);
       for (const [x, y] of [[0, 0], [1, 0], [0, 1], [1, 1]]) steepest = Math.max(steepest, Math.hypot(h(1, y) - h(0, y), h(x, 1) - h(x, 0)) / texel);
     }
   }
   return steepest;
 }
 
-test("every sample's ground is the island's there, given the steepest the drawn ground gets round it", () => {
+test("every sample's ground is the island's there, given the steepest the drawn ground, and the land under it, get round it", () => {
   for (const seed of SEEDS.slice(0, 4)) {
     const island = createIsland(createRandom(seed));
     const heightmap = buildHeightmap(island, small);
@@ -268,7 +387,10 @@ test("every sample's ground is the island's there, given the steepest the drawn 
       for (let k = 0; k < 300; k++) {
         const n = r.int(0, small.samples * small.samples - 1);
         const [i, j] = [n % small.samples, Math.floor(n / small.samples)];
-        const g = island.groundOf(island.evaluate(origin[0] + i * texel, origin[1] + j * texel, out), steepestAround(heights, small.samples, texel, i, j));
+        const land = (x, y) => Math.fround(island.evaluate(origin[0] + x * texel, origin[1] + y * texel, {}).land);
+        const drawn = (x, y) => heights[y * small.samples + x];
+        const steep = steepestAround(drawn, small.samples, texel, i, j);
+        const g = island.groundOf(island.evaluate(origin[0] + i * texel, origin[1] + j * texel, out), steep, {}, steepestAround(land, small.samples, texel, i, j));
         const rock = Math.round(g.rock * 255);
         assert.deepEqual(
           [ground[GROUND * n], ground[GROUND * n + 1], ground[GROUND * n + 3], info[4 * n + 2], info[4 * n + 3]],
@@ -290,17 +412,17 @@ function quarterMap(seed) {
 // of a quarterMap, wherever that level has its say (none where a finer one has
 // all of it), with the ground drawn there.
 function everyCell(heightmap, r, visit) {
-  const { samples, blend } = quarter;
-  const last = samples - 1;
+  const { blend } = quarter;
   // How far inside a level's box a, o lies, in samples (0 at the edge of its say).
-  const inside = ({ origin, texel }, a, o) => {
+  const inside = ({ origin, texel, samples }, a, o) => {
     const [fx, fy] = [(a - origin[0]) / texel, (o - origin[1]) / texel];
-    return Math.min(fx, fy, last - fx, last - fy) - 1;
+    return Math.min(fx, fy, samples - 1 - fx, samples - 1 - fy) - 1;
   };
   const g = {};
   const { levels } = heightmap;
   levels.forEach((level, k) => {
-    const { origin, texel } = level;
+    const { origin, texel, samples } = level;
+    const last = samples - 1;
     for (let j = 0; j < last; j++) {
       for (let i = 0; i < last; i++) {
         const [a, o] = [origin[0] + (i + r.next()) * texel, origin[1] + (j + r.next()) * texel];
@@ -334,8 +456,9 @@ test('nowhere on the drawn island, at any level, does sand lie steeper than sand
       both.forEach(({ count, steepest, at }, sea) => {
         const where = `the ${levels[k].texel} m level ${sea ? 'under the sea' : 'on land'}`;
         if (steepest > sandMax) steep.push(`${where}, ${degrees(steepest).toFixed(1)}° at ${at}`);
-        // Every level has sand to judge (little on land far out, where the coast is coarse).
-        assert.ok(count > (sea ? 500 : 5), `seed ${seed}: only ${count} points of sand on ${where}`);
+        // Every level has sand under the sea to judge, and the fine one on
+        // land: the coarse one has no say there.
+        if (sea || k === 0) assert.ok(count > (sea ? 500 : 5), `seed ${seed}: only ${count} points of sand on ${where}`);
       }),
     );
     assert.deepEqual(steep, [], `seed ${seed}: sand steeper than sand holds on ${steep.join('; ')}`);
@@ -387,18 +510,6 @@ test("every sample's lush is the island's there, given the grid's relief: how fa
   }
 });
 
-// Round the cove, laid out as the game's grids but smaller, quick to build for
-// every seed: 1 m apart over the beach towards the headland, where sand meets rock.
-const cove = { samples: 192, blend: 8, levels: [1, 2, 4, 8].map((texel) => ({ texel, centre: [100, 0] })) };
-const coveMaps = new Map(); // seed -> { island, heightmap }, built once for the tests below
-function coveMap(seed) {
-  if (!coveMaps.has(seed)) {
-    const island = createIsland(createRandom(seed));
-    coveMaps.set(seed, { island, heightmap: buildHeightmap(island, cove) });
-  }
-  return coveMaps.get(seed);
-}
-
 // The drawn ground's slope at a, o, by central differences.
 function drawnSlope(heightmap, a, o, step = 0.25) {
   const h = (da, dO) => heightmap.heightAtCove(a + da, o + dO);
@@ -408,8 +519,9 @@ function drawnSlope(heightmap, a, o, step = 0.25) {
 test('on the drawn ground the zones keep their order inland, and sand and sandy soil lie no steeper than sand holds', () => {
   for (const seed of SEEDS) {
     const { island, heightmap } = coveMap(seed);
-    // From the waterline, walk up the beach and on inland on the 1 and 2 m
-    // grids: no zone steps back towards the sea.
+    // From the waterline, walk up the beach and on inland on the 2 m grid: no
+    // zone steps back towards the sea, but for a dent, one zone back for no
+    // more than 15 m (as in tests/island.test.js).
     let walks = 0;
     const out = {};
     const coast = (a, o) => island.evaluate(a, o, out).coast;
@@ -419,6 +531,7 @@ test('on the drawn ground the zones keep their order inland, and sand and sandy 
       if (o <= -150) continue;
       walks++;
       let last = -1;
+      let back = null; // where a dent began
       let behind = -Infinity;
       let [pa, po] = [a, o];
       for (let t = 0; t < 150; t++) {
@@ -428,8 +541,14 @@ test('on the drawn ground the zones keep their order inland, and sand and sandy 
         const zone = heightmap.zoneAtCove(pa, po);
         const index = LAND_ZONES.indexOf(zone);
         if (index >= 0) {
-          assert.ok(index >= last, `seed ${seed}: ${zone} after ${LAND_ZONES[last]} walking inland from ${a}, ${o}`);
-          last = index;
+          if (index < last) {
+            back ??= t;
+            assert.equal(index, last - 1, `seed ${seed}: ${zone} after ${LAND_ZONES[last]} walking inland from ${a}, ${o}`);
+            assert.ok(t - back <= 15, `seed ${seed}: ${zone} after ${LAND_ZONES[last]} for ${t - back} m walking inland from ${a}, ${o}`);
+          } else {
+            back = null;
+            last = index;
+          }
         }
         const [ga, go] = [coast(pa + 0.5, po) - coast(pa - 0.5, po), coast(pa, po + 0.5) - coast(pa, po - 0.5)];
         const length = Math.hypot(ga, go) || 1;
@@ -470,8 +589,10 @@ test("the drawn zones are the island's nearly everywhere, and quick to look up",
       if (heightmap.zoneAt(x, z) === island.zone(x, z)) same++;
     }
     // They differ only along the zones' edges, where the grid's slope and its
-    // bilinear ground stray from the island's.
-    assert.ok(same / n > 0.99, `seed ${seed}: the drawn zone is the island's at only ${((100 * same) / n).toFixed(1)}% of points`);
+    // bilinear ground stray from the island's: mostly on the cliffs, where the
+    // green meets rock by slope and the grid, judging by the steepest ground
+    // round a sample, draws more rock (98.8–99.9% the same over seeds 1–20).
+    assert.ok(same / n > 0.98, `seed ${seed}: the drawn zone is the island's at only ${((100 * same) / n).toFixed(1)}% of points`);
   }
   // Placing plants by the hundred thousand (PLAN.md Stage 8) takes a blink.
   const { heightmap } = coveMap(1);

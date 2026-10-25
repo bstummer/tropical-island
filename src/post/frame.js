@@ -166,9 +166,11 @@ export function createFrame(ctx, display) {
     uTerrainHeight: { value: null },
     uTerrainInfo: { value: null },
     uTerrainGround: { value: null },
-    uTerrainLevels: { value: config.world.terrain.levels.map(() => new Vector4(0, 0, 1, 0)) },
+    uTerrainHeightCoarse: { value: null },
+    uTerrainInfoCoarse: { value: null },
+    uTerrainGroundCoarse: { value: null },
+    uTerrainLevels: { value: config.world.terrain.levels.map(() => new Vector4(0, 0, 1, 2)) },
     uTerrainFrame: { value: new Vector4(1, 0, 0, 1) },
-    uTerrainSamples: { value: 2 },
     uTerrainBlend: { value: 1 },
     uTerrainReady: { value: 0 },
   };

@@ -429,7 +429,9 @@ their faces, rock on the ridges in blotches like camouflage, a flat green lawn a
   Since 4.7 the rock's hollows hold their true share of soil, which shows on the `rocks` cliff as tan
   pockets; the blocks taper upwards now (so their sides bury cleanly), and dry rock has no sheen. Each
   is a matter of taste: show the user candidates side by side. Check: every view against the stage's
-  Done line, at its time and at golden hour.
+  Done line, at its time and at golden hour. Known from 2026-10-25: from the `overview`, 1 km up, the
+  green's speckle of bare ground behind the beaches falls under a pixel and shimmers (0.54%, over the
+  0.5% limit).
 
 ### 4b. WebGPU port
 
@@ -970,8 +972,9 @@ GPU does the same work as before, so the user's review needs no benchmark or bro
 - Known from Stage 3:
   - The terrain's shader skips seabed under the placeholder water, which hides it (TEMPORARY in
     `terrain.frag`): remove that with the placeholder.
-  - The terrain's grids end about 2 km out; beyond them heights repeat the coarsest grid's edge (−50 to
-    −90 m) in straight stripes to the horizon. The drawn seabed ends about 1 km out.
+  - The terrain's grids end where the sea is deep all round (`island.coveBounds`, about 1 km out from
+    the cove); beyond them heights repeat the coarse grid's edge (−50 to −90 m) in straight stripes to
+    the horizon. The drawn seabed ends about 1 km out.
   - The coast's distance comes from the exact shapes, the drawn waterline from the grids: take the
     waterline from the drawn depth.
 - Known from Stage 4: the GPU reads the reef's offset with the ground (`terrainGround()`, held within
@@ -1052,8 +1055,9 @@ GPU does the same work as before, so the user's review needs no benchmark or bro
   creeping onto the sand. One file per species, each with its own wind response.
 - Grass that shows gusts rolling across it, and dappled shade drifting over the sand.
 - Cheap distant vegetation, so the hillsides look lush from the overview.
-- Known from Stage 3: rocky shores get a band of rock zone about 34 m deep; what grows there decides how
-  it looks.
+- Known from Stage 3: rocky shores (since 2026-10-25 only the headland and one cape) get a band of rock
+  zone 20–45 m deep; what grows there decides how it looks. The green's bands vary with the land
+  (Decisions, 2026-10-25): placement reads `band` and `lush`, not distances from the shore.
 - Known from Stage 4: the ground says how lush it is and how sandy its soil (`heightmap.groundAt`:
   `lush`, `sandy`), which the green's look follows: dense jungle where lush, open grass where not,
   beach plants where sandy. Its patches of green and bare ground stay put and JS knows them
@@ -1114,9 +1118,10 @@ GPU does the same work as before, so the user's review needs no benchmark or bro
   one hour to the next. There is no night (see Decisions).
 - Known from Stage 2: a time change reads the light back from the GPU and waits for it, so dragging the
   time (Stage 16's setting) would stutter.
-- Known from Stage 3: the haze check's `aerial` answer stands at 5.6 of its 6-level limit from the
-  overview at sunset, and was measured at 6.0 from the beach in the first and last minutes of daylight;
-  near the sea, the transmittance table's rows lie 25 and 101 m up, in haze 150 m thick.
+- Known from Stage 3: the haze check's `aerial` answer stood at 5.6 of its 6-level limit from 190 m up at
+  sunset (the check's camera, now `headland`), and was measured at 6.0 from the beach in the first and
+  last minutes of daylight; near the sea, the transmittance table's rows lie 25 and 101 m up, in haze
+  150 m thick. From the air it misses far more: 37 levels from the `overview`, 1 km up (2026-10-25).
 - **Done when** a capture series from sunrise to sunset has no broken or ugly hour.
 
 ### 13. Small life and detail
@@ -1188,9 +1193,13 @@ GPU does the same work as before, so the user's review needs no benchmark or bro
   with heavier surf, a hilltop lookout, the jungle interior, a stream. Each area gets views, a polish pass
   and a performance check.
 - Don't start a new area while an existing one still falls short of the bar.
-- Known from Stage 3: the terrain's grids are four nested 512² squares centred on the cove, 1 m apart
-  only over the bay and 2 m up to the summit; another area at the cove's detail needs another layout.
-  Growing the island past about 2200 m needs the grids laid out again (`config.world.island.size`).
+- Known from 2026-10-25: the coast beyond the cove is beach with a coastal flat, and one rocky cape
+  (Decisions); the views `headland`, `cape` and `coastal-flat` already look at it, and `summit` at the
+  rough ground near the top up close, framed on seed 1, all four disabled for now (the user's call:
+  `disabled` in `src/views.js`; `--views` still captures them).
+- Known from 2026-10-25: the terrain's grids are laid out for each island, 2 m apart over the land and
+  the shallows everywhere (Decisions); growing the island (`config.world.island.size`) grows them, and
+  boot's time with them.
 - **Done when** (per area) the user agrees its views clear the bar and the frame cost stays within the
   limits.
 
@@ -1209,7 +1218,8 @@ GPU does the same work as before, so the user's review needs no benchmark or bro
   `main.js`), on a new device. Firefox has WebGPU on Windows only (141 and later); elsewhere it gets the
   note that the game needs WebGPU.
 - Known from Stage 3: the heightmap's workers are untried outside Chromium; without them the grids
-  build in the main thread, about a second on a fast desktop, and with two cores there is one worker.
+  build in the main thread, about 5 s on a fast desktop (2.3 million samples for seed 1, since
+  2026-10-25), and with two cores there is one worker.
   Boot waits on the surfaces' tiles (`textures/`, made and read back on the GPU), not on the grids, which
   are in a second or two before them: making the tiles faster is the lever for boot.
   The terrain's fragment shader is most of a SwiftShader frame, its aerial perspective and its filtered
@@ -1274,10 +1284,26 @@ Made with the user. Don't reopen them unless the user does.
   barrier reef 600 m to 1 km out with a broad lagoon was the alternative. (2026-10-22)
 - **The headland stands on the left** of someone on the beach facing the sea: its inner cliffs catch the
   noon sun and the low evening light; on the right it would stand dark beside the sunset. (2026-10-22)
-- **More beaches beyond the cove, in its bays**: sand where the coast curves round the water, with
-  noise so not every bay is sandy; on the game's island five beaches of 90–500 m instead of two, about
-  30% of the coast beyond the cove. The cove's own arc stays as it is: sandy bays behind a headland are
-  smooth curves. (2026-10-23)
+- **Beaches all round, rock in two places**: the coast is beach but for the headland's high cliff,
+  which stays, and one rocky cape beyond the cove where the coast juts out furthest, a black wall of
+  8–16 m with green slopes above. Behind the beaches a berm rises to where the green begins (about
+  2 m up) and a coastal flat of changing width (0–160 m) stands a few metres above the sea before the
+  hills. The bands behind the sand vary as in nature rather than as rings: the beach 10–45 m wide,
+  wider in bays; a thin strand of scrub, wider on points; the palm belt over the flats and up valley
+  floors, ending where the hills rise, so the jungle starts 35–170 m from the water. Rock on a rocky
+  shore lies where nature leaves it bare: on cliffs, where the waves and spray reach, and fallen at a
+  sheer cliff's foot; green comes down to a cliff's edge. The headland's face to the bay and its tip
+  stay sheer; its outer shore changes from sheer walls to green slopes above a rocky foot. The flats
+  are old beach ridges (about 1.3 m) and hummocks, and the hills are cut by gullies running straight
+  down their slopes, over the folds they had. A second cape is one setting (`shore.capes.count`). It
+  replaces "more beaches beyond the cove, in its bays" (2026-10-23), which left 70% of the coast rocky
+  cliff. (2026-10-25)
+- **The terrain's heights lie 2 m apart over all the land and the sea you can see into** (above −20 m:
+  the lagoon, the reef and its drop-off), the cove no different from the rest, and 8 m apart out to the
+  deep: relief of 8 m and more shows anywhere on the island. It replaces grids of 1 m over the bay, 2 m
+  up to the summit, and 4 and 8 m beyond, which smoothed most of the island. 2 m over the deep sea too
+  (a third more samples nobody sees) and 1 m everywhere (about 15 s to build on one core) were the
+  alternatives; finer relief than 8 m waits on whether it is still missed. (2026-10-25)
 - **The reef is roughened a bit**: its crest wanders about 8 m either way over about 110 m, and its
   width with it; the pass widens towards the sea between ragged walls. A less circular bay, a blunter
   headland tip and leaving it regular were the alternatives. (2026-10-23)
@@ -1321,6 +1347,14 @@ Not part of the plan. Build one only if the user asks for it: a passing rain sho
 
 Newest first. One short entry per session, only a few lines: date, stage, what changed, what is still
 open, next step. Details belong in code comments.
+
+- **2026-10-25, the coast and the land's relief, at the user's request** (Decisions): beach all round but
+  for the headland and one cape with a cliff, coastal flats with old beach ridges, zone bands that vary
+  with the land; then one 2 m grid over all the land and the shallows (boot 2.6 → 5 s on one core), the
+  ground rough as land is (steep slopes rough, flats and valley floors gentler, in patches), drawn
+  without edges, rock where the land under it is steep; each with a test. New views `headland`, `cape`,
+  `coastal-flat`, `summit`, disabled for now; `overview` from 1 km up. Capture `even-verify`. Open: one
+  cape or two; relief under 8 m (plants, Stages 8–9); the scrub's sand blobs (4.8). Next: 4.8 or Stage 5.
 
 - **2026-10-25, an optimization review of the port, checked and acted on** (with two helper agents). CI
   was red on `74dbabc` (player mode's canvas shot timed out under SwiftShader load): fixed, proven on two

@@ -20,9 +20,8 @@ struct Frame {
   uAerialSize: vec3f, // texels
   uSunlightTop: f32, // km: the table's top; above it, the top's light
   uSkyViewSize: vec2f,
-  uTerrainSamples: f32,
   uTerrainBlend: f32,
-  uTerrainLevels: array<vec4f, 4>, // per level: origin a, o; texel
+  uTerrainLevels: array<vec4f, 2>, // per level: origin a, o; texel; samples across
   uTerrainFrame: vec4f, // a = dot(xz, .xy), o = dot(xz, .zw)
   uTerrainReady: f32, // 0 until the grids are built: everything is deep sea
 }

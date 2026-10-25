@@ -11,10 +11,12 @@
 //           one; reviews judge each capture against it.
 // crops:    optional { name: [x, y] }: centres of regions the screenshot tool also saves zoomed in,
 //           as fractions of the frame from the top left. Without it the tool crops the centre.
+// disabled: optional true: kept, and found by name (?view=, the screenshot tool's --views), but left
+//           out of every run over the views: captures, their checks, the benchmark and the tests.
 //
 // In a dev build, press P to log the current camera as an entry ready to paste here.
 
-export const views = [
+const all = [
   {
     name: 'beach',
     position: [3.11, 2.64, -11.59],
@@ -55,13 +57,13 @@ export const views = [
   },
   {
     name: 'overview',
-    position: [-505.8, 190, 651.28],
-    yaw: -34.4,
-    pitch: -14,
-    fov: 55,
-    timeOfDay: 17,
-    brief: "Late afternoon from 190 m up, 800 m offshore: the whole island, the crescent beach and the lagoon inside its reef in front, the volcano behind, lit by the low sun from behind the camera.",
-    crops: { cove: [0.5, 0.55] },
+    position: [-411.46, 1078.81, -120.56],
+    yaw: -48.3,
+    pitch: -64.8,
+    fov: 60,
+    timeOfDay: 11,
+    brief: "Late morning from a kilometre up, looking down on the island: the volcano and its gullies in the middle, the cove's crescent beach and the headland at the bottom right, beaches and the lagoon inside the reef all round.",
+    crops: { cove: [0.72, 0.76] },
   },
   {
     name: 'into-the-sun',
@@ -93,12 +95,52 @@ export const views = [
     brief: "Mid-afternoon at the end of the beach, where rock takes over: the low rock shelf running out to the water, wet and dark where the sea reaches it, and the headland's face rising behind, lit from the right by the sun over the lagoon.",
     crops: { face: [0.35, 0.35], shelf: [0.6, 0.65] },
   },
+  {
+    name: 'headland',
+    disabled: true,
+    position: [483.98, 190, 357.44],
+    yaw: 35.4,
+    pitch: -17.5,
+    fov: 55,
+    timeOfDay: 15.5,
+    brief: "Mid-afternoon from the air outside the reef, along the headland's outer shore to its tip: cliffs of changing height above a wave-cut foot, green down to their edges, and beach again past the headland's root.",
+  },
+  {
+    name: 'cape',
+    disabled: true,
+    position: [-736.03, 30, -1812.25],
+    yaw: -140,
+    pitch: -2.1,
+    timeOfDay: 16,
+    brief: "Late afternoon from above the lagoon off the rocky cape on the far side of the island: its low black wall between two beaches, the coastal flat and the hills behind.",
+  },
+  {
+    name: 'coastal-flat',
+    disabled: true,
+    position: [-161.47, 7.2, -1792.88],
+    yaw: -48,
+    pitch: -1,
+    timeOfDay: 10.5,
+    brief: "Mid-morning at eye height on the coastal flat on the far side of the island, along it with the lagoon on the left and the hills on the right: old beach ridges and hummocks a few metres above the sea, the beach below.",
+  },
+  {
+    name: 'summit',
+    disabled: true,
+    position: [239.13, 276.61, -579.04],
+    yaw: -12.9,
+    pitch: 1.2,
+    fov: 60,
+    timeOfDay: 11,
+    brief: "Late morning at eye height in a dip near the summit, between its rough humps, a rocky one on the right: the ground's skyline up close, which must curve, not break into straight pieces.",
+  },
 ];
 
+export const views = all.filter((v) => !v.disabled);
+
 export function findView(name) {
-  const view = views.find((v) => v.name === name);
+  const view = all.find((v) => v.name === name);
   if (!view) {
-    throw new Error(`Unknown view "${name}". Known views: ${views.map((v) => v.name).join(', ')}`);
+    throw new Error(`Unknown view "${name}". Known views: ${all.map((v) => v.name).join(', ')}`);
   }
   return view;
 }

@@ -10,7 +10,7 @@ import { createRandom } from '../src/core/random.js';
 import { createLod, createMeshHeight, lodRanges } from '../src/world/lod.js';
 
 const { leaf, grid, morph } = config.world.terrain;
-const levels = 8;
+const levels = Math.log2(4096 / leaf) + 1; // a root 4 km across, as the game's
 const origin = [-2048, -3048];
 const rootSize = leaf * 2 ** (levels - 1);
 const cells = rootSize / leaf;
@@ -50,7 +50,7 @@ function raster(nodes) {
     const j0 = Math.round((node.o - origin[1]) / leaf);
     for (let j = j0; j < j0 + size / leaf; j++) {
       for (let i = i0; i < i0 + size / leaf; i++) {
-        assert.equal(cover[j * cells + i], -1, `cell ${i}, ${j} covered twice`);
+        if (cover[j * cells + i] !== -1) assert.fail(`cell ${i}, ${j} covered twice`);
         cover[j * cells + i] = n;
       }
     }
@@ -68,10 +68,12 @@ function* edges() {
   }
 }
 
-// For the mesh's height: a stand-in for heightmap.js's heightAtCove whose levels
+// For the mesh's height: a stand-in for heightmap.js's heightAtCove whose grids
 // lie metres apart and wave within a quad, so a vertex at the wrong level, or
-// moved wrongly by the morph, shows.
-const heightLevels = 4;
+// moved wrongly by the morph, shows; and the grid each level of the mesh
+// reads, the first two levels sharing one and the far ones the coarsest, as
+// world/terrain.js picks them.
+const heightLevels = Array.from({ length: levels }, (_, level) => Math.min(Math.max(level - 1, 0), 3));
 const heightAtCove = (a, o, from) => ground(a, o) + 3 * from + (1 + from) * Math.sin(0.9 * a + from) * Math.cos(0.7 * o - from);
 const sideOf = (node) => node.spacing * (node.quarter ? grid / 2 : grid);
 const holds = (node, a, o) => a >= node.a && a <= node.a + sideOf(node) && o >= node.o && o <= node.o + sideOf(node);
@@ -82,7 +84,7 @@ const holds = (node, a, o) => a >= node.a && a <= node.a + sideOf(node) && o >= 
 function drawnNode(node, cam, morphs) {
   const quads = node.quarter ? grid / 2 : grid;
   const [start, end] = morphs[node.level];
-  const heightLevel = (level) => Math.min(level, heightLevels - 1);
+  const heightLevel = (level) => heightLevels[Math.min(level, levels - 1)];
   const fract = (x) => x - Math.floor(x);
   const positions = new Float64Array(2 * (quads + 1) ** 2);
   const ks = new Float64Array((quads + 1) ** 2);
@@ -188,7 +190,7 @@ for (const [preset, { terrainDetail, terrainRatio }] of Object.entries(config.qu
       const cover = raster(nodes);
       assert.ok(cover.every((n) => n >= 0), `camera ${cam}: part of the ground is not covered`);
       for (const [c1, c2] of edges()) {
-        assert.ok(Math.abs(nodes[cover[c1]].level - nodes[cover[c2]].level) <= 1, `camera ${cam}: levels jump between cells ${c1} and ${c2}`);
+        if (Math.abs(nodes[cover[c1]].level - nodes[cover[c2]].level) > 1) assert.fail(`camera ${cam}: levels jump between cells ${c1} and ${c2}`);
       }
       for (const node of nodes) assert.equal(node.spacing, (leaf * 2 ** node.level) / grid);
     }
@@ -205,8 +207,8 @@ for (const [preset, { terrainDetail, terrainRatio }] of Object.entries(config.qu
       }
       // Along the edge, as world/terrain.wgsl measures: across the ground.
       for (const [c1, c2, a0, o0, alongA] of edges()) {
+        if (nodes[cover[c1]].level === nodes[cover[c2]].level) continue;
         const [fine, coarse] = [nodes[cover[c1]], nodes[cover[c2]]].sort((x, y) => x.level - y.level);
-        if (fine.level === coarse.level) continue;
         seams++;
         for (let s = 0; s <= 8; s++) {
           const a = alongA ? a0 + (s * leaf) / 8 : a0;

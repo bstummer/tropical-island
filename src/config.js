@@ -6,9 +6,10 @@
 export const quality = {
   default: 'high',
   // terrainDetail: metres from the camera, across the ground, within which the
-  // terrain keeps its finest mesh; each coarser level reaches terrainRatio times
-  // as far (config.world.terrain), a ratio over 2 refining the distance. Below
-  // leaf x 1.41 / ((ratio - 1) x (1 - morph)), about 65 m at a ratio of 2,
+  // terrain keeps its finest mesh, 0.25 m quads; each coarser level reaches
+  // terrainRatio times as far (config.world.terrain), a ratio over 2 refining
+  // the distance: 1 m quads end at terrainDetail x ratio^2. Below
+  // leaf x 1.41 / ((ratio - 1) x (1 - morph)), about 16 m at a ratio of 2,
   // seams between levels open (world/lod.js refuses it).
   // groundDetail: a factor on how far from the camera the ground's surfaces
   // show their detail (config.world.terrain's sand, rock and green `range`);
@@ -17,9 +18,9 @@ export const quality = {
   // of the drawing buffer isn't drawn (world/rocks.js): thinner than about two,
   // it would crawl (CLAUDE.md §8).
   presets: {
-    low: { renderScale: 0.67, maxPixelRatio: 1, terrainDetail: 72, terrainRatio: 2, groundDetail: 0.6, surfaceTexture: 512, rockPixels: 3 },
-    medium: { renderScale: 0.85, maxPixelRatio: 1.5, terrainDetail: 90, terrainRatio: 2.5, groundDetail: 0.8, surfaceTexture: 1024, rockPixels: 2.5 },
-    high: { renderScale: 1, maxPixelRatio: 2, terrainDetail: 128, terrainRatio: 2.5, groundDetail: 1, surfaceTexture: 1024, rockPixels: 2 },
+    low: { renderScale: 0.67, maxPixelRatio: 1, terrainDetail: 18, terrainRatio: 2, groundDetail: 0.6, surfaceTexture: 512, rockPixels: 3 },
+    medium: { renderScale: 0.85, maxPixelRatio: 1.5, terrainDetail: 14.4, terrainRatio: 2.5, groundDetail: 0.8, surfaceTexture: 1024, rockPixels: 2.5 },
+    high: { renderScale: 1, maxPixelRatio: 2, terrainDetail: 20.5, terrainRatio: 2.5, groundDetail: 1, surfaceTexture: 1024, rockPixels: 2 },
   },
 };
 
@@ -130,9 +131,8 @@ export const sky = {
 export const world = {
   island: {
     // From the cove's beach to the far coast. Performance decides the final size
-    // (PLAN.md, Decisions); nothing in the cove changes with it. Past about 2200,
-    // world.terrain's coarsest grid stops short of the deep water round some
-    // seeds: lay its levels out again (tests/heightmap.test.js checks).
+    // (PLAN.md, Decisions); nothing in the cove changes with it. world.terrain's
+    // grids follow it, their samples (and boot's time) as its area.
     size: 2000,
     minSize: 1600, // smaller, and the far coast cuts into the hills behind the cove
     cove: {
@@ -146,12 +146,16 @@ export const world = {
       front: { out: [190, 105], from: 140, to: 380, radius: 800 },
       corner: 25, // how round the bay's corners are
       // Promontories either side of the bay, as chains of [along, out, radius].
-      headland: { path: [[265, -150, 100], [240, 40, 75], [232, 140, 58], [205, 235, 40]], blend: 30 },
+      // `sheer`: its face towards the bay and its tip stay a sheer cliff (along
+      // the beach up to the first), its outer shore as sheer as the coast has it
+      // (shore.rocky) beyond the second.
+      headland: { path: [[265, -150, 100], [240, 40, 75], [232, 140, 58], [205, 235, 40]], blend: 30, sheer: [215, 260] },
       point: { path: [[-165, 20, 70], [-180, 120, 45]], blend: 25 }, // the low point opposite
-      // Where the beach gives way to rock: towards the headland between these, and
-      // on the far side between these, down to a share of sand.
-      // `fade`: over how many metres around the headland the sand gives way to rock.
-      sand: { headland: [90, 220], far: [-460, -300, 0.3], fade: 90 },
+      // Where the beach gives way to rock round the headland: towards it between
+      // `headland` metres along, in front of `back` metres out (rock in front of
+      // the first, sand again behind the second, along the headland's outer
+      // shore), and within `fade` metres of it all round.
+      sand: { headland: [90, 220], back: [-150, -300], fade: 90 },
     },
     coast: {
       // The shore's wiggles: in the bay, and either side of it, where they also swing
@@ -175,12 +179,15 @@ export const world = {
       // many beyond each `branch` band (metres from the top), `length` long, cutting
       // up to `depth` of the height between `from` and `full` metres out; `saturate`
       // sets how broad they are. The cove's valley, `width` degrees wide, cuts deeper.
+      // `round`: the ridges between them rounded on top, and their floors into
+      // their sides, over this much of their noise, tens of metres.
       valleys: {
         count: 7,
         branch: [[220, 420], [550, 900]],
         length: 700,
         depth: 0.6,
         saturate: 0.6,
+        round: 0.1,
         from: 60,
         full: 300,
         cove: { width: 11, depth: 0.7 },
@@ -195,21 +202,71 @@ export const world = {
       join: 30, // how smoothly ridges merge where they meet
       warp: { amplitude: 40, wavelength: 420 }, // bends the ridgelines
       detail: { share: 0.035, base: 0.8, wavelength: 90, octaves: 4 },
-      gullies: { share: 0.06, wavelength: 50 },
+      creases: { share: 0.06, wavelength: 50, round: 4 }, // folds every way, `share` of the height deep, their floors rounded over `round` metres
+      // Gullies the rain has cut straight down the slopes, sharp V-shaped
+      // grooves `spacing` metres apart, `depth` of the height deep at most,
+      // `sharp` the higher the narrower, wandering over about `length` down the
+      // slope: on a volcano radiating from its top (from `from` metres out, full
+      // by `full`, twice as many beyond each of its valleys' branch bands), on a
+      // ridge down either flank. Their floors are rounded over `round` metres,
+      // two of world.terrain's samples: an edge would read as one in the ground.
+      gullies: { spacing: 38, depth: 0.1, sharp: 3, round: 4, length: 140, from: 120, full: 260 },
     },
+    // The ground's roughness over all the land, from `from` metres inland (the
+    // beach by the water stays smooth): up to `base` metres, over `wavelength`
+    // metres and `octaves` more below it, each `gain` as high as the last, down
+    // to 8 m: four of world.terrain's 2 m samples, the least that draws one.
+    // Rough as ground is: `flat` of it on flat ground (plains, valley floors),
+    // all of it where the land's shape (its volcanoes' and ridges' slopes) is
+    // as steep as `steep` (rise over run), and in stretches of about
+    // `patches.wavelength` metres between `patches.range` of that; but with
+    // room only down to `floor` metres above the sea, so low ground by the
+    // shore lies smoother and above the waves. Added once the shore and the
+    // hills have met, so the hills fading out towards the shore don't thin it out.
+    roughness: { base: 3.6, wavelength: 32, octaves: 2, gain: 0.8, from: [25, 45], flat: 0.4, steep: [0.05, 0.3], patches: { range: [0.5, 1.4], wavelength: 300 }, floor: 1.6 },
     shore: {
       // A beach rises over its berm to a gentle plain; a rocky shore steeply.
-      // A beach: its berm, then a plain rising `plain` metres over about `plainReach`.
-      beach: { berm: 1.7, bermWidth: 20, plainFrom: 35, plain: 6, plainReach: 150, shelfSlope: 0.07, hillReach: 160 },
-      rocky: { lip: 2.5, lipWidth: 4, rise: 20, reach: 80, shelfSlope: 0.35, hillReach: 18 },
+      // A beach: its berm, then a plain rising `plain` metres over about
+      // `plainReach`. Beyond the cove (`island`) the berm stands higher, a ridge
+      // the storms have built where the green begins, and the plain behind it
+      // a few metres above the sea, as coastal flats are.
+      // Beyond the cove the flat behind a beach is old beach
+      // ridges, `ridges` metres high, between `spacing` metres apart, parallel
+      // to the shore from `from` metres inland and gone by `to`, and hummocks of
+      // `hummocks` [metres, wavelength] over it.
+      beach: {
+        berm: 1.7, bermWidth: 20, plainFrom: 35, plain: 6, plainReach: 150, shelfSlope: 0.07, hillReach: 160,
+        island: { berm: 2.8, bermWidth: 14, plain: 9, ridges: 1.3, spacing: [26, 48], from: 28, to: [140, 260], hummocks: [1.5, 70] },
+      },
+      // A rocky shore: a wall the waves have cut, between `wall` metres high,
+      // rising over about `wallWidth`, then a gentler rise of `rise` over about
+      // `reach`; the hills come down to it over between `hillReach` metres:
+      // sheer where that is short, in steep slopes the green holds onto where it
+      // is long. Both change along the coast over about `wavelength`, the wall
+      // tallest where the shore is sheerest. In the cove the wall stays low and
+      // the hills make the cliffs; beyond it a cape's (`island`) is a wall of
+      // its own, the hills further back.
+      rocky: {
+        wall: [2.5, 2.5], wallWidth: 4, rise: 20, reach: 80, shelfSlope: 0.35, hillReach: [18, 110], wavelength: 130,
+        island: { wall: [8, 16], rise: 6, hillReach: [50, 90] },
+      },
       hillJoin: 6,
       undulation: { amplitude: 1.2, wavelength: 140, from: [30, 120] }, // a slow swell on the beach's plain, between these metres inland
-      // Beyond the cove, beaches lie in the bays, where the waves leave their sand,
-      // and the points stay rocky. Sandy where the coast's concavity (per km, over
-      // `bayScale` metres) plus `noise` x a noise over `wavelength` metres runs from
-      // edges[0] to edges[1]: the noise makes some bays rocky and some straight
-      // shores sandy.
-      islandSand: { bayScale: 150, noise: 2, wavelength: 450, edges: [-0.9, -0.1] },
+      // Beyond the cove a beach's plain lies flat for between `flat` metres,
+      // changing over about `wavelength` metres along the coast: here the slopes
+      // come down close behind the sand, there a broad flat lies before them, as
+      // on high tropical islands. Then the hills rise over `ramp` metres, taller
+      // ones further, no steeper than `slope` (rise over run), but over no more
+      // than `reach`, so the peaks behind keep their height; easing between
+      // these over `ease` metres, so the slope never turns at once.
+      plain: { flat: [0, 160], wavelength: 600, ramp: 110, slope: 0.45, reach: 220, ease: 40 },
+      // Beyond the cove the coast is beach but for `count` rocky capes, where it
+      // juts out furthest (its curvature over `scale` metres, found along `rays`
+      // rays from the island's middle), at least `spacing` metres from each other
+      // and from the headland's root: exposed points the waves keep bare. Each is
+      // `length` metres of coast, giving way to sand over `fade`.
+      capes: { count: 1, length: [300, 450], fade: 120, scale: 250, spacing: 1000, rays: 180 },
+      bayScale: 150, // metres over which the coast's curvature (bayness) is measured, for the zones' widths
     },
     seabed: {
       lagoon: { depth: 3.4, swing: 1, wavelength: 160 },
@@ -243,20 +300,41 @@ export const world = {
       outerMargin: 300, // past the reef's crest, the seabed is deep beyond this
     },
     // Placement zones (world/island.js ZONES) and the ground they stand on.
-    // Widths in metres inland; on rocky shores the shore's band is rock.
+    // Widths in metres inland; on rocky shores the shore's band is rock. No band
+    // keeps one width: as behind real beaches, each swings along the coast with
+    // a slow noise over `wavelength`, its edge frays, beyond the cove the
+    // coast's shape has its say, and the land ends the palm belt.
     zones: {
       // Degrees: over these slopes ground turns to rock, and sand slides off,
       // leaving rock (sand holds to about 34°, its angle of repose).
       rockSlope: [50, 60],
       sandSlope: [31, 37],
+      // A rocky shore is bare rock where it is steeper than these degrees, where
+      // the waves and their spray reach, up to between `splash` metres above the
+      // sea, and at the foot of a sheer cliff, as far as the hills have risen
+      // less than between `talus` metres; elsewhere the green comes down to the
+      // cliff's edge.
+      cliffSlope: [46, 60],
+      splash: [3, 6],
+      talus: [8, 18],
       // Metres above the sea: below it the waves keep the sand wet. The reef
       // breaks the swell, so the lagoon's waves run only a little way up the beach.
       wetSand: 0.35,
-      shore: 34, // the band along the shore, sand or rock
-      shoreSwing: 5,
-      scrub: 10,
-      palmBelt: 45,
-      palmBeltSwing: 15,
+      // The band along the shore, sand or rock: `width` give or take `swing` (in
+      // the cove, beyond it), and beyond the cove wider in bays, where the waves
+      // leave their sand, and narrower on points, by `bay` metres per unit of the
+      // coast's curvature (per km, held to ±2); never under `min`.
+      // Each band's inland edge frays by `ragged` [metres, wavelength along the coast].
+      shore: { width: 32, swing: [7, 14], bay: 6, min: 10, ragged: [5, 45] },
+      // The strand and the beach scrub behind it, wider on exposed points, where
+      // salt spray keeps trees back, and thin in sheltered bays.
+      scrub: { width: 10, swing: 7, bay: 4, min: 2, ragged: [3, 30] },
+      // The palm belt holds the low ground behind the scrub: as wide as given
+      // where the land stays level, so it covers the coastal flats (shore.plain)
+      // and reaches up valley floors, half as wide where the hills have risen
+      // `rise` metres above the shore's plain, a third at twice that: the
+      // jungle comes down the spurs and the slopes close behind a beach.
+      palmBelt: { width: 100, swing: 35, min: 8, rise: 4, ragged: [20, 100] },
       edge: 3, // metres either side of the shore's band's end over which sand gives way to green
       sandy: 25, // metres inland of a beach's band over which the soil turns from its sand to soil
       // How lush the green is, 0 open to 1 lush (world/island.js lushOf): per
@@ -274,25 +352,23 @@ export const world = {
   },
   // The island as drawn (world/heightmap.js, world/terrain.js).
   terrain: {
-    // Nested grids of `samples` x `samples` heights in the cove's frame, finest
-    // first, each `texel` metres apart around `centre` [along, out]: 1 m over the
-    // bay and beach, 2 m over the hills behind, then the rest of the island. Each
-    // lies inside the next coarser one's full share, and the coarsest covers the
-    // island (tests/heightmap.test.js).
-    samples: 512,
-    levels: [
-      { texel: 1, centre: [0, -20] },
-      { texel: 2, centre: [0, -208] },
-      { texel: 4, centre: [0, -500] },
-      { texel: 8, centre: [0, -1000] },
-    ],
-    blend: 32, // samples over which a level fades into the next coarser one at its edge
+    // Two grids of heights in the cove's frame, finest first, `texel` metres
+    // apart and laid out for each island (world/heightmap.js layoutLevel): the
+    // coarse one out to where the sea is deep all round, and inside it the
+    // fine one over all the ground higher than `depth` metres under the sea,
+    // the land and the sea you can see into, the cove no different from the
+    // rest (PLAN.md, Decisions; tests/heightmap.test.js).
+    levels: [{ texel: 2, depth: 20 }, { texel: 8 }],
+    blend: 16, // samples over which the fine grid fades into the coarse one at its edge, out in the deep
     // The level-of-detail mesh: a quadtree over the coarsest grid. Its smallest
     // nodes are `leaf` metres across, with `grid` x `grid` quads; each level up
     // doubles both. A node splits within quality.terrainDetail x
     // quality.terrainRatio^level metres of the camera, and morphs into its parent
     // over the last `morph` of the band between its range and the finer level's.
-    leaf: 32,
+    // Its quads near the camera are a quarter of a metre: the ground between
+    // the grid's samples is a curve (world/heightmap.js), and a flat triangle
+    // a metre across would turn a tight bend of it into a corner.
+    leaf: 8,
     grid: 32,
     morph: 0.3,
     rowsPerTask: 32, // rows of a grid per job of the workers that build it
@@ -492,7 +568,7 @@ export const bench = {
 };
 
 export const movement = {
-  flySpeed: 8, // m/s
+  flySpeed: 16, // m/s
   minFlySpeed: 0.5,
   maxFlySpeed: 200,
   wheelSpeedStep: 1.2, // speed multiplier per mouse-wheel notch

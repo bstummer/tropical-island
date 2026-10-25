@@ -50,7 +50,7 @@ When choosing between approaches, pick the one that looks better in the screensh
 | `node tools/screenshot.js --compare A B` | Before/after sheet `screenshots/compare/A_vs_B.png`: A, B and a diff column per view, with the % of changed pixels and how many differ by more than 2 levels. No build needed. |
 | `node tools/linux.js <command>` | Runs a command in a Linux container like CI's runner (Docker), with the repo mounted: how Windows and macOS make SwiftShader captures (section 4), e.g. `node tools/linux.js npm run verify -- --gl swiftshader`. |
 
-Screenshot args: `--views beach,shoreline` (default all), `--label before` (default `<git hash>[-dirty]-<timestamp>`),
+Screenshot args: `--views beach,shoreline` (default all but those `disabled` in `src/views.js`), `--label before` (default `<git hash>[-dirty]-<timestamp>`),
 `--size 1600x900`, `--t 12.5` (sim seconds), `--time 17.5` or `--time sunset` (overrides each view's time),
 `--seed 1`, `--quality high`, `--tonemap agx`, `--exposure 1.5`, `--fixture tonecard`, `--gl auto|hardware|swiftshader` (the
 WebGPU adapter; default auto: the machine's GPU, falling back to SwiftShader, which exists on Linux only), `--checks`.
