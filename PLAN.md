@@ -1198,8 +1198,14 @@ GPU does the same work as before, so the user's review needs no benchmark or bro
   rough ground near the top up close, framed on seed 1, all four disabled for now (the user's call:
   `disabled` in `src/views.js`; `--views` still captures them).
 - Known from 2026-10-25: the terrain's grids are laid out for each island, 2 m apart over the land and
-  the shallows everywhere (Decisions); growing the island (`config.world.island.size`) grows them, and
-  boot's time with them.
+  the shallows everywhere (Decisions), a multiple of 256 samples across so their mipmaps halve exactly
+  (`config.world.terrain.mips`); growing the island (`config.world.island.size`) grows them, and boot's
+  time with them.
+- Known from 2026-10-25: the capes go where the coast juts out most, as measured 250 m inland; changing
+  the land's shape inland can move them (the lobes' centres fixed that day moved them on 5 of seeds 1–20,
+  by 38 m on seed 1). The coast's distance changes by up to about 1.7 m a metre near the shore (noise on
+  it), so slopes set in it, like the hills' rise from a beach (`shore.steepest`), come out steeper in
+  places.
 - **Done when** (per area) the user agrees its views clear the bar and the frame cost stays within the
   limits.
 
@@ -1218,7 +1224,7 @@ GPU does the same work as before, so the user's review needs no benchmark or bro
   `main.js`), on a new device. Firefox has WebGPU on Windows only (141 and later); elsewhere it gets the
   note that the game needs WebGPU.
 - Known from Stage 3: the heightmap's workers are untried outside Chromium; without them the grids
-  build in the main thread, about 5 s on a fast desktop (2.3 million samples for seed 1, since
+  build in the main thread, about 6 s on a fast desktop (2.6 million samples for seed 1, since
   2026-10-25), and with two cores there is one worker.
   Boot waits on the surfaces' tiles (`textures/`, made and read back on the GPU), not on the grids, which
   are in a second or two before them: making the tiles faster is the lever for boot.
@@ -1347,6 +1353,13 @@ Not part of the plan. Build one only if the user asks for it: a passing rain sho
 
 Newest first. One short entry per session, only a few lines: date, stage, what changed, what is still
 open, next step. Details belong in code comments.
+
+- **2026-10-25, a bug review of the terrain generation, all fixed at the user's request** (with two
+  helper agents): no jumps at the lobes' centres; no 7.5 m bulges where a ridge's segments meet (the
+  summit 288 m, not 292); gullies fan round ridge ends; far mipmaps line up (grids a multiple of 256,
+  checked on the GPU); flats less rough; beach ridges parallel; no cliffs behind beaches (`shore.steepest`)
+  and the capes' `hillReach` has its say; robustness fixes in the worker pool and grids. `jungle-edge`,
+  `coastal-flat` and `summit` lowered to their eye heights. Open: the capes moved on 5 of 20 seeds (Stage 17).
 
 - **2026-10-25, the coast and the land's relief, at the user's request** (Decisions): beach all round but
   for the headland and one cape with a cliff, coastal flats with old beach ridges, zone bands that vary

@@ -26,10 +26,14 @@
 // Bytes per sample of the ground: sand, rock, lush, sandy.
 export const GROUND = 4;
 
-// A grid laid out for the island is a multiple of this many samples across:
-// the GPU's mipmaps halve a texture's size, rounding down, so their first five
-// levels average whole blocks of samples, as filtering them assumes.
-const ALIGN = 32;
+// A grid laid out for the island is a multiple of this many samples across,
+// for `settings` (config.world.terrain): its textures have `mips` levels of
+// mipmaps, and the GPU's mipmaps halve a texture's size, rounding down, so
+// each of them averages whole blocks of samples, as filtering them assumes.
+// One that rounded down would lie off where it is read, by up to a texel of it.
+export function gridAlign({ mips = 1 }) {
+  return 2 ** (mips - 1);
+}
 
 // Level k of `settings` (config.world.terrain) for an island: { texel,
 // origin, samples }. A level with a `centre` lies there, `samples` across
@@ -47,9 +51,10 @@ export function layoutLevel(island, settings, k, coarser = null) {
     const samples = level.samples ?? settings.samples;
     return { texel, samples, origin: [level.centre[0] - (samples / 2) * texel, level.centre[1] - (samples / 2) * texel] };
   }
+  const align = gridAlign(settings);
   if (k === settings.levels.length - 1) {
     const { minA, maxA, minO, maxO } = island.coveBounds;
-    return square([minA - texel, maxA + texel, minO - texel, maxO + texel], texel, texel, [0, 0]);
+    return square([minA - texel, maxA + texel, minO - texel, maxO + texel], texel, texel, [0, 0], align);
   }
   if (!coarser) return null;
   const { origin, texel: step, samples: n, heights } = coarser;
@@ -65,7 +70,7 @@ export function layoutLevel(island, settings, k, coarser = null) {
   }
   if (i1 < 0) throw new Error(`terrain: no ground on the ${step} m grid higher than ${level.depth} m under the sea`);
   const grow = step + (settings.blend + 1) * texel;
-  const fitted = square([origin[0] + i0 * step - grow, origin[0] + i1 * step + grow, origin[1] + j0 * step - grow, origin[1] + j1 * step + grow], texel, step, origin);
+  const fitted = square([origin[0] + i0 * step - grow, origin[0] + i1 * step + grow, origin[1] + j0 * step - grow, origin[1] + j1 * step + grow], texel, step, origin, align);
   // Inside the coarser one, which has its full say but at its last sample.
   const end = (fitted.samples - 1) * texel;
   for (const c of [0, 1]) {
@@ -78,8 +83,12 @@ export function layoutLevel(island, settings, k, coarser = null) {
 
 // Catmull-Rom's weights at t (0 to 1 between samples 0 and 1) for the samples
 // at -1, 0, 1 and 2, into `out` (chunks/terrain.wgsl terrainCubicWeights).
-// Between two samples the curve can overshoot them by up to about 7% of the
-// largest step between neighbours.
+// The outer two are negative, together -t(1 - t) / 2, at most -1/8 halfway, so
+// along a line the curve overshoots its four samples' range by up to 1/8 of
+// it (samples 1, 0, 0, 1 dip to -1/8). Over the 4 x 4 samples a point's height
+// is made of, with negative shares n along a and m along o, by up to
+// n + m + 2nm of their range: CUBIC_OVERSHOOT, halfway along both.
+export const CUBIC_OVERSHOOT = 9 / 32;
 export function cubicWeights(t, out) {
   const t2 = t * t;
   const t3 = t2 * t;
@@ -90,13 +99,13 @@ export function cubicWeights(t, out) {
   return out;
 }
 
-// The smallest square of samples `texel` apart, a multiple of ALIGN across,
+// The smallest square of samples `texel` apart, a multiple of `align` across,
 // that holds the box [minA, maxA, minO, maxO], its corner on the lines `step`
 // apart through `lines` [a, o].
-function square([minA, maxA, minO, maxO], texel, step, lines) {
+function square([minA, maxA, minO, maxO], texel, step, lines, align) {
   const origin = [lines[0] + Math.floor((minA - lines[0]) / step) * step, lines[1] + Math.floor((minO - lines[1]) / step) * step];
   const span = Math.max(maxA - origin[0], maxO - origin[1]);
-  const samples = Math.ceil((Math.ceil(span / texel) + 1) / ALIGN) * ALIGN;
+  const samples = Math.ceil((Math.ceil(span / texel) + 1) / align) * align;
   return { texel, origin, samples };
 }
 
@@ -228,7 +237,9 @@ export function fillLush(island, { origin, texel, samples, heights, info, ground
 // finish(), once every row is in: the sampler (createHeightmap).
 export function createGrids(island, settings, { onLayout = () => {}, onLevel = () => {} } = {}) {
   const count = settings.levels.length;
-  const levels = new Array(count); // each once laid out: its layout, heights, info and ground
+  // Each once laid out: its layout, heights, info and ground. Not a sparse
+  // array: every() and map() would skip a level never laid out.
+  const levels = Array.from({ length: count });
   const rowsIn = new Array(count).fill(0);
   const done = (k) => levels[k] !== undefined && rowsIn[k] === levels[k].samples;
   // A level waits for the coarser one it is fitted to, and the finer ones for it.

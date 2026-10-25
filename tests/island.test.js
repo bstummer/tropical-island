@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { createRandom } from '../src/core/random.js';
 import { config } from '../src/config.js';
 import { sunPath } from '../src/sky/sun.js';
-import { createIsland, LAND_ZONES, SEA_ZONES, smax, smin, smoothstep, ZONES } from '../src/world/island.js';
+import { createIsland, ellipse, gullyAcross, LAND_ZONES, ridgePath, roundMax, SEA_ZONES, smax, smin, smoothstep, ZONES } from '../src/world/island.js';
 
 const SEEDS = Array.from({ length: 20 }, (_, i) => i + 1);
 const settings = config.world.island;
@@ -59,23 +59,141 @@ test('smin and smax blend within k of each other, never past the plain min and m
   assert.equal(smin(3, 7, 0), 3);
 });
 
+test('roundMax rounds the corner from below: never above the larger, as high as both where they meet, the larger beyond k', () => {
+  const r = createRandom(1)('test/roundMax');
+  for (let n = 0; n < 10_000; n++) {
+    const [a, b, k] = [r.range(-50, 50), r.range(-50, 50), r.range(0.1, 30)];
+    const [lo, hi] = [Math.min(a, b), Math.max(a, b)];
+    const m = roundMax(a, b, k);
+    assert.ok(m <= hi && m >= lo && m >= hi - 0.09 * k, `roundMax(${a}, ${b}, ${k}) = ${m}`);
+    if (hi - lo >= k) assert.equal(m, hi, 'apart by k or more, it is the max');
+    assert.ok(Math.abs(m - roundMax(b, a, k)) < 1e-9, 'either way round');
+    assert.equal(roundMax(a, a, k), a, 'two the same: no bulge');
+  }
+});
+
+test("an ellipse's distance runs on through its centre, falls away from it, changes by about a metre a metre, and keeps its shore", () => {
+  const r = createRandom(1)('test/ellipse');
+  for (let n = 0; n < 40; n++) {
+    const shape = { a: r.range(-500, 500), o: r.range(-500, 500), ra: r.range(300, 600), ro: r.range(300, 600), cos: 1, sin: 0 };
+    const turn = r.range(0, Math.PI);
+    [shape.cos, shape.sin] = [Math.cos(turn), Math.sin(turn)];
+    const at = (angle, metres) => ellipse(shape.a + metres * Math.cos(angle), shape.o + metres * Math.sin(angle), shape);
+    // Round the centre, a few centimetres out, every way: the same.
+    const near = Array.from({ length: 72 }, (_, k) => at((k * Math.PI) / 36, 0.05));
+    assert.ok(Math.max(...near) - Math.min(...near) < 0.1, `${JSON.stringify(shape)}: ${Math.min(...near).toFixed(1)} to ${Math.max(...near).toFixed(1)} round the centre`);
+    for (let k = 0; k < 24; k++) {
+      const angle = (k * Math.PI) / 12;
+      let last = at(angle, 0);
+      for (let m = 1; m < 700; m++) {
+        const d = at(angle, m);
+        assert.ok(d < last + 1e-9, `${JSON.stringify(shape)}: rises away from the centre at ${m} m`);
+        assert.ok(last - d < 1.1, `${JSON.stringify(shape)}: falls ${(last - d).toFixed(2)} m in a metre at ${m} m`);
+        last = d;
+      }
+    }
+    // On the shore it is 0, as it always was.
+    for (let k = 0; k < 24; k++) {
+      const angle = (k * Math.PI) / 12;
+      const [x, y] = [shape.ra * Math.cos(angle), shape.ro * Math.sin(angle)];
+      const [a, o] = [shape.a + x * shape.cos - y * shape.sin, shape.o + x * shape.sin + y * shape.cos];
+      assert.ok(Math.abs(ellipse(a, o, shape)) < 1e-6, `${JSON.stringify(shape)}: not 0 on its shore`);
+    }
+  }
+});
+
+test("a ridge path's gullies fan out round its ends and the outside of its bends, and run on into the next segment's", () => {
+  const { hills } = settings;
+  const path = ridgePath([[0, 0, 200], [0, 200, 150], [0, 200, 150], [120, 340, 90]], hills);
+  assert.equal(path.length, 2, 'a repeated point is left out');
+  const t = (s, a, o) => Math.min(Math.max(((a - s.ax) * s.ua + (o - s.ao) * s.uo) / s.length, 0), 1);
+  const across = (s, a, o) => gullyAcross(a, o, s, t(s, a, o), hills);
+  // Round the outside of the bend at (0, 200), between the two segments' flanks
+  // (the path turns towards +a, so the outside is -a): both segments' fans agree.
+  const [first, second] = path;
+  const turn = Math.acos(first.ua * second.ua + first.uo * second.uo);
+  for (let k = 1; k < 10; k++) {
+    const angle = Math.PI - (k / 10) * turn; // from the first's flank towards the second's
+    for (const metres of [20, 60, 120]) {
+      const [a, o] = [metres * Math.cos(angle), 200 + metres * Math.sin(angle)];
+      assert.ok(Math.abs(across(first, a, o) - across(second, a, o)) < 1e-6, `the fans disagree at ${a.toFixed(1)}, ${o.toFixed(1)}`);
+    }
+  }
+  // Round the end, out from (120, 340): on a circle, the gullies' place changes
+  // with the angle, from the flank's on round the nose, not ring it.
+  const values = Array.from({ length: 9 }, (_, k) => {
+    const angle = (k / 8) * (Math.PI / 2); // from the flank to straight ahead
+    const [na, no] = [-second.uo, second.ua]; // the flank's normal
+    const dir = [na * Math.cos(angle) + second.ua * Math.sin(angle), no * Math.cos(angle) + second.uo * Math.sin(angle)];
+    return across(second, 120 + 50 * dir[0], 340 + 50 * dir[1]);
+  });
+  assert.ok(Math.abs(values[0] - (second.across + second.length)) < 1e-6, 'off the flank, where the segment ends');
+  for (let k = 1; k < values.length; k++) assert.ok(values[k] > values[k - 1] + 1, `round the end at ${k}/8: ${values.map((v) => v.toFixed(0))}`);
+});
+
 test('zone names are unique and split into land and sea', () => {
   assert.equal(new Set(ZONES).size, ZONES.length);
   assert.deepEqual([...ZONES].sort(), [...SEA_ZONES, 'rock', ...LAND_ZONES].sort());
 });
 
 test('a point repeated in a path leaves the island whole', () => {
-  const { cove, seabed } = settings;
+  const { cove, seabed, hills } = settings;
   const repeated = (path) => [path[0], ...path];
   const island = make(1, {
     cove: { ...cove, headland: { ...cove.headland, path: repeated(cove.headland.path) } },
     seabed: { ...seabed, channel: { ...seabed.channel, path: repeated(seabed.channel.path) } },
+    hills: { ...hills, ridges: hills.ridges.map((ridge) => [...ridge.slice(0, 2), ridge[1], ...ridge.slice(2)]) },
   });
   const base = make(1);
   for (const [x, z] of grid(island, 97)) {
     assert.ok(Number.isFinite(island.height(x, z)), `${x}, ${z}`);
     assert.ok(Math.abs(island.height(x, z) - base.height(x, z)) < 1e-6, `the repeated point changed the island at ${x}, ${z}`);
   }
+});
+
+test("the coast's distance and the height run on through the centres of the lobes the island is made of", () => {
+  const out = {};
+  for (const seed of SEEDS) {
+    const island = make(seed);
+    for (const { a, o } of island.lobes) {
+      // Five centimetres round the centre, every way.
+      const round = Array.from({ length: 72 }, (_, k) => {
+        const { coast, height } = island.evaluate(a + 0.05 * Math.cos((k * Math.PI) / 36), o + 0.05 * Math.sin((k * Math.PI) / 36), out);
+        return [coast, height];
+      });
+      const spread = (c) => Math.max(...round.map((v) => v[c])) - Math.min(...round.map((v) => v[c]));
+      assert.ok(spread(0) < 0.25, `seed ${seed}: the coast's distance spans ${spread(0).toFixed(1)} m round the lobe at ${a.toFixed(0)}, ${o.toFixed(0)}`);
+      assert.ok(spread(1) < 0.25, `seed ${seed}: the height spans ${spread(1).toFixed(1)} m round the lobe at ${a.toFixed(0)}, ${o.toFixed(0)}`);
+    }
+  }
+});
+
+test('a ridge stands no higher where its segments meet, or where two ridges start together', () => {
+  const { hills } = settings;
+  const ridge = hills.ridges[0];
+  const out = {};
+  const near = (island, [ca, co], other, tolerance, what) => {
+    for (let a = ca - 120; a <= ca + 120; a += 6) {
+      for (let o = co - 120; o <= co + 120; o += 6) {
+        const [h, base] = [island.evaluate(a, o, out).land, other.evaluate(a, o, {}).land];
+        assert.ok(Math.abs(h - base) <= tolerance, `${what}: ${h.toFixed(2)} m against ${base.toFixed(2)} m at ${a}, ${o}`);
+      }
+    }
+  };
+  // A ridge given twice is the same ridge, gullies and all, but for the
+  // corners rounded from below: where the two stand as high as each other,
+  // smax-joined they would bulge by 7.5 m.
+  const twice = make(1, { hills: { ...hills, ridges: [...hills.ridges, ridge] } });
+  near(twice, ridge[1], make(1), 0.1 * hills.bend, 'a ridge given twice');
+  near(twice, ridge[0], make(1), 0.1 * hills.bend, 'a ridge given twice, at the summit');
+  // Split at a point on a straight stretch, it stands as high as it did, but
+  // for the corner rounded from below; without gullies, which the split
+  // segments count along differently round their new ends.
+  const [p, q] = [ridge[1], ridge[2]];
+  const split = [...ridge.slice(0, 2), p.map((v, i) => (v + q[i]) / 2), ...ridge.slice(2)];
+  const smooth = { ...hills, gullies: { ...hills.gullies, depth: 0 } };
+  const whole = make(1, { hills: smooth });
+  near(make(1, { hills: { ...smooth, ridges: [split, ...hills.ridges.slice(1)] } }), split[2], whole, 0.1 * hills.bend, 'a ridge split in two');
 });
 
 test('bad settings are refused', () => {
@@ -286,21 +404,29 @@ test('zones run in order from the shore, land zones on land and sea zones at sea
       if (s.height < 0) assert.ok(SEA_ZONES.includes(zone), `seed ${seed}: ${zone} under water`);
       else assert.ok(!SEA_ZONES.includes(zone), `seed ${seed}: ${zone} on land`);
       // From points near the shore, walk inland: the zones never step back towards
-      // the sea, but for a dent (DENT). The walk ends where the shore stops
-      // falling behind, on the spine of a headland or in the middle of the island.
+      // the sea, but for a dent (DENT), or the palm belt again where the land
+      // falls back towards the shore's own rise, as by a cape, where the hills
+      // come down close and recede beside it: the palm belt holds the low
+      // ground (zones.palmBelt). The walk ends where the shore stops falling
+      // behind, on the spine of a headland or in the middle of the island.
       if (s.coast > 0 && s.coast < 41) {
         walked++;
         let [px, pz] = [x, z];
         let last = -1;
         let back = null; // where a dent began
         let behind = -Infinity;
+        let high = 0; // the most the hills have risen on the walk
         for (let i = 0; i < 50; i++) {
           const p = island.sample(px, pz);
           if (p.coast < behind + 0.75) break;
           behind = p.coast;
+          high = Math.max(high, p.rise);
           const index = LAND_ZONES.indexOf(island.zoneOf(p, island.slope(px, pz)));
           if (index >= 0) {
-            if (index < last) {
+            if (index < last && LAND_ZONES[index] === 'palm-belt' && LAND_ZONES[last] === 'jungle' && p.rise < high - 1) {
+              back = null;
+              last = index;
+            } else if (index < last) {
               back ??= i;
               const at = `walking inland from ${x.toFixed(0)}, ${z.toFixed(0)}`;
               assert.equal(index, last - 1, `seed ${seed}: ${LAND_ZONES[index]} after ${LAND_ZONES[last]} ${at}`);
@@ -656,6 +782,125 @@ test('the capes stand as cliffs: their shore rises as a wall from the water', ()
   }
 });
 
+test("the capes' hillReach has its say: the hills come down to their walls over it, where that is gentle enough", () => {
+  // Beyond the cove the beaches' gentle slope used to win at the capes too,
+  // and their hillReach moved the land by a metre at most.
+  const { rocky } = settings.shore;
+  for (const seed of SEEDS.slice(0, 5)) {
+    const island = make(seed);
+    const short = make(seed, { shore: { ...settings.shore, rocky: { ...rocky, island: { ...rocky.island, hillReach: [5, 5] } } } });
+    let moved = 0;
+    for (const c of island.capes) {
+      for (let k = 0; k < 900; k++) {
+        const [a, o] = [c.a + ((k % 30) - 15) * 10, c.o + (Math.floor(k / 30) - 15) * 10];
+        moved = Math.max(moved, Math.abs(island.evaluate(a, o, {}).land - short.evaluate(a, o, {}).land));
+      }
+    }
+    assert.ok(moved > 3, `seed ${seed}: a hillReach of 5 m moves the capes' land by only ${moved.toFixed(2)} m`);
+  }
+});
+
+test('beyond the cove the hills rise from a beach no steeper than the green holds to: no cliffs behind the beaches', () => {
+  // The hills smoothed (no valleys, gullies, creases or bumps), so what is
+  // steep is the hills' own lie and their rise from the shore: nowhere within
+  // 400 m of a beach as steep as the ground turns mostly rock (the middle of
+  // zones.rockSlope).
+  const { hills, zones } = settings;
+  const smooth = {
+    hills: {
+      ...hills,
+      warp: { ...hills.warp, amplitude: 0 },
+      detail: { ...hills.detail, share: 0, base: 0 },
+      creases: { ...hills.creases, share: 0 },
+      gullies: { ...hills.gullies, depth: 0 },
+      valleys: { ...hills.valleys, depth: 0, cove: { ...hills.valleys.cove, depth: 0 } },
+    },
+  };
+  const limit = Math.tan(((zones.rockSlope[0] + zones.rockSlope[1]) * Math.PI) / 360);
+  for (const seed of SEEDS.slice(0, 8)) {
+    const island = make(seed, smooth);
+    const land = (a, o) => island.evaluate(a, o, {}).land;
+    const { minA, maxA, minO, maxO } = island.coveBounds;
+    const steep = [];
+    const s = {};
+    for (let a = minA; a < maxA; a += 12) {
+      for (let o = minO; o < maxO; o += 12) {
+        if (Math.hypot(a, o) < settings.cove.radius + settings.cove.blend) continue;
+        island.evaluate(a, o, s);
+        if (s.coast < 20 || s.coast > 400 || s.beach < 0.99) continue;
+        const slope = Math.hypot(land(a + 1, o) - land(a - 1, o), land(a, o + 1) - land(a, o - 1)) / 2;
+        if (slope > limit) steep.push(`${((Math.atan(slope) * 180) / Math.PI).toFixed(0)}° at ${a.toFixed(0)}, ${o.toFixed(0)}`);
+      }
+    }
+    assert.deepEqual(steep.slice(0, 5), [], `seed ${seed}: ${steep.length} points of cliff behind the beaches`);
+  }
+});
+
+test('the old beach ridges on the coastal flats run parallel to the shore', () => {
+  // The ridges alone (the land with them less the land without), where they
+  // stand full height (`to` held at its furthest): they rise and fall straight
+  // inland, along the coast distance's gradient, within 5° but at 1% of
+  // points. Their spacing changing along the coast turned them by up to 75°.
+  const beach = settings.shore.beach;
+  const ridged = (seed, ridges) => make(seed, { shore: { ...settings.shore, beach: { ...beach, island: { ...beach.island, ridges, to: [beach.island.to[1], beach.island.to[1]] } } } });
+  const { from, to } = beach.island;
+  for (const seed of SEEDS.slice(0, 3)) {
+    const [island, bare] = [ridged(seed, beach.island.ridges), ridged(seed, 0)];
+    const diff = (a, o) => island.evaluate(a, o, {}).land - bare.evaluate(a, o, {}).land;
+    const coast = (a, o) => island.evaluate(a, o, {}).coast;
+    const { minA, maxA, minO, maxO } = island.coveBounds;
+    let points = 0;
+    let off = 0;
+    let worst = 0;
+    const s = {};
+    for (let a = minA; a < maxA; a += 11) {
+      for (let o = minO; o < maxO; o += 11) {
+        if (Math.hypot(a, o) < settings.cove.radius + settings.cove.blend) continue;
+        island.evaluate(a, o, s);
+        // On a beach's flat, where the hills haven't risen, with or without the ridges.
+        if (s.beach < 0.99 || s.coast < from + 25 || s.coast > to[1] - 65 || s.rise > 1e-4 || bare.evaluate(a, o, {}).rise > 1e-4) continue;
+        const inland = [coast(a + 1, o) - coast(a - 1, o), coast(a, o + 1) - coast(a, o - 1)];
+        const rise = [diff(a + 1, o) - diff(a - 1, o), diff(a, o + 1) - diff(a, o - 1)];
+        if (Math.hypot(...rise) / 2 < 0.03) continue; // on a crest or in a trough: no direction
+        const cos = Math.abs(inland[0] * rise[0] + inland[1] * rise[1]) / (Math.hypot(...inland) * Math.hypot(...rise));
+        const angle = (Math.acos(Math.min(cos, 1)) * 180) / Math.PI;
+        points++;
+        if (angle > 5) off++;
+        worst = Math.max(worst, angle);
+      }
+    }
+    assert.ok(points > 1000, `seed ${seed}: only ${points} points on the ridges`);
+    assert.ok(off <= 0.01 * points && worst < 20, `seed ${seed}: ${off} of ${points} points on the ridges more than 5° off the shore's direction, up to ${worst.toFixed(0)}°`);
+  }
+});
+
+test('the coastal flats are only as rough as flats: the hills add their steepness to the roughness only where they have risen', () => {
+  // With no roughness on flat ground (roughness.flat 0), the ground beyond the
+  // cove that lies flat, where the hills haven't risen above the shore's own
+  // rise, is all but smooth. The hills' slope used to count where they still
+  // lay under the plain, and roughened it by up to 2.8 m.
+  for (const seed of SEEDS.slice(0, 4)) {
+    const island = make(seed, { roughness: { ...settings.roughness, flat: 0 } });
+    const land = (a, o) => island.evaluate(a, o, {}).land;
+    const { minA, maxA, minO, maxO } = island.coveBounds;
+    let points = 0;
+    let worst = 0;
+    const s = {};
+    for (let a = minA; a < maxA; a += 9) {
+      for (let o = minO; o < maxO; o += 9) {
+        if (Math.hypot(a, o) < settings.cove.radius + settings.cove.blend) continue;
+        island.evaluate(a, o, s);
+        if (s.coast < settings.roughness.from[1] || s.rise > 0.05) continue;
+        if (Math.hypot(land(a + 2, o) - land(a - 2, o), land(a, o + 2) - land(a, o - 2)) / 4 > 0.05) continue;
+        points++;
+        worst = Math.max(worst, Math.abs(s.height - s.land));
+      }
+    }
+    assert.ok(points > 300, `seed ${seed}: only ${points} points of flat`);
+    assert.ok(worst < 0.3, `seed ${seed}: flat ground ${worst.toFixed(2)} m rough with no roughness on flats`);
+  }
+});
+
 test('beyond the cove the green begins above the waves, and the flat behind a beach stays above them', () => {
   for (const seed of SEEDS.slice(0, 8)) {
     const island = make(seed);
@@ -717,7 +962,8 @@ test('the zones vary along the coast: the beach, and how far in the jungle start
     // note where the sand ends and the jungle starts.
     const sand = [];
     const jungle = [];
-    const outer = outerCoast(island, 90).filter((p) => p.sandy);
+    // Beaches proper, not where one gives way to a cape's wall.
+    const outer = outerCoast(island, 90).filter((p) => p.sandy && island.evaluate(p.a, p.o, {}).beach > 0.95);
     for (const p of outer) {
       let [a, o] = [p.a, p.o];
       let sandEnd = null;

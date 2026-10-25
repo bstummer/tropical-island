@@ -472,8 +472,9 @@ function toolCheckTasks(context, fileUrl, query, view, outDir) {
     // The heights and the ground the GPU draws are the ones JS knows
     // (src/fixtures/terrain.js), the comparison catches a sampler half a metre
     // off, the drawn ground keeps close to the island's between samples, the
-    // mesh's own height on the GPU is its JS twin's, and the light from below
-    // reads the ground's albedo JS expects where it expects it.
+    // mesh's own height on the GPU is its JS twin's, the light from below
+    // reads the ground's albedo JS expects where it expects it, and a far
+    // pixel reads the ground's mipmaps where JS expects them.
     () => checkFixture(context, fileUrl, { ...params, fixture: 'terrain' }, async (page, info, problems) => {
       const t = await page.evaluate(() => window.__TERRAIN__);
       for (const text of terrainProblems(t, config.capture.terrain)) problems.push({ kind: 'tool check', text: `terrain fixture: ${text}` });
@@ -484,7 +485,8 @@ function toolCheckTasks(context, fileUrl, query, view, outDir) {
         `(${Object.entries(t.ground.fields).map(([f, v]) => `${f} ${v.toFixed(2)}`).join(', ')}), ` +
         `${t.ground.mistaken.toFixed(1)} half a metre off; drawn vs world/island.js per level (median) ${t.island.map((l) => `${l.median.toFixed(3)} m`).join(', ')}; ` +
         `the mesh's height at ${t.mesh.points} points off its twin by ${t.mesh.gpu.toExponential(1)} m (limit ${mesh}), ${t.mesh.mistaken.toFixed(2)} m for a camera 30 m off; ` +
-        `the light from below's albedo at ${t.bounce.points} points off world/albedo.js's by ${t.bounce.gpu.toExponential(1)} (limit ${bounce}), ${t.bounce.mistaken.toFixed(2)} half a texel off`
+        `the light from below's albedo at ${t.bounce.points} points off world/albedo.js's by ${t.bounce.gpu.toExponential(1)} (limit ${bounce}), ${t.bounce.mistaken.toFixed(2)} half a texel off; ` +
+        `the far ground at ${t.far.points} points, ${t.far.lod} mips up, at ${t.far.gpu.toFixed(2)} of its limits, ${t.far.mistaken.toFixed(1)} a quarter of a texel off`
       );
     }),
     // The rocks' GPU side puts them where JS knows they are (src/fixtures/rocks.js):
@@ -709,8 +711,9 @@ export function mathsMismatch(values) {
 // within `limit` of heightmap.js's and its ground within its limits (a share
 // of them, at most 1), the deliberate mistakes beyond them, and per level the
 // drawn ground's median miss of the island within islandMedian of the level's
-// spacing, and the light from below's albedo within `bounce`, its mistake
-// beyond it. Returns problem texts.
+// spacing, the light from below's albedo within `bounce`, and the far ground
+// within its limits (a share of them, at most 1), their mistakes beyond them.
+// Returns problem texts.
 export function terrainProblems(t, { limit, islandMedian, mesh, bounce }) {
   const problems = [];
   if (!(t.gpu <= limit)) problems.push(`GPU vs world/heightmap.js off by ${t.gpu?.toExponential(1)} m (limit ${limit})`);
@@ -721,6 +724,8 @@ export function terrainProblems(t, { limit, islandMedian, mesh, bounce }) {
   if (!(t.mesh?.mistaken > mesh)) problems.push(`the mesh's height for a camera 30 m off is only ${t.mesh?.mistaken?.toExponential(1)} m off, within the limit: the check misses it`);
   if (!(t.bounce?.gpu <= bounce)) problems.push(`the ground's albedo the GPU's light from below reads vs world/albedo.js's off by ${t.bounce?.gpu?.toExponential(1)} (limit ${bounce})`);
   if (!(t.bounce?.mistaken > bounce)) problems.push(`the albedo map read half a texel off is only ${t.bounce?.mistaken?.toExponential(1)} off, within the limit: the check misses it`);
+  if (!(t.far?.gpu <= 1)) problems.push(`the far ground the GPU reads from the mipmaps vs JS's at ${t.far?.gpu?.toFixed(2)} of its limits`);
+  if (!(t.far?.mistaken > 1)) problems.push(`the far ground's mipmaps a quarter of a texel off are only ${t.far?.mistaken?.toFixed(2)} of its limits: the check misses it`);
   for (const { texel, median } of t.island) {
     if (!(median <= islandMedian * texel)) problems.push(`the ${texel} m level misses world/island.js by ${median?.toFixed(3)} m (median; limit ${(islandMedian * texel).toFixed(2)})`);
   }

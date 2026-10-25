@@ -199,7 +199,8 @@ export const world = {
       crestRadius: 12, // ridges are rounded this much on top
       flankSlope: 1.15, // steepest slope of a ridge's flanks, unless its width is held between these
       width: [12, 120],
-      join: 30, // how smoothly ridges merge where they meet
+      join: 30, // how smoothly the ridges merge into the volcanoes
+      bend: 2, // metres: where a ridge's segments cross, as at the inside of a bend, the corner between them is rounded within this of each other
       warp: { amplitude: 40, wavelength: 420 }, // bends the ridgelines
       detail: { share: 0.035, base: 0.8, wavelength: 90, octaves: 4 },
       creases: { share: 0.06, wavelength: 50, round: 4 }, // folds every way, `share` of the height deep, their floors rounded over `round` metres
@@ -231,8 +232,9 @@ export const world = {
       // the storms have built where the green begins, and the plain behind it
       // a few metres above the sea, as coastal flats are.
       // Beyond the cove the flat behind a beach is old beach
-      // ridges, `ridges` metres high, between `spacing` metres apart, parallel
-      // to the shore from `from` metres inland and gone by `to`, and hummocks of
+      // ridges, `ridges` metres high, parallel to the shore from `from` metres
+      // inland and gone by between `to`, spacing[0] apart there and further
+      // apart further in, spacing[1] by the furthest `to`; and hummocks of
       // `hummocks` [metres, wavelength] over it.
       beach: {
         berm: 1.7, bermWidth: 20, plainFrom: 35, plain: 6, plainReach: 150, shelfSlope: 0.07, hillReach: 160,
@@ -260,6 +262,12 @@ export const world = {
       // than `reach`, so the peaks behind keep their height; easing between
       // these over `ease` metres, so the slope never turns at once.
       plain: { flat: [0, 160], wavelength: 600, ramp: 110, slope: 0.45, reach: 220, ease: 40 },
+      // Beyond the cove the hills' rise from any shore is no steeper than this
+      // (rise over run, 35°), tall ones further in than plain.reach if need be,
+      // and from a rocky one over its hillReach where that is gentler: with
+      // the hills' own slopes on top, no cliffs behind the beaches (40°
+      // left some on 5 of seeds 1-20), and green slopes above the capes' walls.
+      steepest: 0.7,
       // Beyond the cove the coast is beach but for `count` rocky capes, where it
       // juts out furthest (its curvature over `scale` metres, found along `rays`
       // rays from the island's middle), at least `spacing` metres from each other
@@ -360,6 +368,12 @@ export const world = {
     // rest (PLAN.md, Decisions; tests/heightmap.test.js).
     levels: [{ texel: 2, depth: 20 }, { texel: 8 }],
     blend: 16, // samples over which the fine grid fades into the coarse one at its edge, out in the deep
+    // Levels of mipmaps of each grid's textures, each half the last exactly:
+    // the grids are laid out a multiple of 2^(mips - 1) samples across
+    // (heightmap.js gridAlign). The last one's texels are 256 samples across,
+    // 512 m on the fine grid: only a pixel at the horizon spans more, and reads
+    // it a little sharp.
+    mips: 9,
     // The level-of-detail mesh: a quadtree over the coarsest grid. Its smallest
     // nodes are `leaf` metres across, with `grid` x `grid` quads; each level up
     // doubles both. A node splits within quality.terrainDetail x
@@ -645,8 +659,13 @@ export const capture = {
   // on one D3D11 GPU. `bounce`: how far the ground's albedo the light from
   // below reads on the GPU may land from JS's, per channel: half floats and
   // filter weights cost 0.001 on one D3D11 GPU, 0.0003 on SwiftShader; the
-  // map read half a texel off misses by 0.1.
-  terrain: { limit: 0.002, offset: 0.5, islandMedian: 0.04, ground: { cover: 0.01, band: 0.005, reef: 0.25 }, mesh: 0.01, bounce: 0.01 },
+  // map read half a texel off misses by 0.1. `far`: the ground read `lod`
+  // levels of mips up, as a pixel 256 m across reads the fine grid, within
+  // `band` and `reef` (metres) of the mips made in JS: wider, as neighbouring
+  // texels there differ by metres of reef and whole bands, which a GPU's
+  // coarse filter weights and seven levels of half floats rounded its own way
+  // carry into the result.
+  terrain: { limit: 0.002, offset: 0.5, islandMedian: 0.04, ground: { cover: 0.01, band: 0.005, reef: 0.25 }, mesh: 0.01, bounce: 0.01, far: { lod: 7, band: 0.05, reef: 2 } },
   // The surfaces fixture (src/fixtures/surfaces.js): a tile made again shifted
   // by a whole tile may change this share of its texels by more than `levels`
   // (the odd texel on a cell's edge flips by rounding); shifted by half a tile,

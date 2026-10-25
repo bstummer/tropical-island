@@ -296,6 +296,7 @@ const goodTerrain = {
   ground: { gpu: 0.3, mistaken: 9 },
   mesh: { points: 3000, gpu: 2e-4, mistaken: 3 },
   bounce: { points: 1024, gpu: 1e-3, mistaken: 0.1 },
+  far: { points: 512, lod: 7, gpu: 0.2, mistaken: 30 },
   island: [1, 2, 4, 8].map((texel) => ({ texel, median: 0.004 * texel })),
 };
 const terrainLimits = { limit: 0.002, islandMedian: 0.04, mesh: 0.01, bounce: 0.01 };
@@ -329,6 +330,13 @@ test("terrain problems: the light from below's albedo off JS's, a mistake in its
   assert.match(terrainProblems({ ...goodTerrain, bounce: { points: 1024, gpu: 1e-3, mistaken: 0.004 } }, terrainLimits).join(), /half a texel off .* misses it/);
   assert.equal(terrainProblems({ ...goodTerrain, bounce: undefined }, terrainLimits).length, 2);
   assert.equal(terrainProblems({ ...goodTerrain, bounce: { points: 1024, gpu: NaN, mistaken: NaN } }, terrainLimits).length, 2);
+});
+
+test("terrain problems: the far ground off JS's mipmaps, a mistake in them the check misses, or no far read fail", () => {
+  assert.match(terrainProblems({ ...goodTerrain, far: { ...goodTerrain.far, gpu: 1.4 } }, terrainLimits).join(), /far ground the GPU reads/);
+  assert.match(terrainProblems({ ...goodTerrain, far: { ...goodTerrain.far, mistaken: 0.6 } }, terrainLimits).join(), /quarter of a texel off .* misses it/);
+  assert.equal(terrainProblems({ ...goodTerrain, far: undefined }, terrainLimits).length, 2);
+  assert.equal(terrainProblems({ ...goodTerrain, far: { points: 512, lod: 7, gpu: NaN, mistaken: NaN } }, terrainLimits).length, 2);
 });
 
 // ---------------------------------------------------------------- rocks fixture

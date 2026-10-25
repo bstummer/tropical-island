@@ -17,7 +17,7 @@ const USAGE = () => GPUTextureUsage;
 export class Texture {
   // width, height; depth: layers of an array, or the depth of a 3D texture;
   // dimension '2d' or '3d'; array: a 2D array (also with one layer); format;
-  // mips: a full mip chain; samples; render: drawn into; data: uploaded into
+  // mips: true for a full mip chain, or how many levels; samples; render: drawn into; data: uploaded into
   // (also when mipmaps are drawn); sampler: { mag, min, mipmap, wrap, anisotropy } (device.js).
   constructor(gpu, { name = 'texture', width, height = 1, depth = 1, dimension = '2d', array = false, format = 'rgba8unorm', mips = false, samples = 1, render = false, data = false, sampler = {} }) {
     Object.assign(this, { gpu, name, width, height, depth, dimension, array, format, samples, render, data });
@@ -33,7 +33,8 @@ export class Texture {
   get mipLevelCount() {
     if (!this.mips) return 1;
     const largest = Math.max(this.width, this.height, this.dimension === '3d' ? this.depth : 1);
-    return Math.floor(Math.log2(largest)) + 1;
+    const full = Math.floor(Math.log2(largest)) + 1;
+    return this.mips === true ? full : Math.min(this.mips, full);
   }
 
   create() {

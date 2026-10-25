@@ -35,7 +35,7 @@ import { Attribute, Geometry } from '../gpu/geometry.js';
 import { Mesh } from '../gpu/scene.js';
 import { Texture } from '../gpu/texture.js';
 import { createIsland } from './island.js';
-import { createGrids, fillRows, GROUND, layoutLevel } from './heightmap.js';
+import { createGrids, CUBIC_OVERSHOOT, fillRows, gridAlign, GROUND, layoutLevel } from './heightmap.js';
 import { albedoMap } from './albedo.js';
 import { greenCover, greenPatches } from './green.js';
 import { createSurfaceTiles, tilesUniforms } from '../textures/surfaces.js';
@@ -228,14 +228,16 @@ export function create(ctx) {
   function upload(grids) {
     grids.levels.forEach((level, k) => {
       const n = level.samples;
+      if (n % gridAlign(settings)) throw new Error(`terrain: the ${level.texel} m grid is ${n} samples across, which doesn't halve ${settings.mips - 1} times`);
       const texture = (name, format, data, mips) =>
         new Texture(gpu, { name: `${name} ${level.texel} m`, width: n, height: n, format, mips, data: true, sampler: filtered }).upload(data);
       // Read texel by texel: core WebGPU can't filter 32-bit floats.
       const height = texture('terrain height', 'r32float', level.heights, false);
       // Filtered and mipmapped: from afar a pixel shows its footprint's average,
-      // so a far ridge keeps its share of rock.
-      const info = texture('terrain info', 'rgba16float', level.infoHalf, true).generateMipmaps();
-      const ground = texture('terrain ground', 'rgba8unorm', level.ground, true).generateMipmaps();
+      // so a far ridge keeps its share of rock. As many levels as halve the
+      // grid exactly (config.world.terrain.mips): further on, a pixel reads the last.
+      const info = texture('terrain info', 'rgba16float', level.infoHalf, settings.mips).generateMipmaps();
+      const ground = texture('terrain ground', 'rgba8unorm', level.ground, settings.mips).generateMipmaps();
       textures.push(height, info, ground);
       const names = LEVEL_TEXTURES[k];
       uniforms[names.height].value = height;
@@ -244,7 +246,7 @@ export function create(ctx) {
       uniforms.uTerrainLevels.value[k].set(level.origin[0], level.origin[1], level.texel, n);
     });
     const { origin, texel, samples: n, albedoHalf } = grids.levels.at(-1);
-    const bounce = new Texture(gpu, { name: 'terrain bounce', width: n, height: n, format: 'rgba16float', mips: true, data: true, sampler: filtered });
+    const bounce = new Texture(gpu, { name: 'terrain bounce', width: n, height: n, format: 'rgba16float', mips: settings.mips, data: true, sampler: filtered });
     bounce.upload(albedoHalf).generateMipmaps();
     textures.push(bounce);
     uniforms.uTerrainReady.value = 1;
@@ -363,9 +365,11 @@ function gridGeometry(quads, nodes, mirrored) {
 }
 
 // The lowest and highest ground over a square of the quadtree, from every
-// grid that covers it (a far node draws a coarser grid's heights), with a
-// little room for the blends between them and for the curve between samples
-// overshooting them (heightmap.js cubicWeights); and the surfaces on it: wet sand
+// grid that covers it (a far node draws a coarser grid's heights), with room
+// for the curve between samples overshooting them (heightmap.js
+// CUBIC_OVERSHOOT; the blends between grids and the morph mix heights from
+// within the same samples, and the mesh is flat between its vertices) and a
+// metre more; and the surfaces on it: wet sand
 // where sand lies below `dry` m above the sea, the wet sand's reach
 // (chunks/wet.wgsl), with room for how far the waves reach further and for the
 // samples' spacing. The surfaces come only from the grids the shader reads
@@ -433,7 +437,7 @@ function nodeBounds(heightmap, dry, blend) {
         }
       }
     }
-    const room = 1 + 0.08 * (max - min);
+    const room = 1 + CUBIC_OVERSHOOT * (max - min);
     return [min - room, max + room, surfaces];
   };
 }
@@ -480,22 +484,27 @@ function heightmapFor(island, seed, settings, looks) {
 // groundAlbedo). Kept with the grids, so a quality change uploads them as they are.
 function build(island, seed, settings, looks) {
   const { rowsPerTask } = settings;
+  // jobs: { tasks, store, finish, added }; added() hears of tasks added (a
+  // level laid out), so a pool can hand them out at once.
   const collect = () => {
-    const tasks = [];
+    const jobs = { tasks: [], added() {} };
     const grids = createGrids(island, settings, {
       onLayout(level, { texel, origin, samples }) {
         const layout = { texel, origin, samples };
-        for (let j0 = 0; j0 < samples; j0 += rowsPerTask) tasks.push({ seed, level, layout, j0, j1: Math.min(j0 + rowsPerTask, samples) });
+        for (let j0 = 0; j0 < samples; j0 += rowsPerTask) jobs.tasks.push({ seed, level, layout, j0, j1: Math.min(j0 + rowsPerTask, samples) });
+        jobs.added();
       },
       onLevel(k, level) {
         level.infoHalf = halves(level.info);
         if (k === settings.levels.length - 1) level.albedoHalf = halves(albedoMap(level, looks));
       },
     });
-    return { tasks, store: grids.store, finish: grids.finish };
+    return Object.assign(jobs, { store: grids.store, finish: grids.finish });
   };
   const grids = collect();
-  return inWorkers(grids.tasks, grids.store, settings.maxWorkers).then(grids.finish, (err) => {
+  return inWorkers(grids, settings.maxWorkers).then(grids.finish, (err) => {
+    // Storing their rows failed (laying out a level, say): here it would too.
+    if (!err.workers) throw err;
     // Workers that won't start or run (a browser that refuses them from
     // file://, say): build here instead, slower but the same grids, afresh
     // as some rows may be in. If the island or a level's work throws, it
@@ -515,10 +524,15 @@ function build(island, seed, settings, looks) {
   });
 }
 
-// Runs `tasks` in a pool of workers, storing each result as it comes; storing
-// may add tasks (a level laid out once the one it is fitted to is in).
-function inWorkers(tasks, store, maxWorkers) {
+// Runs `jobs` (build's: tasks, store, added) in a pool of workers, storing
+// each result as it comes. Storing may add tasks (a level laid out once the
+// one it is fitted to is in), which idle workers take up at once, before the
+// rest of storing that level, which takes a while. Rejects with an error
+// marked `workers` if the workers fail, and with storing's own if that does.
+function inWorkers(jobs, maxWorkers) {
+  const { tasks, store } = jobs;
   const count = Math.max(1, Math.min(maxWorkers, (navigator.hardwareConcurrency || 2) - 1));
+  const failed = (message) => Object.assign(new Error(message), { workers: true });
   return new Promise((resolve, reject) => {
     const workers = [];
     const stop = () => workers.forEach((w) => w.terminate());
@@ -529,11 +543,14 @@ function inWorkers(tasks, store, maxWorkers) {
       if (next < tasks.length) worker.postMessage(tasks[next++]);
       else idle.push(worker);
     };
+    jobs.added = () => {
+      while (idle.length && next < tasks.length) give(idle.pop());
+    };
     try {
       for (let i = 0; i < count; i++) workers.push(new HeightmapWorker());
     } catch (err) {
       stop();
-      reject(new Error(`heightmap workers won't start (${err.message})`));
+      reject(failed(`heightmap workers won't start (${err.message})`));
       return;
     }
     for (const worker of workers) {
@@ -546,7 +563,6 @@ function inWorkers(tasks, store, maxWorkers) {
           reject(err);
           return;
         }
-        while (idle.length && next < tasks.length) give(idle.pop());
         if (++done === tasks.length) {
           stop();
           resolve();
@@ -554,7 +570,7 @@ function inWorkers(tasks, store, maxWorkers) {
       };
       worker.onerror = worker.onmessageerror = (e) => {
         stop();
-        reject(new Error(`a heightmap worker failed (${e.message || e.type})`));
+        reject(failed(`a heightmap worker failed (${e.message || e.type})`));
       };
       // Two jobs each, the second queued behind the first: a worker carries
       // on while this thread is busy with a level whose rows are all in.

@@ -80,7 +80,7 @@ export function createIsland(rng, settings = config.world.island, sunsetYaw = co
   const point = segments(cove.point.path);
   const pass = segments([[...seabed.pass.from, 0], [...seabed.pass.to, 0]])[0];
   const channel = segments(alongPath(seabed.channel.path));
-  const ridges = hills.ridges.flatMap(segments);
+  const ridges = hills.ridges.flatMap((path) => ridgePath(path, hills));
   const coveAngle = Math.atan2(-summitA, -summitO); // from the summit down to the beach
   const capes = findCapes(rng('island/capes'));
 
@@ -155,17 +155,30 @@ export function createIsland(rng, settings = config.world.island, sunsetYaw = co
   }
 
   // Beyond the cove, what the flat behind a beach adds to its plain, d metres
-  // inland: the ridges old beaches have left, parallel to the shore, their
-  // spacing and how far inland they reach changing along the coast, and
-  // hummocks over them (shore.beach.island).
+  // inland: the ridges old beaches have left, parallel to the shore, further
+  // apart further in, how far inland they reach changing along the coast, and
+  // hummocks over them (shore.beach.island). Their spacing goes by d alone:
+  // changing along the coast as well, it would turn them across the shore,
+  // by up to 75° where it changed fastest.
   function oldBeaches(d, a, o) {
-    const { ridges, spacing, from, to, hummocks } = shore.beach.island;
-    const along = (dx, dz, length) => smoothstep(-0.5, 0.5, hillNoise(a / length + dx, o / length + dz));
-    const reach = between(to, along(-3.3, 19.4, 500));
+    const { ridges, from, to, hummocks } = shore.beach.island;
+    const reach = between(to, smoothstep(-0.5, 0.5, hillNoise(a / 500 - 3.3, o / 500 + 19.4)));
     const there = smoothstep(from, from + 20, d) * (1 - smoothstep(reach - 60, reach, d));
-    const crests = 0.5 - 0.5 * Math.cos((2 * Math.PI * d) / between(spacing, along(12.9, -77.1, 300)));
+    const crests = 0.5 - 0.5 * Math.cos(2 * Math.PI * ridgesIn(d - from));
     const [high, wavelength] = hummocks;
     return ridges * there * crests + high * smoothstep(from, from + 30, d) * fbm(hillNoise, a / wavelength + 91.1, o / wavelength - 14.4, 2);
+  }
+
+  // How many old beach ridges lie within x metres of the first: their spacing
+  // widens evenly from spacing[0] there to spacing[1] where the furthest reach
+  // ends (shore.beach.island), so this is the integral of one over it.
+  function ridgesIn(x) {
+    const { spacing: [near, far], from, to } = shore.beach.island;
+    const span = to[1] - from;
+    const widen = (far - near) / span; // metres of spacing per metre inland
+    const within = Math.min(Math.max(x, 0), span);
+    const count = widen > 0 ? Math.log1p((widen * within) / near) / widen : within / near;
+    return count + (x - within) / (near + widen * within);
   }
 
   // Beyond the cove, how far a beach's plain lies flat before the hills rise
@@ -239,8 +252,20 @@ export function createIsland(rng, settings = config.world.island, sunsetYaw = co
     };
     if (w > 0) for (const p of peaks) join(w * volcano(wa, wo, p, false, h - hills.join), w * shapeSlope);
 
-    // The ridges that frame the cove.
-    for (const s of ridges) join(ridgeHeight(wa, wo, s, hills, gully, ridgeOut), ridgeOut.slope);
+    // The ridges that frame the cove, joined as one shape: the higher of their
+    // segments, the corner where two cross rounded from below (roundMax). Joined
+    // one by one, two segments would bulge by a join's quarter, 7.5 m, wherever
+    // they stand as high as each other: round every bend, and where the
+    // ridges start together at the summit.
+    let ridge = -Infinity;
+    let ridgeSlope = 0;
+    for (const s of ridges) {
+      const x = ridgeHeight(wa, wo, s, hills, gully, ridgeOut);
+      const share = ridge === -Infinity ? 1 : smoothstep(-hills.bend, hills.bend, x - ridge);
+      ridge = ridge === -Infinity ? x : roundMax(ridge, x, hills.bend);
+      ridgeSlope += share * (ridgeOut.slope - ridgeSlope);
+    }
+    if (ridge > -Infinity) join(ridge, ridgeSlope);
     if (h <= 0) {
       hillSlope = 0;
       return 0;
@@ -528,23 +553,30 @@ export function createIsland(rng, settings = config.world.island, sunsetYaw = co
         // they rise over plain.ramp, or further for tall ones, no steeper than
         // plain.slope (the taper's steepest is 1.5 x their height over its
         // reach), but over no more than plain.reach, so the peaks further in
-        // keep their height. No cliffs but the capes'.
+        // keep their height; a rocky shore's over its own reach. Either way
+        // the rise itself is no steeper than shore.steepest, however tall they
+        // are: no cliffs but the capes' walls, and green slopes above those.
         const { plain } = shore;
-        const island = smin(smax(rocky + b * (plain.ramp - rocky), (1.5 * hills) / plain.slope, plain.ease), plain.reach, plain.ease);
+        const gentle = smin(smax(plain.ramp, (1.5 * hills) / plain.slope, plain.ease), plain.reach, plain.ease);
+        const island = smax(rocky + b * (gentle - rocky), (1.5 * hills) / shore.steepest, plain.ease);
         reach += w * (island - reach);
         from = w * b * flatAt(a, o);
       }
       const taper = smoothstep(from, from + reach, d);
-      height = smax(base, hills * taper, shore.hillJoin * taper);
+      const meet = shore.hillJoin * taper;
+      height = smax(base, hills * taper, meet);
       out.rise = height - base;
       out.land = height;
       // The ground's roughness, the shore's and the hills' alike: on the hills,
       // where they fade out towards the shore, it would fade with them. As
       // steep as the hills' shapes, tapered, and as they rise out of the plain
-      // (the taper's own slope).
+      // (the taper's own slope), as far as they stand above the shore's own
+      // rise (smax's share): where that is the higher, the land is as flat as it.
       if (d > roughness.from[0]) {
         const u = Math.min(Math.max((d - from) / reach, 0), 1);
-        const steepness = hillSlope * taper + (hills * 6 * u * (1 - u)) / reach;
+        const above = hills * taper - base;
+        const share = meet > 0 ? Math.min(Math.max(0.5 + (0.5 * above) / meet, 0), 1) : above > 0 ? 1 : 0;
+        const steepness = share * (hillSlope * taper + (hills * 6 * u * (1 - u)) / reach);
         height += roughHeight(a, o, steepness, height) * smoothstep(...roughness.from, d) * roughAt(a, o, roughness.wavelength);
       }
     } else {
@@ -722,6 +754,8 @@ export function createIsland(rng, settings = config.world.island, sunsetYaw = co
     sample: (x, z) => sampleCove(...toCove(x, z)),
     // The rocky capes beyond the cove: [{ a, o, radius }] in the cove's frame.
     capes,
+    // The ellipses the island's coast is made of, beyond the cove (makeLobes).
+    lobes,
     // The ground of a sample, given its slope and the land's (groundOf); the
     // zone of a ground and height; the zone of a sample, given its slopes; and
     // at world x, z (nine evaluations, about 12 µs: placement reads the drawn
@@ -792,23 +826,80 @@ function segments(points) {
   });
 }
 
-// A ridge along a segment: rounded on top, its flanks steepest about 0.7 x
-// its width out and gone by three widths, cut by gullies down its flanks
-// (gully(along the ridge, out from its crest)). Its shape's slope there, across
-// and along it, goes to out.slope.
-function ridgeHeight(a, o, s, { crestRadius, flankSlope, width: [minWidth, maxWidth], gullies }, gully, out) {
+// A ridge's path of [a, o, height] points as segments (segments()), each with
+// its direction (ua, uo) and where along the ridge its gullies start counting
+// (`across`): the path's length so far, and round each bend the angle it turns
+// through times the ridge's width there, which the fan its gullies spread in
+// round the outside of the bend takes up (gullyAcross). A point repeated in
+// the path is left out: a segment of no length has no direction.
+export function ridgePath(points, hills) {
+  const kept = points.filter((p, i) => i === 0 || p[0] !== points[i - 1][0] || p[1] !== points[i - 1][1]);
+  const path = segments(kept);
+  let across = 0;
+  path.forEach((s, i) => {
+    s.ua = (s.bx - s.ax) / s.length;
+    s.uo = (s.bo - s.ao) / s.length;
+    // How high the segments either side stand at most: none at the ridge's ends.
+    s.before = i > 0 ? Math.max(path[i - 1].ha, path[i - 1].hb) : null;
+    s.after = i < path.length - 1 ? Math.max(path[i + 1].ha, path[i + 1].hb) : null;
+    if (i > 0) {
+      const last = path[i - 1];
+      const turn = Math.acos(Math.min(Math.max(last.ua * s.ua + last.uo * s.uo, -1), 1));
+      across += last.length + turn * ridgeWidth(s.ha, hills);
+    }
+    s.across = across;
+  });
+  return path;
+}
+
+// A ridge's width where it stands H high: its flanks no steeper than
+// flankSlope, unless that is outside `width`.
+function ridgeWidth(H, { flankSlope, width: [minWidth, maxWidth] }) {
+  return Math.min(Math.max((0.86 * H) / flankSlope, minWidth), maxWidth);
+}
+
+// A ridge along a segment of ridgePath: rounded on top, its flanks steepest
+// about 0.7 x its width out and gone by three widths, cut by gullies down its
+// flanks (gully(gullyAcross, out from its crest)). Its shape's slope there,
+// across and along it, goes to out.slope. Beyond an end where another
+// segment meets it, its height runs on as the segment was going, but no
+// higher than that segment stands: held at the end, it would stand as a knob
+// above the next segment's crest wherever the path falls away from it, and
+// its crest would turn at once where the end is. The ridge's own two ends
+// hold theirs, rounded off.
+function ridgeHeight(a, o, s, hills, gully, out) {
+  const { crestRadius, gullies } = hills;
   const { t, dist } = segment(a, o, s.ax, s.ao, s.bx, s.bo);
-  const H = s.ha + (s.hb - s.ha) * t;
-  const width = Math.min(Math.max((0.86 * H) / flankSlope, minWidth), maxWidth);
+  let H = s.ha + (s.hb - s.ha) * t;
+  const neighbour = t <= 0 ? s.before : t >= 1 ? s.after : null;
+  if (neighbour !== null) H = Math.min(s.ha + ((s.hb - s.ha) * ((a - s.ax) * s.ua + (o - s.ao) * s.uo)) / s.length, Math.max(H, neighbour));
+  const width = ridgeWidth(H, hills);
   const round = Math.sqrt(dist * dist + crestRadius * crestRadius);
   const off = (round - crestRadius) / width;
   out.slope = 0;
   if (off > 3) return 0;
   const flank = smoothstep(0.3, 1.1, off);
-  const cut = flank > 0 ? gullies.depth * flank * gully(s.start + t * s.length, dist) : 0;
+  const cut = flank > 0 ? gullies.depth * flank * gully(gullyAcross(a, o, s, t, hills), dist) : 0;
   const fall = Math.exp(-off * off);
   out.slope = (1 - cut) * Math.hypot((2 * off * H * fall * dist) / (round * width), (fall * (s.hb - s.ha)) / s.length);
   return H * fall * (1 - cut);
+}
+
+// How far along its ridge a point lies, for the gullies (ridgePath's
+// `across`), t being how far along segment s its nearest point is. Beside the
+// segment, how far along it; beyond either end, round the end in a fan: on by
+// the angle from the flank times the ridge's width at the end, so the gullies
+// run straight down its nose, and round the outside of a bend on into the
+// next segment's, which counts on from there. Measured from the end alone,
+// they would ring it.
+export function gullyAcross(a, o, s, t, hills) {
+  if (t > 0 && t < 1) return s.across + t * s.length;
+  const start = t <= 0;
+  const da = a - (start ? s.ax : s.bx);
+  const dO = o - (start ? s.ao : s.bo);
+  const ahead = (start ? -1 : 1) * (da * s.ua + dO * s.uo);
+  const angle = Math.atan2(Math.max(ahead, 0), Math.abs(da * s.uo - dO * s.ua));
+  return start ? s.across - angle * ridgeWidth(s.ha, hills) : s.across + s.length + angle * ridgeWidth(s.hb, hills);
 }
 
 // Past the land, the widest reef and the noise on the coast, and on to where the
@@ -838,8 +929,17 @@ function islandBounds(lobes, { cove, seabed, coast }, fromCove) {
 
 // An ellipse's inside, as an approximate signed distance (positive inside).
 // Square roots, not Math.hypot, which takes several times as long: the
-// heightmap's build calls this a few million times.
-function ellipse(a, o, { a: ca, o: co, ra, ro, cos, sin }) {
+// heightmap's build calls this a few million times. It is (1 - k0) times
+// k0 / k1, the ellipse's scale in the point's direction: ra along one axis,
+// ro along the other. At the centre, where every direction meets, that
+// would jump between them, and the distance with it, by 100 m on the main
+// lobe. Out to ELLIPSE_EASE of the way to the shore it eases in from the
+// smaller, the centre's true distance to the shore, so the distance runs on
+// through the centre, falls away from it all round, and changes by about a
+// metre a metre (at most 1.05), as the slopes set in it (the hills' rise from
+// the shore) assume. Near the shore and outside it is as it was.
+const ELLIPSE_EASE = 0.9;
+export function ellipse(a, o, { a: ca, o: co, ra, ro, cos, sin }) {
   const da = a - ca;
   const dz = o - co;
   const x = da * cos + dz * sin;
@@ -850,8 +950,9 @@ function ellipse(a, o, { a: ca, o: co, ra, ro, cos, sin }) {
   const v1 = y / (ro * ro);
   const k0 = Math.sqrt(u0 * u0 + v0 * v0);
   const k1 = Math.sqrt(u1 * u1 + v1 * v1);
-  if (k1 < 1e-9) return Math.min(ra, ro);
-  return -(k0 * (k0 - 1)) / k1;
+  const near = Math.min(ra, ro);
+  if (k1 < 1e-9) return near;
+  return (1 - k0) * (near + (k0 / k1 - near) * smoothstep(0, ELLIPSE_EASE, k0));
 }
 
 // A chain of capsules along [a, o, radius] segments, the radius running along
@@ -901,6 +1002,13 @@ export function smin(a, b, k) {
 
 export function smax(a, b, k) {
   return -smin(-a, -b, k);
+}
+
+// The larger of a and b, the corner where they cross rounded within k of each
+// other from below: never above the larger. Where two pieces of one shape meet
+// as high as each other, smax would raise them by k / 4.
+export function roundMax(a, b, k) {
+  return a + (b - a) * smoothstep(-k, k, b - a);
 }
 
 // |x| with its corner at 0 rounded off within about `round` of it: a fold

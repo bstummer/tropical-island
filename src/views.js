@@ -38,7 +38,7 @@ const all = [
   },
   {
     name: 'jungle-edge',
-    position: [2.76, 7.18, -48.95],
+    position: [2.76, 6.67, -48.95],
     yaw: -22.8,
     pitch: 9,
     timeOfDay: 9.5,
@@ -117,7 +117,7 @@ const all = [
   {
     name: 'coastal-flat',
     disabled: true,
-    position: [-161.47, 7.2, -1792.88],
+    position: [-161.47, 6.08, -1792.88],
     yaw: -48,
     pitch: -1,
     timeOfDay: 10.5,
@@ -126,7 +126,7 @@ const all = [
   {
     name: 'summit',
     disabled: true,
-    position: [239.13, 276.61, -579.04],
+    position: [239.13, 272.8, -579.04],
     yaw: -12.9,
     pitch: 1.2,
     fov: 60,

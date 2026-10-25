@@ -9,7 +9,7 @@ import { readFileSync } from 'node:fs';
 import { createRandom } from '../src/core/random.js';
 import { config } from '../src/config.js';
 import { createIsland, LAND_ZONES } from '../src/world/island.js';
-import { buildHeightmap, createGrids, fillRows, GROUND, layoutLevel } from '../src/world/heightmap.js';
+import { buildHeightmap, createGrids, CUBIC_OVERSHOOT, cubicWeights, fillRows, gridAlign, GROUND, layoutLevel } from '../src/world/heightmap.js';
 
 const settings = config.world.terrain;
 const SEEDS = Array.from({ length: 20 }, (_, i) => i + 1);
@@ -86,16 +86,48 @@ test('the shaders know as many levels as config.world.terrain lays out', () => {
   assert.equal(Number(js.match(/const TERRAIN_LEVELS = (\d+);/)[1]), settings.levels.length, 'world/terrain.js');
 });
 
-test('the grids laid out for an island halve exactly for their mipmaps, and their samples lie on one set of lines', () => {
+test('the grids laid out for an island halve exactly for every level of their mipmaps, and their samples lie on one set of lines', () => {
+  // The GPU halves a texture's size rounding down: a level that rounded would
+  // lie off where it is read, by up to a texel of it. The last level's texels
+  // reach past a far pixel's footprint: 256 samples, 512 m on the fine grid.
+  assert.ok(gridAlign(settings) >= 256);
   for (const seed of [1, 2]) {
     const { levels } = gameLayout(seed);
     const coarse = levels.at(-1);
     for (const { texel, origin, samples } of levels) {
-      assert.equal(samples % 32, 0, `seed ${seed}: the ${texel} m grid is ${samples} samples across`);
+      for (let size = samples, level = 1; level < settings.mips; level++) {
+        assert.equal(size % 2, 0, `seed ${seed}: the ${texel} m grid's mip ${level - 1} is ${size} texels across`);
+        size /= 2;
+      }
       // On the coarse grid's lines, so where both have a sample it is the same.
       for (const c of [0, 1]) assert.ok(origin[c] % coarse.texel === 0, `seed ${seed}: the ${texel} m grid's corner ${origin}`);
     }
   }
+});
+
+test('between samples the curve overshoots the 4 x 4 samples it is made of by no more than CUBIC_OVERSHOOT of their range, and by that much at worst', () => {
+  const r = createRandom(1)('test/overshoot');
+  const [wa, wo] = [new Float64Array(4), new Float64Array(4)];
+  const height = (h, tx, ty) => {
+    cubicWeights(tx, wa);
+    cubicWeights(ty, wo);
+    let sum = 0;
+    for (let y = 0; y < 4; y++) for (let x = 0; x < 4; x++) sum += wo[y] * wa[x] * h[4 * y + x];
+    return sum;
+  };
+  let worst = 0;
+  for (let n = 0; n < 20_000; n++) {
+    // Random heights, and cliffs: each sample low or high.
+    const h = Array.from({ length: 16 }, () => (n % 2 ? r.range(-50, 50) : r.chance(0.5) ? 0 : 40));
+    const [lo, hi] = [Math.min(...h), Math.max(...h)];
+    if (hi === lo) continue;
+    const v = height(h, r.next(), r.next());
+    worst = Math.max(worst, (v - hi) / (hi - lo), (lo - v) / (hi - lo));
+  }
+  assert.ok(worst <= CUBIC_OVERSHOOT + 1e-12, `overshoots by ${worst.toFixed(4)} of the range`);
+  // The worst: high where one weight is an outer one, low elsewhere, at the middle.
+  const pit = [0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0];
+  assert.ok(Math.abs(height(pit, 0.5, 0.5) + CUBIC_OVERSHOOT) < 1e-12, `the worst case dips to ${height(pit, 0.5, 0.5)}`);
 });
 
 test('the coarse grid reaches past the island and its reef into deep water', () => {

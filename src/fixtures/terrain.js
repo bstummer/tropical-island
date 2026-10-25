@@ -16,8 +16,11 @@
 // ground's albedo the light from below reads (chunks/lighting.wgsl
 // groundAlbedo, from world/terrain.js's map and its layout) against
 // world/albedo.js's map of the coarsest grid, filtered as the GPU filters it;
-// its deliberate mistake: the map's layout half a texel off. The terrain
-// draws as usual meanwhile. Not part of the island.
+// its deliberate mistake: the map's layout half a texel off. And the ground
+// as a far pixel reads it, from the fine grid's mipmaps (its band and the
+// reef's offset), against those mipmaps made in JS, which must line up with
+// where the GPU reads them; its deliberate mistake: JS's a quarter of a
+// texel of them off. The terrain draws as usual meanwhile. Not part of the island.
 import { fromHalfFloat, toHalfFloat } from '../maths/index.js';
 import shader from './terrain.wgsl';
 import meshShader from './terrain-mesh.wgsl';
@@ -30,6 +33,7 @@ import { albedoMap } from '../world/albedo.js';
 const PER_LEVEL = { inside: 48, edge: 32, samples: 16, coarser: 8 };
 const MESH = { cameras: 6, points: 400, reach: 2500, off: 30 }; // seeded cameras; points per camera, within reach m
 const BOUNCE = { points: 1024, off: 0.5 }; // seeded points over the island; the mistake, in texels
+const FAR = { points: 512, off: 0.25 }; // seeded points on the fine grid; the mistake, in texels of the mip level read
 
 export function create(ctx) {
   const { renderer, config } = ctx;
@@ -67,7 +71,7 @@ export function create(ctx) {
     });
     const pointTexture = floats(ctx, data, count, 1);
     const pass = renderer.fullscreen(
-      new Material({ name: 'fixture-terrain', shader, uniforms: { uPoints: { value: pointTexture }, uOffset: { value: 0 }, uRead: { value: 0 } } }),
+      new Material({ name: 'fixture-terrain', shader, uniforms: { uPoints: { value: pointTexture }, uOffset: { value: 0 }, uRead: { value: 0 }, uFootprint: { value: 0 } } }),
     );
     const target = createTarget(renderer.gpu, { name: 'fixture-terrain', width: count, height: 1, format: 'rgba32float' });
     // Per point, the height, or with `ground` the ground: [sand, rock, band,
@@ -96,6 +100,7 @@ export function create(ctx) {
     pointTexture.destroy();
     const mesh = await meshCheck(ctx, r);
     const bounce = await bounceCheck(ctx, ctx.rng('fixtures/terrain/bounce'));
+    const far = await farCheck(ctx, ctx.rng('fixtures/terrain/far'));
 
     const out = {};
     const ground = {};
@@ -128,6 +133,7 @@ export function create(ctx) {
       island: heightmap.levels.map(({ texel }, k) => ({ texel, median: median(misses[k]) })),
       mesh,
       bounce,
+      far,
     };
   });
 
@@ -240,6 +246,51 @@ async function bounceCheck(ctx, r) {
   return { points: BOUNCE.points, gpu: worst, mistaken: worstMistaken };
 }
 
+// The ground as a far pixel reads it on the GPU (chunks/terrain.wgsl
+// terrainGround, its footprint config.capture.terrain.far.lod levels of mips
+// up), against the fine grid's info (band, reef's offset) mipmapped in JS as
+// the GPU mipmaps it, at seeded points where the fine grid has its full say:
+// the worst difference as a share of the limits in config.capture.terrain.far,
+// and the worst with JS's mips FAR.off texels of that level off along both
+// axes, which must show. A grid whose size doesn't halve exactly that often
+// would have its mips lie off where they are read.
+async function farCheck(ctx, r) {
+  const { renderer, config, terrain } = ctx;
+  const { heightmap, island } = terrain;
+  const { blend } = config.world.terrain;
+  const { lod, band, reef } = config.capture.terrain.far;
+  const { origin, texel, samples, info } = heightmap.levels[0];
+  const mips = halfMips(info, samples, lod + 2);
+  const corner = [origin[0] - texel / 2, origin[1] - texel / 2];
+  const size = samples * texel;
+  const full = [(blend + 1) * texel, (samples - blend - 2) * texel];
+  const cove = Array.from({ length: FAR.points }, () => [origin[0] + r.range(...full), origin[1] + r.range(...full)]);
+  const data = new Float32Array(4 * FAR.points);
+  cove.forEach(([a, o], i) => data.set([...island.fromCove(a, o), 0, 0], 4 * i));
+  const input = floats(ctx, data, FAR.points, 1);
+  const pass = renderer.fullscreen(
+    new Material({ name: 'fixture-terrain-far', shader, uniforms: { uPoints: { value: input }, uOffset: { value: 0 }, uRead: { value: 1 }, uFootprint: { value: texel * 2 ** lod } } }),
+  );
+  const target = createTarget(renderer.gpu, { name: 'fixture-terrain-far', width: FAR.points, height: 1, format: 'rgba32float' });
+  pass.render(target);
+  const gpu = await target.color.read();
+  target.dispose();
+  pass.dispose();
+  input.destroy();
+
+  const off = (FAR.off * 2 ** lod) / samples; // in the map's coordinates
+  let worst = 0;
+  let worstMistaken = 0;
+  const share = (got, [b, f]) => Math.max(Math.abs(got[2] - b) / band, Math.abs(got[3] - f) / reef);
+  cove.forEach(([a, o], i) => {
+    const [u, v] = [(a - corner[0]) / size, (o - corner[1]) / size];
+    const got = gpu.slice(4 * i, 4 * i + 4);
+    worst = Math.max(worst, share(got, sampleMips(mips, u, v, lod, [2, 3])));
+    worstMistaken = Math.max(worstMistaken, share(got, sampleMips(mips, u + off, v + off, lod, [2, 3])));
+  });
+  return { points: FAR.points, lod, gpu: worst, mistaken: worstMistaken };
+}
+
 // An RGBA map of size x size texels as the GPU keeps it: half floats, and
 // `count` levels of mips, each texel of one the mean of four of the one before
 // (the map's size halves exactly that often: heightmap.js lays it out so).
@@ -262,10 +313,10 @@ function halfMips(map, size, count) {
   return mips;
 }
 
-// The colour of `mips` at u, v as textureLod reads it at `lod` (linear,
-// mipmapped linearly, clamped at the edges): bilinear in the mips either side
-// of lod, blended between them.
-function sampleMips(mips, u, v, lod) {
+// Channels `channels` of `mips` at u, v as textureLod reads them at `lod`
+// (linear, mipmapped linearly, clamped at the edges): bilinear in the mips
+// either side of lod, blended between them.
+function sampleMips(mips, u, v, lod, channels = [0, 1, 2]) {
   const d = Math.floor(lod);
   const bilinear = ({ size, texels }, c) => {
     const [x, y] = [u * size - 0.5, v * size - 0.5];
@@ -276,7 +327,7 @@ function sampleMips(mips, u, v, lod) {
     const top = at(i, j + 1) + (at(i + 1, j + 1) - at(i, j + 1)) * (x - i);
     return bottom + (top - bottom) * (y - j);
   };
-  return [0, 1, 2].map((c) => {
+  return channels.map((c) => {
     const near = bilinear(mips[d], c);
     return near + (bilinear(mips[d + 1], c) - near) * (lod - d);
   });
