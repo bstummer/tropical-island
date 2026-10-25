@@ -45,7 +45,10 @@ import { shBasis, shIrradiance } from '../src/sky/light.js';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const BUILT_HTML = join(ROOT, 'dist', 'index.html');
 const SHOTS = join(ROOT, 'screenshots');
-const READY_TIMEOUT_MS = 60_000;
+// A capture page that isn't ready within this fails. Seconds on a GPU, but on
+// SwiftShader with two CPUs, beside another check, the terrain and rocks
+// fixtures can take more than a minute.
+const READY_TIMEOUT_MS = 180_000;
 // Player mode and the benchmark draw in the same browser as the checks running
 // beside them, whose full-size frames take seconds each on SwiftShader: they
 // fail once a page draws no frame for this long (untilDone), not when slow.
@@ -56,9 +59,11 @@ const DONE_MS = 600_000;
 // Player mode and the benchmark only have to work: small, as SwiftShader draws every pixel on the CPU.
 // meanLevels: how far the canvas's mean colour may be from the capture's of the same view.
 const PLAYER_MODE = { frames: 30, viewport: { width: 320, height: 180 }, meanLevels: 4 };
-const BENCH_SECONDS = 0.25; // per view: enough to prove the benchmark works
+// Per view: enough to prove the benchmark works, which needs no settled frame rate.
+const BENCH = { seconds: 0.25, warmupFrames: 1 };
 const CHECKS_AT_ONCE = 2; // see runChecks()
 const SHEET_ORIGIN = 'http://contact-sheet.local';
+const PROBE_URL = 'http://localhost/'; // see probeWebGPU()
 
 // WebGPU in the headless shell needs --enable-unsafe-webgpu. On Windows its real
 // GPU (D3D12) needs Dawn to compile with FXC: the shell ships without DXC.
@@ -122,8 +127,8 @@ async function capture(args) {
     let reporting = Promise.resolve();
     for (const [i, view] of views.entries()) {
       // The contract checks test the game's capture code, not the view: once per run is enough.
-      // The time check runs on every view, each going to the next named time in turn.
-      const captured = await captureView(context, fileUrl, query, view, outDir, { contractChecks: args.checks && i === 0, timeCheck: args.checks ? i : null, gpuTime: kind === 'hardware' });
+      // The time check runs on every view, each going to a named time of its own (timeChangeTarget).
+      const captured = await captureView(context, fileUrl, query, view, outDir, { contractChecks: args.checks && i === 0, timeCheck: args.checks, gpuTime: kind === 'hardware' });
       reporting = reporting.then(async () => {
         const result = await finishView(captured, query);
         if (existsSync(join(outDir, result.file))) outputs.push(join(outDir, result.file));
@@ -195,9 +200,8 @@ async function capture(args) {
 // { result, analysis }, where `analysis` is still running (see finishView).
 // With `contractChecks`, also require that rendering the start frame again, and
 // loading the view fresh at the last motion frame's time, both reproduce the
-// pixels exactly. With `timeCheck` (the view's index in the run), changing the
-// time of day in the page (timeChangeTarget) must render as loading the view at
-// that time does.
+// pixels exactly. With `timeCheck`, changing the time of day in the page
+// (timeChangeTarget) must render as loading the view at that time does.
 async function captureView(context, fileUrl, query, view, outDir, { contractChecks, timeCheck, gpuTime }) {
   const started = Date.now();
   const { page, info, problems, consoleWarnings } = await openCapture(context, fileUrl, { ...query, view: view.name });
@@ -228,8 +232,8 @@ async function captureView(context, fileUrl, query, view, outDir, { contractChec
         }
         await fresh.page.close();
       }
-      if (timeCheck !== null) {
-        const changed = await changeTime(context, fileUrl, { ...query, view: view.name }, page, timeChangeTarget(timeCheck, info.timeOfDay));
+      if (timeCheck) {
+        const changed = await changeTime(context, fileUrl, { ...query, view: view.name }, page, timeChangeTarget(view.name, info.timeOfDay));
         problems.push(...changed.problems);
         if (changed.same === false) {
           problems.push({ kind: 'capture', text: `the time of day changed to ${changed.time} in the page renders differently from loading at ${changed.time}` });
@@ -328,23 +332,25 @@ function shoot(page, path) {
 
 // Every check of --checks, CHECKS_AT_ONCE at a time: the browser renders one
 // page at a time anyway, and meanwhile the other check loads its page, reads
-// back frames or waits for its analysis. The benchmark, the longest, goes first.
+// back frames or waits for its analysis. The benchmark goes first and player
+// mode last: both run the game's loop, which draws all the time, and side by
+// side on SwiftShader each would wait for the other's frames.
 async function runChecks(context, fileUrl, query, view, outDir) {
   const tasks = [
     () => checkBenchmark(context, fileUrl, query, outDir),
-    () => checkPlayerMode(context, fileUrl, query, view, outDir),
     ...toolCheckTasks(context, fileUrl, query, view, outDir),
+    () => checkPlayerMode(context, fileUrl, query, view, outDir),
   ];
   // SCREENSHOT_PROGRESS=1 says when each check is done, for finding one that hangs.
   const progress = process.env.SCREENSHOT_PROGRESS
     ? tasks.map((task, i) => async () => {
         const result = await task();
-        console.log(`  … ${result.name ?? ['benchmark', 'player mode'][i]} done in ${result.ms} ms`);
+        console.log(`  … ${result.name ?? (i ? 'player mode' : 'benchmark')} done in ${result.ms} ms`);
         return result;
       })
     : tasks;
-  const [bench, player, ...tools] = await inParallel(progress, CHECKS_AT_ONCE);
-  return { toolChecks: tools, player, bench };
+  const [bench, ...rest] = await inParallel(progress, CHECKS_AT_ONCE);
+  return { toolChecks: rest.slice(0, -1), player: rest.at(-1), bench };
 }
 
 // Runs the async tasks, at most `limit` at a time. Resolves to their results, in order.
@@ -545,7 +551,7 @@ function toolCheckTasks(context, fileUrl, query, view, outDir) {
     }),
     // The time-of-day check must catch a system that reads the time only at boot.
     () => checkFixture(context, fileUrl, { ...params, fixture: 'stale-time' }, async (page, info, problems) => {
-      const changed = await changeTime(context, fileUrl, { ...params, fixture: 'stale-time' }, page, timeChangeTarget(0, info.timeOfDay));
+      const changed = await changeTime(context, fileUrl, { ...params, fixture: 'stale-time' }, page, timeChangeTarget(view.name, info.timeOfDay));
       problems.push(...changed.problems);
       if (changed.same !== false) problems.push({ kind: 'tool check', text: `stale-time fixture: changing the time to ${changed.time} in the page went unnoticed` });
       return `a time read only at boot: ${changed.same === false ? 'caught' : 'missed'}`;
@@ -553,9 +559,11 @@ function toolCheckTasks(context, fileUrl, query, view, outDir) {
   ];
 }
 
-// The named time view i of a run changes to for the time check: the next one in
-// turn, so a run covers them all, but never the view's own (`hours`).
-export function timeChangeTarget(i, hours) {
+// The named time a view changes to for the time check: the next one in turn by
+// the view's place in views.js, so a full run covers them all and a view checks
+// the same time in any run, but never the view's own (`hours`).
+export function timeChangeTarget(view, hours) {
+  const i = allViews.findIndex((v) => v.name === view);
   const names = ['golden-hour', 'sunrise', 'sunset', 'midday'];
   for (let k = 0; k < names.length; k++) {
     const name = names[(i + k) % names.length];
@@ -870,6 +878,7 @@ async function checkPlayerMode(context, fileUrl, query, view, outDir) {
   await page.setViewportSize(PLAYER_MODE.viewport);
   await stubPointerLock(page);
   const { problems, consoleWarnings } = watchPage(page, fileUrl);
+  await holdableFrames(page);
   await countFrames(page);
   const params = new URLSearchParams({ ...query, view: view.name, stats: '1' }); // with the frame readout
   params.delete('capture');
@@ -944,16 +953,42 @@ async function checkPlayerMode(context, fileUrl, query, view, outDir) {
   return { problems, consoleWarnings, ms: Date.now() - started, canvasOff };
 }
 
-// The mean colour of the page's canvas as shown, with everything over it hidden for the shot.
+// The mean colour of the page's canvas as shown, with everything over it hidden
+// for the shot. The shot waits for frames of the browser's compositor, which on
+// SwiftShader queue behind the frames of every page that draws: the game's loop
+// is held meanwhile (holdableFrames), and beside another check it can still
+// take a minute on a CI runner's two CPUs.
 async function canvasMean(page) {
   await page.evaluate(() => {
+    window.__HOLD_FRAMES__(true);
     for (const el of document.body.children) if (el.id !== 'view') el.style.visibility = 'hidden';
   });
-  const image = decodePng(await page.locator('#view').screenshot());
-  await page.evaluate(() => {
-    for (const el of document.body.children) el.style.visibility = '';
+  try {
+    const image = decodePng(await page.locator('#view').screenshot({ timeout: DONE_MS }));
+    return meanColor(image, 0, 0, image.width, image.height);
+  } finally {
+    await page.evaluate(() => {
+      for (const el of document.body.children) el.style.visibility = '';
+      window.__HOLD_FRAMES__(false);
+    });
+  }
+}
+
+// Lets the tool hold the page's animation frames: window.__HOLD_FRAMES__(true)
+// keeps what the page asks requestAnimationFrame for until (false) hands it
+// over. The game asks for its next frame at the end of each, so its loop stops.
+// A held frame's id is no real one, but nothing cancels a frame.
+function holdableFrames(page) {
+  return page.addInitScript(() => {
+    const request = window.requestAnimationFrame.bind(window);
+    let held = null;
+    window.requestAnimationFrame = (callback) => (held ? held.push(callback) : request(callback));
+    window.__HOLD_FRAMES__ = (hold) => {
+      const callbacks = held ?? [];
+      held = hold ? callbacks : null;
+      if (!hold) for (const callback of callbacks) request(callback);
+    };
   });
-  return meanColor(image, 0, 0, image.width, image.height);
 }
 
 // Counts the page's animation frames into window.__FRAMES__ from its start:
@@ -1017,7 +1052,7 @@ async function checkBenchmark(context, fileUrl, query, outDir) {
   await page.setViewportSize(PLAYER_MODE.viewport);
   const { problems, consoleWarnings } = watchPage(page, fileUrl);
   await countFrames(page);
-  const params = new URLSearchParams({ ...query, bench: '1', benchSeconds: String(BENCH_SECONDS) });
+  const params = new URLSearchParams({ ...query, bench: '1', benchSeconds: BENCH.seconds, benchWarmupFrames: BENCH.warmupFrames });
   params.delete('capture');
   const started = Date.now();
   let detail = 'did not finish';
@@ -1220,11 +1255,14 @@ export function explainLaunchError(message) {
 
 // { gl: the adapter as gpu/device.js describes it ("google swiftshader"),
 // fallback: whether it is a fallback (software) one }, or null without one.
-// WebGPU needs a secure context: the page is the built game's own file:// URL.
+// WebGPU needs a secure context, which about:blank isn't here: an empty page
+// at localhost, served by the tool (nothing leaves the browser). The game's
+// own page would boot the game, 5-9 s on SwiftShader with two CPUs.
 async function probeWebGPU(browser) {
   const page = await browser.newPage();
   try {
-    await page.goto(pathToFileURL(BUILT_HTML).href + '?probe');
+    await page.route(PROBE_URL, (route) => route.fulfill({ contentType: 'text/html', body: '' }));
+    await page.goto(PROBE_URL);
     return await page.evaluate(async () => {
       const adapter = await navigator.gpu?.requestAdapter({ powerPreference: 'high-performance' });
       if (!adapter) return null;

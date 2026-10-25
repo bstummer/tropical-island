@@ -100,55 +100,92 @@ export function fillRows(island, level, samples, j0, j1, heights, info, ground) 
   }
 }
 
-// Fills how lush the green is into every level's ground (`data`: [{ heights,
-// info, ground }], filled by fillRows), from its relief: how far each sample
-// stands above the mean of the samples within the island's
-// zones.lush.radius of it, in a square, cut off at the grid's edges. Once the
-// rows are all in: the mean reaches across them. 0 under the sea.
-export function fillLush(island, settings, data) {
+// Fills how lush the green is into level k's ground (`level`: { heights, info,
+// ground }, filled by fillRows), from its relief: how far each sample stands
+// above the mean of the samples within the island's zones.lush.radius of it,
+// in a square, cut off at the grid's edges. Once the level's rows are all in:
+// the mean reaches across them. 0 under the sea.
+export function fillLush(island, settings, k, { heights, info, ground }) {
   const { samples } = settings;
   const { radius } = island.settings.zones.lush;
+  const { origin, texel } = layoutLevels(settings)[k];
   const sums = new Float64Array(samples * samples);
   const line = new Float64Array(samples + 1);
   const g = {};
-  layoutLevels(settings).forEach(({ origin, texel }, k) => {
-    const { heights, info, ground } = data[k];
-    const reach = Math.max(1, Math.round(radius / texel));
-    // The square's sums, a row then a column at a time, from running sums.
-    const boxSums = (read, write) => {
-      for (let line0 = 0; line0 < samples; line0++) {
-        line[0] = 0;
-        for (let i = 0; i < samples; i++) line[i + 1] = line[i] + read(line0, i);
-        for (let i = 0; i < samples; i++) write(line0, i, line[Math.min(i + reach + 1, samples)] - line[Math.max(i - reach, 0)]);
-      }
-    };
-    boxSums((j, i) => heights[j * samples + i], (j, i, sum) => (sums[j * samples + i] = sum));
-    const across = new Float64Array(sums);
-    boxSums((i, j) => across[j * samples + i], (i, j, sum) => (sums[j * samples + i] = sum));
-    const count = (i) => Math.min(i + reach, samples - 1) - Math.max(i - reach, 0) + 1;
-    for (let j = 0; j < samples; j++) {
-      for (let i = 0; i < samples; i++) {
-        const n = j * samples + i;
-        if (heights[n] < 0) continue; // nothing green grows under the sea: 0
-        const relief = heights[n] - sums[n] / (count(i) * count(j));
-        g.band = info[4 * n + 2];
-        ground[GROUND * n + 2] = Math.round(island.lushOf(g, relief, origin[0] + i * texel, origin[1] + j * texel) * 255);
-      }
+  const reach = Math.max(1, Math.round(radius / texel));
+  // The square's sums, a row then a column at a time, from running sums.
+  const boxSums = (read, write) => {
+    for (let line0 = 0; line0 < samples; line0++) {
+      line[0] = 0;
+      for (let i = 0; i < samples; i++) line[i + 1] = line[i] + read(line0, i);
+      for (let i = 0; i < samples; i++) write(line0, i, line[Math.min(i + reach + 1, samples)] - line[Math.max(i - reach, 0)]);
     }
-  });
+  };
+  boxSums((j, i) => heights[j * samples + i], (j, i, sum) => (sums[j * samples + i] = sum));
+  const across = new Float64Array(sums);
+  boxSums((i, j) => across[j * samples + i], (i, j, sum) => (sums[j * samples + i] = sum));
+  const count = (i) => Math.min(i + reach, samples - 1) - Math.max(i - reach, 0) + 1;
+  for (let j = 0; j < samples; j++) {
+    for (let i = 0; i < samples; i++) {
+      const n = j * samples + i;
+      if (heights[n] < 0) continue; // nothing green grows under the sea: 0
+      const relief = heights[n] - sums[n] / (count(i) * count(j));
+      g.band = info[4 * n + 2];
+      ground[GROUND * n + 2] = Math.round(island.lushOf(g, relief, origin[0] + i * texel, origin[1] + j * texel) * 255);
+    }
+  }
 }
+
+// The grids, stored a block of rows at a time in any order, as the workers
+// return them (heightmap-worker.js): one array per kind (heightData, infoData,
+// groundData), levels one after another. Once a level's rows are all in, its
+// lush is filled and onLevel(k, level) hears of it, so work on a level starts
+// while the others are still being built; whatever the order, the grids come
+// out the same. finish(), once every row is in: the sampler (createHeightmap),
+// with the three arrays.
+export function createGrids(island, settings, onLevel = () => {}) {
+  const { samples } = settings;
+  const count = settings.levels.length;
+  const perLevel = samples * samples;
+  const heightData = new Float32Array(count * perLevel);
+  const infoData = new Float32Array(4 * count * perLevel);
+  const groundData = new Uint8Array(GROUND * count * perLevel);
+  const data = Array.from({ length: count }, (_, k) => ({
+    heights: heightData.subarray(k * perLevel, (k + 1) * perLevel),
+    info: infoData.subarray(4 * k * perLevel, 4 * (k + 1) * perLevel),
+    ground: groundData.subarray(GROUND * k * perLevel, GROUND * (k + 1) * perLevel),
+  }));
+  const rowsIn = data.map(() => 0);
+  return {
+    // Rows j0 on of `level`, as fillRows filled them.
+    store({ level, j0, heights, info, ground }) {
+      data[level].heights.set(heights, j0 * samples);
+      data[level].info.set(info, 4 * j0 * samples);
+      data[level].ground.set(ground, GROUND * j0 * samples);
+      rowsIn[level] += heights.length / samples;
+      if (rowsIn[level] < samples) return;
+      fillLush(island, settings, level, data[level]);
+      onLevel(level, data[level]);
+    },
+    finish() {
+      if (rowsIn.some((rows) => rows !== samples)) throw new Error(`heightmap: rows missing (${rowsIn.join(', ')} of ${samples} per level)`);
+      return Object.assign(createHeightmap(island, settings, data), { heightData, infoData, groundData });
+    },
+  };
+}
+
 // Builds every level in this thread. The game uses workers; tests use this.
 export function buildHeightmap(island, settings) {
   const { samples } = settings;
-  const data = layoutLevels(settings).map((level) => {
+  const grids = createGrids(island, settings);
+  layoutLevels(settings).forEach((level, k) => {
     const heights = new Float32Array(samples * samples);
     const info = new Float32Array(4 * samples * samples);
     const ground = new Uint8Array(GROUND * samples * samples);
     fillRows(island, level, samples, 0, samples, heights, info, ground);
-    return { heights, info, ground };
+    grids.store({ level: k, j0: 0, heights, info, ground });
   });
-  fillLush(island, settings, data);
-  return createHeightmap(island, settings, data);
+  return grids.finish();
 }
 
 // The sampler over levels of `data` ([{ heights, info, ground }], filled).

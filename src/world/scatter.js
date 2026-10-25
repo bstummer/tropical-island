@@ -32,11 +32,14 @@ export function groundSample(heightmap, a, o, out = {}) {
   return out;
 }
 
-// Whether `ground` (groundSample's) meets `where`: { field: [min, max] }.
+// Whether `ground` (groundSample's) meets `where`: { field: [min, max] }. A
+// field the ground doesn't have throws: misspelt, it would refuse everything.
 export function allows(where, ground) {
   for (const field in where) {
     const [min, max] = where[field];
-    if (!(ground[field] >= min && ground[field] <= max)) return false;
+    const value = ground[field];
+    if (value === undefined) throw new Error(`scatter: the ground has no "${field}"`);
+    if (!(value >= min && value <= max)) return false;
   }
   return true;
 }
@@ -45,14 +48,17 @@ export function allows(where, ground) {
 // which they join. rule: { seed (an integer), cell (m apart), chance (that a
 // cell has a candidate), where (see allows) }; `where` may also hold `coast`:
 // how far inland from the coast (m, negative out to sea: `island`'s,
-// world/island.js), worked out last as it is slow. region: { a: [min, max],
+// world/island.js), worked out last as it is slow. The height is worked out
+// first: one look-up, where the rest of the ground takes several, and it
+// rules out most candidates. region: { a: [min, max],
 // o: [min, max] } in the cove's frame, and optionally `radius` round its
 // origin. make(a, o, ground, random) makes the thing for a candidate, or
 // nothing: random(k) is the cell's k-th number in [0, 1), for its own choices
 // (k 0 to 2 are scatter's). A thing has a `footprint` (see createClearance).
 export function scatter(heightmap, island, rule, region, make, clearance) {
   const { seed, cell, chance } = rule;
-  const { coast, ...where } = rule.where;
+  const { coast, height, ...where } = rule.where;
+  const byHeight = height ? { height } : {};
   const ground = {};
   const sample = {};
   let i;
@@ -68,6 +74,8 @@ export function scatter(heightmap, island, rule, region, make, clearance) {
       const a = (i + random(1)) * cell;
       const o = (j + random(2)) * cell;
       if (a < a0 || a > a1 || o < o0 || o > o1 || a * a + o * o > radius2) continue;
+      ground.height = heightmap.heightAtCove(a, o);
+      if (!allows(byHeight, ground)) continue;
       if (!allows(where, groundSample(heightmap, a, o, ground))) continue;
       if (coast) {
         ground.coast = island.evaluate(a, o, sample).coast;

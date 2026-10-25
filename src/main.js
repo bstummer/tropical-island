@@ -124,27 +124,30 @@ async function boot() {
   // Changing the preset tears it all down and builds it again.
   let world = [];
   let ready = null;
-  let lit = false; // the sky's first light is in: a frame before it would be black
+  let drawing = false; // the world is in and its pipelines made: frames before would be black, or stall on compiles
   function build() {
     ctx.frame = createFrame(ctx, display);
     const built = (world = worldSystems(params.fixture).map((system) => system.create(ctx)));
-    // The light arrives a few frames late (sky.js reads it back from the GPU).
-    // A sky that fails throws in its update, so that opens the gate too.
-    lit = !ctx.sky;
-    const light = () => (lit = lit || world === built);
-    ctx.sky?.ready.then(light, light);
-    // In the game, every pipeline is made once the world is in, rather than
-    // the first time something draws with it, mid-walk. Capture mode
-    // makes and checks them itself (core/capture.js).
+    // Every pipeline is made in the background as soon as the meshes exist
+    // (hidden ones too), while the world gets ready, rather than the first
+    // time something draws with it, mid-walk; then whatever the systems added
+    // getting ready. Capture mode checks them itself (core/capture.js).
     const { frame } = ctx;
+    const compiled = frame.compile();
     ready = Promise.all(world.map((system) => system.ready)).then(async () => {
       if (params.capture || world !== built) return; // or torn down already
-      const problems = await frame.compile();
+      const problems = [...(await compiled), ...(await frame.compile())];
       if (!problems.length) return;
       stopped = true;
       fail(new Error(`shader compile failed: ${problems.join('; ')}`), 'Stopped.');
     });
-    ready.catch(() => {}); // a system that fails says so itself
+    // Frames wait for that: the sky's light arrives a few frames late (sky.js
+    // reads it back from the GPU), and a pipeline not made yet would be made
+    // while drawing. A system that fails throws in its update, so that opens
+    // the gate too.
+    drawing = false;
+    const draw = () => (drawing = drawing || world === built);
+    ready.then(draw, draw);
   }
   function teardown() {
     for (const system of world.reverse()) system.dispose();
@@ -155,6 +158,7 @@ async function boot() {
     get systems() {
       return [...tools, ...world];
     },
+    update,
     setQuality(name) {
       teardown();
       ctx.quality = preset(name);
@@ -174,11 +178,15 @@ async function boot() {
     if (import.meta.env.DEV) tools.push(timeControl.create(ctx));
   }
 
+  function update() {
+    for (const system of tools) system.update(ctx.clock.dt, ctx.clock.elapsed);
+    for (const system of world) system.update(ctx.clock.dt, ctx.clock.elapsed);
+  }
+
   function frame() {
     ctx.stats.beginFrame();
     ctx.clock.tick();
-    for (const system of tools) system.update(ctx.clock.dt, ctx.clock.elapsed);
-    for (const system of world) system.update(ctx.clock.dt, ctx.clock.elapsed);
+    update();
     ctx.frame.render();
     ctx.stats.endFrame();
   }
@@ -193,7 +201,7 @@ async function boot() {
       next = 0;
       if (stopped) return;
       try {
-        if (lit) frame();
+        if (drawing) frame();
         next = requestAnimationFrame(loop);
       } catch (err) {
         fail(err, 'Stopped.');

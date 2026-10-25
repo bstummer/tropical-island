@@ -1,12 +1,13 @@
 // The benchmark (?bench=1): visits every view in views.js, lets each settle for
-// config.bench.warmupSeconds, then measures for config.bench.seconds
-// (?benchSeconds overrides it): frame times, GPU times where the browser
-// exposes timer queries, and the frame's GPU counts. It ends with a summary to
-// paste into a session, naming the GPU, browser, resolution and preset. That is
-// how numbers from real machines reach the AI. window.__BENCH__ holds the
-// result for tools/screenshot.js. Runs instead of input: nothing to steer. It
-// starts once `ready` (the world's, with its shaders compiled) resolves, so it
-// measures the whole world: the terrain's grids take a moment to build.
+// config.bench.warmupSeconds and warmupFrames (?benchWarmupFrames overrides it),
+// then measures for config.bench.seconds (?benchSeconds overrides it): frame
+// times, GPU times where the browser exposes timer queries, and the frame's GPU
+// counts. It ends with a summary to paste into a session, naming the GPU,
+// browser, resolution and preset. That is how numbers from real machines reach
+// the AI. window.__BENCH__ holds the result for tools/screenshot.js. Runs
+// instead of input: nothing to steer. It starts once `ready` (the world's, with
+// its shaders compiled) resolves, so it measures the whole world: the terrain's
+// grids take a moment to build.
 import { views } from '../views.js';
 import { applyView } from './camera.js';
 import { formatBenchmark } from './timing.js';
@@ -18,6 +19,7 @@ export function create(ctx, ready) {
   const copy = panel.querySelector('button');
   const seconds = params.benchSeconds ?? config.bench.seconds;
   const warmupSeconds = Math.min(config.bench.warmupSeconds, seconds);
+  const warmupFrames = params.benchWarmupFrames ?? config.bench.warmupFrames;
   const results = [];
   let index = -1;
   let measuring = false;
@@ -86,7 +88,7 @@ export function create(ctx, ready) {
       frames++;
       if (!measuring) {
         // Frames from the previous view and shader compiles land here, unmeasured.
-        if (elapsed >= warmupSeconds && frames >= config.bench.warmupFrames) {
+        if (elapsed >= warmupSeconds && frames >= warmupFrames) {
           measuring = true;
           elapsed = 0;
         }

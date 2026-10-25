@@ -30,14 +30,14 @@ fn fragmentMain(in: Fullscreen) -> @location(0) vec4f {
   }
   var sum = vec3f(0.0);
   for (var i = 0; i < AZIMUTHS; i++) {
-    for (var j = 0; j < RINGS; j++) {
+    // The upper half of the rings: those below the horizon add nothing (and a
+    // skipped branch still costs SwiftShader its whole march).
+    for (var j = 0; j < RINGS / 2; j++) {
       let cosT = 1.0 - 2.0 * (f32(j) + 0.5) / f32(RINGS);
       let sinT = sqrt(max(1.0 - cosT * cosT, 0.0));
       let phi = 2.0 * PI * (f32(i) + 0.5) / f32(AZIMUTHS);
       let dir = vec3f(sinT * cos(phi), cosT, sinT * sin(phi));
-      if (dir.y > 0.0) {
-        sum += skyRadianceAt(0.0, dir, probe.uSun, STEPS) * shBasis(k - 1, dir);
-      }
+      sum += skyRadianceAt(0.0, dir, probe.uSun, STEPS) * shBasis(k - 1, dir);
     }
   }
   return vec4f(sum * 4.0 * PI / f32(AZIMUTHS * RINGS), 1.0);

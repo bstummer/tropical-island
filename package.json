@@ -10,7 +10,7 @@
   "scripts": {
     "postinstall": "playwright install --only-shell chromium",
     "dev": "vite",
-    "test": "node --test",
+    "test": "node --test --test-concurrency=4",
     "build": "vite build",
     "check": "node tools/check-build.js",
     "shot": "npm run build && node tools/screenshot.js",

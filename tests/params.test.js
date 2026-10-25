@@ -4,7 +4,7 @@ import { parseParams } from '../src/core/params.js';
 import { sunPath } from '../src/sky/sun.js';
 
 test('parses every supported param', () => {
-  const search = '?view=beach&time=17.5&t=12.5&seed=abc&capture=1&quality=low&fixture=shimmer&tonemap=aces&exposure=1.5&stats=1&bench=1&benchSeconds=0.5';
+  const search = '?view=beach&time=17.5&t=12.5&seed=abc&capture=1&quality=low&fixture=shimmer&tonemap=aces&exposure=1.5&stats=1&bench=1&benchSeconds=0.5&benchWarmupFrames=1';
   assert.deepEqual(parseParams(search), {
     view: 'beach',
     time: 17.5,
@@ -18,17 +18,25 @@ test('parses every supported param', () => {
     stats: true,
     bench: true,
     benchSeconds: 0.5,
+    benchWarmupFrames: 1,
   });
 });
 
 test('missing params are null and the switches are off', () => {
   const none = { view: null, time: null, t: null, seed: null, capture: false, quality: null, fixture: null, tonemap: null, exposure: null };
-  assert.deepEqual(parseParams(''), { ...none, stats: false, bench: false, benchSeconds: null });
+  assert.deepEqual(parseParams(''), { ...none, stats: false, bench: false, benchSeconds: null, benchWarmupFrames: null });
 });
 
 test('benchSeconds must be a sensible duration', () => {
   for (const bad of ['0', '-1', 'long', '601']) {
     assert.throws(() => parseParams(`?benchSeconds=${bad}`), /benchSeconds=.* must be a number/, `benchSeconds=${bad}`);
+  }
+});
+
+test('benchWarmupFrames must be a whole number of frames, at least one', () => {
+  assert.equal(parseParams('?benchWarmupFrames=30').benchWarmupFrames, 30);
+  for (const bad of ['0', '-1', '1.5', 'few', '1001']) {
+    assert.throws(() => parseParams(`?benchWarmupFrames=${bad}`), /benchWarmupFrames=.* must be a whole number/, `benchWarmupFrames=${bad}`);
   }
 });
 

@@ -77,23 +77,25 @@ test('a pass counts when it draws or clears; one that only resolves, and a copy,
   assert.deepEqual([stats.frame().passes, stats.frame().blits], [2, 2]);
 });
 
-test('memory: uploaded textures, render targets, the canvas and buffers; destroyed ones are freed', () => {
+test('memory: uploaded and generated textures, render targets, the canvas and buffers; destroyed ones are freed', () => {
   const device = fakeDevice();
   const stats = instrument(device);
   stats.setCanvas(100, 50, 'bgra8unorm');
   const data = device.createTexture({ size: [64, 64, 1], format: 'rgba8unorm', usage: USAGE.COPY_DST | USAGE.TEXTURE_BINDING | USAGE.RENDER_ATTACHMENT, mipLevelCount: 1 });
+  // Drawn once with its mip chain, as src/textures/ makes the ground's tiles.
+  const tiles = device.createTexture({ size: [32, 32, 2], format: 'rgba8unorm', usage: USAGE.TEXTURE_BINDING | USAGE.RENDER_ATTACHMENT, mipLevelCount: 6 });
   const target = device.createTexture({ size: [100, 50, 1], format: 'rgba16float', sampleCount: 4, usage: USAGE.RENDER_ATTACHMENT });
   const buffer = device.createBuffer({ size: 4096 });
   let memory = stats.memory();
-  assert.equal(memory.textureBytes, 64 * 64 * 4); // mipmaps drawn into it keep it a texture
+  assert.equal(memory.textureBytes, 64 * 64 * 4 + textureBytes({ size: [32, 32, 2], format: 'rgba8unorm', mipLevelCount: 6 })); // mipmaps drawn into them keep them textures
   assert.equal(memory.canvasBytes, 100 * 50 * 4);
   assert.equal(memory.renderTargetBytes, 100 * 50 * 8 * 4 + memory.canvasBytes);
   assert.equal(memory.bufferBytes, 4096);
-  assert.deepEqual(stats.objects(), { Texture: 1, RenderTarget: 1, Buffer: 1, QuerySet: 0, Pipeline: 0 });
-  for (const object of [data, target, buffer]) object.destroy();
+  assert.deepEqual(stats.objects(), { Texture: 2, RenderTarget: 1, Buffer: 1, QuerySet: 0, Pipeline: 0 });
+  for (const object of [data, tiles, target, buffer]) object.destroy();
   memory = stats.memory();
   assert.deepEqual([memory.textureBytes, memory.renderTargetBytes - memory.canvasBytes, memory.bufferBytes], [0, 0, 0]);
-  assert.equal(device.calls.filter(([name]) => name === 'destroy').length, 3);
+  assert.equal(device.calls.filter(([name]) => name === 'destroy').length, 4);
 });
 
 test('objects made untracked and pipelines released leave the counts', () => {
@@ -110,11 +112,12 @@ test('objects made untracked and pipelines released leave the counts', () => {
 test('the GPU timer sums how long each pass of a frame ran, not the gaps between, while someone listens', async () => {
   globalThis.GPUBufferUsage ??= { MAP_READ: 1, COPY_DST: 8, COPY_SRC: 4, QUERY_RESOLVE: 512 };
   globalThis.GPUMapMode ??= { READ: 1 };
-  const stamps = [1000000n, 2000000n, 3000000n, 4500000n]; // ns: passes of 1 and 1.5 ms, 1 ms apart
+  // The stamps of n passes, in ns: 1 ms apart, each 1 ms long but the last, 1.5 ms. Two passes run 2.5 ms.
+  const stamps = (n) => BigUint64Array.from({ length: 2 * n }, (_, k) => BigInt(1e6 * (k + 1) + (k === 2 * n - 1 ? 5e5 : 0)));
   const device = fakeDevice();
   device.features = new Set(['timestamp-query']);
   device.createQuerySet = () => ({ destroy() {} });
-  device.createBuffer = () => ({ mapAsync: () => Promise.resolve(), getMappedRange: () => new BigUint64Array(stamps).buffer, unmap() {}, destroy() {} });
+  device.createBuffer = () => ({ mapAsync: () => Promise.resolve(), getMappedRange: (offset, size) => stamps(size / 16).buffer, unmap() {}, destroy() {} });
   const descriptors = [];
   device.createCommandEncoder = () => ({
     beginRenderPass: (desc) => {
@@ -142,14 +145,18 @@ test('the GPU timer sums how long each pass of a frame ran, not the gaps between
   stats.endFrame();
   stats.beginFrame(); // a frame with no passes reports nothing
   stats.endFrame();
-  stats.beginFrame(); // nor one with more passes than it has stamps for
-  for (let i = 0; i < 33; i++) pass();
+  stats.beginFrame(); // the sky re-rendering its tables: 34 passes and more
+  for (let i = 0; i < 40; i++) pass();
+  stats.endFrame();
+  stats.beginFrame(); // more passes than a query set has stamps for (WebGPU: 4096) report nothing
+  for (let i = 0; i < 2049; i++) pass();
   stats.endFrame();
   await new Promise((resolve) => setTimeout(resolve));
   assert.deepEqual([descriptors[1].timestampWrites.beginningOfPassWriteIndex, descriptors[1].timestampWrites.endOfPassWriteIndex], [0, 1]);
   assert.deepEqual([descriptors[2].timestampWrites.beginningOfPassWriteIndex, descriptors[2].timestampWrites.endOfPassWriteIndex], [2, 3]);
-  assert.equal(descriptors[3 + 32].timestampWrites, undefined); // the 33rd
-  assert.deepEqual(times, [2.5]);
+  assert.deepEqual([descriptors[3 + 39].timestampWrites.beginningOfPassWriteIndex, descriptors[3 + 39].timestampWrites.endOfPassWriteIndex], [78, 79]);
+  assert.equal(descriptors[3 + 40 + 2048].timestampWrites, undefined); // the 2049th
+  assert.deepEqual(times, [2.5, 40.5]);
   stop();
   assert.equal(stats.memory().bufferBytes, 0); // the timer's own buffers aren't the game's
   delete device.features;

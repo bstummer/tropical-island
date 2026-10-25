@@ -62,7 +62,7 @@ export function create(ctx) {
       uniforms: { ...ctx.terrain.surfaces, uRockOffsets: { value: target.color } },
     });
     const meshes = shapes.map((shape) => {
-      const mesh = new Mesh(rockGeometry(shape, 1), material);
+      const mesh = new Mesh(rockGeometry(shape), material);
       mesh.frustumCulled = false;
       return mesh;
     });

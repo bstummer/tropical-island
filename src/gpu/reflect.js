@@ -143,61 +143,94 @@ function roundUp(n, align) {
   return Math.ceil(n / align) * align;
 }
 
-// Writes `value` (a number, boolean, array, or a vector, colour or matrix of
-// maths/) as `field` (from structLayout) into `view` at `base`.
-export function writeField(view, base, field, value, structs = {}) {
-  const at = base + field.offset;
+// Float, signed and unsigned 32-bit views of the same bytes, which
+// fieldWriter's writers write into.
+export function words(buffer, byteOffset = 0, length = (buffer.byteLength - byteOffset) / 4) {
+  return { f32: new Float32Array(buffer, byteOffset, length), i32: new Int32Array(buffer, byteOffset, length), u32: new Uint32Array(buffer, byteOffset, length) };
+}
+
+// A writer of `field` (from structLayout) at byte `base`: write(w, value) puts
+// `value` (a number, boolean, array, or a vector, colour or matrix of maths/)
+// into w, words() of the buffer. The type is worked out once, here, so packing
+// every frame costs no parsing.
+export function fieldWriter(field, base = 0, structs = {}) {
+  const at = (base + field.offset) / 4;
   const type = field.type;
-  if (SCALARS[type]) return writeScalar(view, at, type, value);
+  if (SCALARS[type]) {
+    const put = scalarWriter(type);
+    return (w, value) => put(w, at, value);
+  }
   let m = VECTOR.exec(type);
   if (m) {
-    const scalar = m[2] ?? { f: 'f32', i: 'i32', u: 'u32' }[m[3]];
-    const values = components(value);
-    if (values.length !== Number(m[1])) throw new Error(`reflect: "${field.name}" (${type}) got ${values.length} components`);
-    values.forEach((v, i) => writeScalar(view, at + 4 * i, scalar, v));
-    return;
+    const n = Number(m[1]);
+    const put = scalarWriter(m[2] ?? { f: 'f32', i: 'i32', u: 'u32' }[m[3]]);
+    const components = (count) => new Error(`reflect: "${field.name}" (${type}) got ${count} components`);
+    return (w, value) => {
+      if (Array.isArray(value) || ArrayBuffer.isView(value)) {
+        if (value.length !== n) throw components(value.length);
+        for (let i = 0; i < n; i++) put(w, at + i, value[i]);
+      } else if (value?.isColor) {
+        if (n !== 3) throw components(3);
+        put(w, at, value.r);
+        put(w, at + 1, value.g);
+        put(w, at + 2, value.b);
+      } else if (value && typeof value === 'object' && 'x' in value) {
+        // The x, y, z, w a vector (of maths/ or a plain object) has: as many as the field's.
+        if (!(AXES[n - 1] in value) || AXES[n] in value) throw components(AXES.filter((key) => key in value).length);
+        put(w, at, value.x);
+        put(w, at + 1, value.y);
+        if (n > 2) put(w, at + 2, value.z);
+        if (n > 3) put(w, at + 3, value.w);
+      } else {
+        throw new Error(`reflect: expected a vector, got ${value}`);
+      }
+    };
   }
   m = MATRIX.exec(type);
   if (m) {
     const [columns, rows] = [Number(m[1]), Number(m[2])];
-    const stride = rows === 2 ? 8 : 16;
-    const elements = value?.elements ?? value; // maths/ matrices are column-major, as WGSL's
-    if (elements?.length !== columns * rows) throw new Error(`reflect: "${field.name}" (${type}) needs ${columns * rows} elements, got ${elements?.length}`);
-    for (let c = 0; c < columns; c++) for (let r = 0; r < rows; r++) view.setFloat32(at + c * stride + 4 * r, elements[c * rows + r], true);
-    return;
+    const stride = rows === 2 ? 2 : 4;
+    return (w, value) => {
+      const elements = value?.elements ?? value; // maths/ matrices are column-major, as WGSL's
+      if (elements?.length !== columns * rows) throw new Error(`reflect: "${field.name}" (${type}) needs ${columns * rows} elements, got ${elements?.length}`);
+      for (let c = 0; c < columns; c++) for (let r = 0; r < rows; r++) w.f32[at + c * stride + r] = elements[c * rows + r];
+    };
   }
   if (field.count !== undefined) {
     const element = { type: field.element, offset: 0, ...typeLayout(field.element, structs) };
-    for (let i = 0; i < field.count; i++) {
-      if (value[i] === undefined) throw new Error(`reflect: "${field.name}" has ${value.length} elements, the shader ${field.count}`);
-      writeField(view, at + i * field.stride, { ...element, name: `${field.name}[${i}]` }, value[i], structs);
-    }
-    return;
+    const elements = Array.from({ length: field.count }, (_, i) => fieldWriter({ ...element, name: `${field.name}[${i}]` }, base + field.offset + i * field.stride, structs));
+    return (w, value) => {
+      for (let i = 0; i < elements.length; i++) {
+        if (value[i] === undefined) throw new Error(`reflect: "${field.name}" has ${value.length} elements, the shader ${field.count}`);
+        elements[i](w, value[i]);
+      }
+    };
   }
   if (field.fields) {
-    for (const f of field.fields) writeField(view, at, f, value[f.name], structs);
-    return;
+    const members = field.fields.map((f) => [f.name, fieldWriter(f, base + field.offset, structs)]);
+    return (w, value) => {
+      for (const [name, write] of members) write(w, value[name]);
+    };
   }
   throw new Error(`reflect: can't write "${field.name}" of type ${type}`);
 }
 
-// A number as f32, or a whole number in range as i32 or u32; booleans only as
-// u32 (WGSL's bool has no layout).
-function writeScalar(view, at, type, value) {
-  const v = typeof value === 'boolean' && type === 'u32' ? Number(value) : value;
-  if (typeof v !== 'number') throw new Error(`reflect: expected a number for ${type}, got ${value}`);
-  if (type === 'f32') return view.setFloat32(at, v, true);
-  const [min, max] = type === 'i32' ? [-(2 ** 31), 2 ** 31 - 1] : [0, 2 ** 32 - 1];
-  if (!Number.isInteger(v) || v < min || v > max) throw new Error(`reflect: ${v} is no ${type}`);
-  if (type === 'i32') view.setInt32(at, v, true);
-  else view.setUint32(at, v, true);
-}
+const AXES = ['x', 'y', 'z', 'w'];
 
-// A vector's components: an array's, a colour's r, g, b, or the x, y, z, w a
-// vector (of maths/ or a plain object) has.
-function components(value) {
-  if (Array.isArray(value) || ArrayBuffer.isView(value)) return Array.from(value);
-  if (value?.isColor) return [value.r, value.g, value.b];
-  if (value && typeof value === 'object' && 'x' in value) return ['x', 'y', 'z', 'w'].filter((k) => k in value).map((k) => value[k]);
-  throw new Error(`reflect: expected a vector, got ${value}`);
+// Writes a number as f32, or a whole number in range as i32 or u32; booleans
+// only as u32 (WGSL's bool has no layout): put(w, word, value).
+function scalarWriter(type) {
+  if (type === 'f32') {
+    return (w, at, value) => {
+      if (typeof value !== 'number') throw new Error(`reflect: expected a number for f32, got ${value}`);
+      w.f32[at] = value;
+    };
+  }
+  const [min, max, view] = type === 'i32' ? [-(2 ** 31), 2 ** 31 - 1, 'i32'] : [0, 2 ** 32 - 1, 'u32'];
+  return (w, at, value) => {
+    const v = typeof value === 'boolean' && type === 'u32' ? Number(value) : value;
+    if (typeof v !== 'number') throw new Error(`reflect: expected a number for ${type}, got ${value}`);
+    if (!Number.isInteger(v) || v < min || v > max) throw new Error(`reflect: ${v} is no ${type}`);
+    w[view][at] = v;
+  };
 }

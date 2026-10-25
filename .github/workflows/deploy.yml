@@ -10,11 +10,14 @@
 # Only the build job installs npm packages, and it gets a read-only token. The
 # jobs that publish (Pages, release) run no third-party code from node_modules.
 # They run for main only: on another branch, a push or "Run workflow" just verifies it.
+# A push that changes only Markdown (README, PLAN, CLAUDE) runs nothing: no .md
+# file goes into the build or the checks.
 name: Build and deploy
 
 on:
   push:
     branches: ['**']
+    paths-ignore: ['**/*.md']
   workflow_dispatch:
 
 # One run per branch at a time. On main a newer push waits rather than cancelling
@@ -47,14 +50,29 @@ jobs:
       # The same command as locally. CI runners have no GPU, so render with SwiftShader.
       - run: npm run verify -- --gl swiftshader
 
-      - name: Upload screenshots for review
-        if: always()
+      # Screenshots for review. They count against the account's storage, about 75 MB a run
+      # in full: a run that failed or timed out keeps them all for two weeks, to see why; one
+      # that passed keeps the views, the contact sheet and the numbers (about 20 MB) for a
+      # week. Its measurements' images come back byte for byte from a SwiftShader capture of
+      # the commit (CLAUDE.md §4).
+      - name: Upload screenshots of a failed run
+        if: failure() || cancelled()
         uses: actions/upload-artifact@v7
         with:
           name: screenshots
           path: screenshots/
           if-no-files-found: ignore
           retention-days: 14
+
+      - name: Upload screenshots for review
+        uses: actions/upload-artifact@v7
+        with:
+          name: screenshots
+          path: |
+            screenshots/*/*.png
+            screenshots/*/info.json
+            screenshots/*/benchmark.txt
+          retention-days: 7
 
       - name: Upload the game for the release job
         uses: actions/upload-artifact@v7

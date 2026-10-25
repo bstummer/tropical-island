@@ -1,9 +1,11 @@
 // Scattering things by rules (world/scatter.js): footprints keep clear of each
 // other, touching at most, whatever way round they run; the larger claims its
-// ground first; a candidate keeps its spot whatever else is placed.
+// ground first; a candidate keeps its spot whatever else is placed; the slow
+// parts of the ground are worked out only where the quick ones allow; a rule
+// that names a field the ground has not fails loudly.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createClearance, hull, scatter } from '../src/world/scatter.js';
+import { allows, createClearance, hull, scatter } from '../src/world/scatter.js';
 
 const square = (a, o, half) => [[a - half, o - half], [a + half, o - half], [a + half, o + half], [a - half, o + half]];
 
@@ -86,4 +88,21 @@ test('a rule keeps to its distance from the coast, worked out only where the res
   const none = scatter(flat, island, { ...rule, where: { height: [5, 6], coast: [-2, 1] } }, { a: [0, 10], o: [0, 3] }, () => assert.fail('placed'), createClearance());
   assert.equal(none.length, 0);
   assert.equal(asked, 30, 'the coast worked out for every candidate the rest allowed, and only those');
+});
+
+test('the rest of the ground is looked up only where the height allows', () => {
+  // The ground rises along a, a metre per metre.
+  let looked = 0;
+  const slope = { heightAtCove: (a) => a, groundAtCove: (a, o, out) => ((looked += 1), flat.groundAtCove(a, o, out)) };
+  const rule = { seed: 4, cell: 1, chance: 1, where: { sand: [0.5, 1], height: [2, 4] } };
+  const things = scatter(slope, null, rule, { a: [0, 10], o: [0, 3] }, (a, o, ground) => ({ a, o, ground: { ...ground }, footprint: square(a, o, 0.01) }), createClearance());
+  assert.ok(things.length > 0 && things.length < 30);
+  for (const { a, ground } of things) assert.ok(a >= 2 && a <= 4 && ground.height === a && ground.sand === 1);
+  assert.equal(looked, things.length, 'the ground looked up for every candidate the height allowed, and only those');
+});
+
+test('a rule that names a field the ground has not throws, naming it', () => {
+  assert.throws(() => allows({ heigth: [0, 2] }, { height: 1 }), /"heigth"/);
+  const rule = { seed: 2, cell: 1, chance: 1, where: { height: [0, 2], slop: [0, 30] } };
+  assert.throws(() => scatter(flat, null, rule, { a: [0, 3], o: [0, 3] }, () => assert.fail('placed'), createClearance()), /"slop"/);
 });

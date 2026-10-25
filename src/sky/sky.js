@@ -98,9 +98,12 @@ export function create(ctx) {
     view();
   }
 
-  // The sky-view and aerial tables for the camera's height, when it changed.
+  // The sky-view and aerial tables for the camera's height, when it changed
+  // (by more than config.sky.heightSlack in the game).
   function view() {
-    const h = (Math.max(0, Math.round(camera.position.y / settings.heightStep)) * settings.heightStep) / 1000;
+    const y = camera.position.y;
+    if (!params.capture && applied.height !== null && Math.abs(Math.max(0, y) - 1000 * applied.height) <= settings.heightSlack) return;
+    const h = (Math.max(0, Math.round(y / settings.heightStep)) * settings.heightStep) / 1000;
     if (h === applied.height) return;
     applied.height = h;
     atmosphere.renderView(current, applied.haze, h, light.uSunDirection.value.y);

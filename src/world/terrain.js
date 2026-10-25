@@ -10,8 +10,11 @@
 //
 // It shares the grids with every scene material through ctx.frame.uniforms
 // (chunks/terrain.wgsl: the water reads its depth from them), and puts
-// ctx.terrain on the context: { island, heightAt(x, z), heightmap, ready, mesh,
-// meshHeightAtCove, surfaces, greenAt(x, z) }.
+// ctx.terrain on the context: { island, heightAt(x, z), heightmap, grids,
+// ready, mesh, meshHeightAtCove, surfaces, greenAt(x, z) }. grids: a promise
+// of the heightmap as soon as its grids are in, before `ready`, which waits
+// for the surfaces' tiles too: work that needs only the grids (placing the
+// rocks) runs while the GPU makes the tiles.
 // heightAt is the ground's height at its finest: the mesh matches it within
 // about 100 m of the camera, where you walk; farther out the mesh's coarser
 // levels stray from it, by centimetres at a few hundred metres and metres far
@@ -28,11 +31,11 @@ import { Box3, Frustum, Matrix4, Vector3, Vector4, toHalfFloat } from '../maths/
 import shader from './terrain.wgsl';
 import HeightmapWorker from './heightmap-worker.js?worker&inline';
 import { Material } from '../gpu/material.js';
-import { Geometry } from '../gpu/geometry.js';
+import { Attribute, Geometry } from '../gpu/geometry.js';
 import { Mesh } from '../gpu/scene.js';
 import { Texture } from '../gpu/texture.js';
 import { createIsland } from './island.js';
-import { createHeightmap, fillLush, fillRows, GROUND, layoutLevels } from './heightmap.js';
+import { createGrids, fillRows, GROUND, layoutLevels } from './heightmap.js';
 import { albedoMap } from './albedo.js';
 import { greenCover, greenPatches } from './green.js';
 import { createSurfaceTiles, tilesUniforms } from '../textures/surfaces.js';
@@ -126,6 +129,8 @@ export function create(ctx) {
   // The cove's frame turns the grid's quads into world space; with the
   // headland on the right it also mirrors them, and they would face down.
   const maxNodes = 4096;
+  // Every mesh's nodes in one attribute, each mesh drawing its range of them.
+  const nodes = new Attribute(new Float32Array(4 * maxNodes), 4, { instance: true });
   const mirrored = side * (island.right[0] * island.forward[1] - island.right[1] * island.forward[0]) < 0;
   if (settings.sand.range > settings.rock.range) throw new Error('config.world.terrain: sand shows its detail further out than rock');
   if (settings.green.range > settings.sand.range) throw new Error('config.world.terrain: the green shows its detail further out than sand');
@@ -148,7 +153,7 @@ export function create(ctx) {
       },
     });
     const meshes = [settings.grid, settings.grid / 2].map((quads) => {
-      const mesh = new Mesh(gridGeometry(quads, maxNodes, mirrored), material);
+      const mesh = new Mesh(gridGeometry(quads, nodes, mirrored), material);
       mesh.name = material.name;
       mesh.frustumCulled = false; // lod.js culls node by node
       mesh.visible = false; // until the grids are in
@@ -167,14 +172,18 @@ export function create(ctx) {
   const textures = [];
   const groundScratch = {};
 
-  const ready = Promise.all([heightmapFor(island, seed, settings), tiles.ready]).then(
-    ([grids, averages]) => {
+  const gridsIn = heightmapFor(island, seed, settings, looks);
+  // The quadtree's bounds and surfaces depend on the grids alone: worked out
+  // as soon as they are in, while the GPU makes the tiles, and kept with them.
+  const tree = { origin: coarsest.origin, levels: lodLevels, leaf: settings.leaf, grid: settings.grid };
+  const lodIn = gridsIn.then((grids) => (grids.lod ??= createLod(tree, nodeBounds(grids, settings.sand.wetness.dry, settings.blend))));
+  const ready = Promise.all([gridsIn, lodIn, tiles.ready]).then(
+    ([grids, lodOfGrids, averages]) => {
       if (disposed) return;
       for (const [name, { value }] of Object.entries(surfaceUniforms(averages))) surfaces[name].value = value;
       heightmap = grids;
       upload(grids);
-      const tree = { origin: coarsest.origin, levels: lodLevels, leaf: settings.leaf, grid: settings.grid };
-      lod = createLod(tree, nodeBounds(grids, settings.sand.wetness.dry));
+      lod = lodOfGrids;
       meshHeight = createMeshHeight(tree, { ranges, morphs }, grids.heightAtCove, levels.length);
       for (const mesh of allMeshes) mesh.visible = true;
     },
@@ -186,6 +195,7 @@ export function create(ctx) {
 
   ctx.terrain = {
     island,
+    grids: gridsIn,
     ready,
     get heightmap() {
       return heightmap;
@@ -211,12 +221,6 @@ export function create(ctx) {
       new Texture(gpu, { name, width: n, height: n, depth: levels.length, array: true, format, mips, data: true, sampler: filtered }).upload(data);
     // Read texel by texel: core WebGPU can't filter 32-bit floats.
     const height = array('terrain height', 'r32float', grids.heightData, false);
-    // Kept with the grids, so a quality change doesn't convert them again.
-    grids.infoHalf ??= halves(grids.infoData);
-    // The ground's albedo from above, over the coarsest grid: the light from
-    // below averages it over tens of metres (chunks/lighting.wgsl groundAlbedo).
-    const coarsest = grids.levels.at(-1);
-    grids.albedoHalf ??= halves(albedoMap(coarsest, looks));
     // Filtered and mipmapped: from afar a pixel shows its footprint's average,
     // so a far ridge keeps its share of rock.
     const info = array('terrain info', 'rgba16float', grids.infoHalf, true).generateMipmaps();
@@ -229,7 +233,7 @@ export function create(ctx) {
     uniforms.uTerrainGround.value = ground;
     uniforms.uTerrainReady.value = 1;
     uniforms.uBounceMap.value = bounce;
-    const { origin, texel } = coarsest;
+    const { origin, texel } = grids.levels.at(-1);
     uniforms.uBounceLayout.value.set(origin[0] - texel / 2, origin[1] - texel / 2, 1 / (n * texel), Math.log2(settings.bounceReach / texel));
   }
 
@@ -247,6 +251,10 @@ export function create(ctx) {
     const [ca, co] = island.toCove(camera.position.x, camera.position.z);
     const cam = [ca, camera.position.y, co];
     lod.select(cam, ranges, (a0, o0, size, min, max) => {
+      // TEMPORARY, with world/placeholder.js: its opaque water hides ground a
+      // metre and more under it (nodeBounds' room), which would still cost
+      // its whole shader. Stage 6's water shows the seabed: cull it by depth then.
+      if (max < 0 && camera.position.y > 0) return false;
       box.makeEmpty();
       let far = 0;
       for (const [a, o] of [[a0, o0], [a0 + size, o0], [a0, o0 + size], [a0 + size, o0 + size]]) {
@@ -270,13 +278,22 @@ export function create(ctx) {
       const sandy = node.surfaces & SAND ? (near2 < sandRange2 ? SAND : node.surfaces & WET) : 0;
       const rocky = node.surfaces & ROCK ? (near2 < rockRange2 ? ROCK | DETAIL : ROCK) : 0;
       const greeny = node.surfaces & GREEN && near2 < greenRange2 ? GREEN : 0;
-      const variant = variants.get(sandy | rocky | greeny);
-      const { geometry } = variant.meshes[node.quarter ? 1 : 0];
-      const i = geometry.instanceCount++;
-      if (i >= maxNodes) throw new Error(`terrain: more than ${maxNodes} nodes`);
-      geometry.attributes.aNode.array.set([node.a, node.o, node.spacing, node.level], 4 * i);
+      node.geometry = variants.get(sandy | rocky | greeny).meshes[node.quarter ? 1 : 0].geometry;
+      node.geometry.instanceCount++;
     }
-    for (const { geometry } of allMeshes) geometry.update('aNode', 0, geometry.instanceCount);
+    // Each mesh's range of the nodes, in the order selected.
+    let count = 0;
+    for (const { geometry } of allMeshes) {
+      geometry.firstInstance = count;
+      count += geometry.instanceCount;
+      geometry.instanceCount = 0;
+    }
+    if (count > maxNodes) throw new Error(`terrain: more than ${maxNodes} nodes`);
+    for (const node of selected) {
+      const { geometry } = node;
+      nodes.array.set([node.a, node.o, node.spacing, node.level], 4 * (geometry.firstInstance + geometry.instanceCount++));
+    }
+    nodes.update(0, count);
   });
 
   return {
@@ -305,16 +322,15 @@ export function create(ctx) {
   };
 }
 
-// Floats as half floats. A plain loop: Uint16Array.from with a map function
-// takes 20 times as long.
-function halves(floats) {
-  const half = new Uint16Array(floats.length);
+// Floats as half floats, into `half`. A plain loop: Uint16Array.from with a
+// map function takes 20 times as long.
+function halves(floats, half = new Uint16Array(floats.length)) {
   for (let i = 0; i < half.length; i++) half[i] = toHalfFloat(floats[i]);
   return half;
 }
 
 // A grid of `quads` x `quads` quads, its vertices at whole numbers (x, 0, z),
-// drawn once per node, with room for `nodes` of them; `mirrored` winds its
+// drawn once per node of `nodes` (an instance Attribute); `mirrored` winds its
 // triangles the other way.
 function gridGeometry(quads, nodes, mirrored) {
   const geometry = new Geometry();
@@ -328,37 +344,74 @@ function gridGeometry(quads, nodes, mirrored) {
   if (mirrored) index.reverse();
   geometry.setAttribute('position', positions, 3);
   geometry.setIndex(index);
-  geometry.setAttribute('aNode', new Float32Array(4 * nodes), 4, { instance: true });
+  geometry.setAttribute('aNode', nodes);
   geometry.instanceCount = 0;
   return geometry;
 }
 
 // The lowest and highest ground over a square of the quadtree, from every
-// grid that covers it, with a little room for the blends between them; and
-// the surfaces on it: wet sand where sand lies below `dry` m above the sea, the
-// wet sand's reach (chunks/wet.wgsl), with room for how far the waves reach
-// further and for the samples' spacing.
-function nodeBounds(heightmap, dry) {
+// grid that covers it (a far node draws a coarser grid's heights), with a
+// little room for the blends between them; and the surfaces on it: wet sand
+// where sand lies below `dry` m above the sea, the wet sand's reach
+// (chunks/wet.wgsl), with room for how far the waves reach further and for the
+// samples' spacing. The surfaces come only from the grids the shader reads
+// them from (chunks/terrain.wgsl terrainGround), tile by tile: the finest that
+// covers a tile wholly, and the finer ones blending into it over its last
+// `blend` samples. A coarse grid's sand beside a cliff that a fine grid covers
+// would cost the cliff the sand's shader. What a far pixel's mipmaps take in
+// from beyond a node's samples shows as the surface's plain albedo, as ever.
+function nodeBounds(heightmap, dry, blend) {
   const { levels, samples } = heightmap;
+  const last = samples - 1;
+  // Level k's samples, a sample's room round [a0, a1] x [o0, o1], clamped to the grid: [i0, i1, j0, j1], or null.
+  const range = (k, a0, o0, a1, o1) => {
+    const { origin, texel } = levels[k];
+    const i0 = Math.floor((a0 - origin[0]) / texel) - 1;
+    const j0 = Math.floor((o0 - origin[1]) / texel) - 1;
+    const i1 = Math.ceil((a1 - origin[0]) / texel) + 1;
+    const j1 = Math.ceil((o1 - origin[1]) / texel) + 1;
+    if (i1 < 0 || j1 < 0 || i0 >= samples || j0 >= samples) return null;
+    return [Math.max(i0, 0), Math.min(i1, last), Math.max(j0, 0), Math.min(j1, last)];
+  };
+  // Level k's say over [a0, a1] x [o0, o1] (heightmap.js weight, 0 within a
+  // sample of its edge, 1 from `blend` samples further in): some somewhere, or all of it everywhere.
+  const inSamples = (k, a0, o0, a1, o1) => {
+    const { origin, texel } = levels[k];
+    return [(a0 - origin[0]) / texel, (a1 - origin[0]) / texel, (o0 - origin[1]) / texel, (o1 - origin[1]) / texel];
+  };
+  const touches = (k, ...square) => {
+    const [fa0, fa1, fo0, fo1] = inSamples(k, ...square);
+    return fa1 > 1 && fa0 < last - 1 && fo1 > 1 && fo0 < last - 1;
+  };
+  const covers = (k, ...square) => {
+    const [fa0, fa1, fo0, fo1] = inSamples(k, ...square);
+    return fa0 >= 1 + blend && fa1 <= last - 1 - blend && fo0 >= 1 + blend && fo1 <= last - 1 - blend;
+  };
   return (a0, o0, size) => {
     let min = Infinity;
     let max = -Infinity;
-    let surfaces = 0;
-    for (const { origin, texel, heights, ground } of levels) {
-      const i0 = Math.floor((a0 - origin[0]) / texel) - 1;
-      const j0 = Math.floor((o0 - origin[1]) / texel) - 1;
-      const i1 = Math.ceil((a0 + size - origin[0]) / texel) + 1;
-      const j1 = Math.ceil((o0 + size - origin[1]) / texel) + 1;
-      if (i1 < 0 || j1 < 0 || i0 >= samples || j0 >= samples) continue;
-      for (let j = Math.max(j0, 0); j <= Math.min(j1, samples - 1); j++) {
-        for (let i = Math.max(i0, 0); i <= Math.min(i1, samples - 1); i++) {
+    for (let k = 0; k < levels.length; k++) {
+      const r = range(k, a0, o0, a0 + size, o0 + size);
+      if (!r) continue;
+      const { heights } = levels[k];
+      for (let j = r[2]; j <= r[3]; j++) {
+        for (let i = r[0]; i <= r[1]; i++) {
           const h = heights[j * samples + i];
           if (h < min) min = h;
           if (h > max) max = h;
-          const n = GROUND * (j * samples + i);
-          if (ground[n] > 0) surfaces |= h < dry + 0.5 && h > -1 ? SAND | WET : SAND;
-          if (ground[n + 1] > 0) surfaces |= ROCK;
-          if (ground[n] + ground[n + 1] < 0.85 * 255) surfaces |= GREEN; // a share worth its detail
+        }
+      }
+    }
+    let surfaces = 0;
+    const tile = Math.min(TILE, size);
+    for (let ta = a0; ta < a0 + size; ta += tile) {
+      for (let to = o0; to < o0 + size; to += tile) {
+        for (let k = 0; k < levels.length; k++) {
+          const coarsest = k === levels.length - 1; // has its say everywhere
+          if (!coarsest && !touches(k, ta, to, ta + tile, to + tile)) continue;
+          const r = range(k, ta, to, ta + tile, to + tile);
+          if (r) surfaces |= surfacesOver(levels[k], samples, r, dry);
+          if (coarsest || covers(k, ta, to, ta + tile, to + tile)) break; // the coarser ones don't show here
         }
       }
     }
@@ -366,13 +419,30 @@ function nodeBounds(heightmap, dry) {
   };
 }
 
+const TILE = 8; // m: nodeBounds' tiles, finer than a leaf where grids blend into each other
+
+// The surface bits of a level's samples r = [i0, i1, j0, j1] (see nodeBounds).
+function surfacesOver({ heights, ground }, samples, [i0, i1, j0, j1], dry) {
+  let surfaces = 0;
+  for (let j = j0; j <= j1; j++) {
+    for (let i = i0; i <= i1; i++) {
+      const n = GROUND * (j * samples + i);
+      const h = heights[j * samples + i];
+      if (ground[n] > 0) surfaces |= h < dry + 0.5 && h > -1 ? SAND | WET : SAND;
+      if (ground[n + 1] > 0) surfaces |= ROCK;
+      if (ground[n] + ground[n + 1] < 0.85 * 255) surfaces |= GREEN; // a share worth its detail
+    }
+  }
+  return surfaces;
+}
+
 // The heightmap for a seed: built once by a pool of workers, then kept. A
 // failed build isn't kept, so the next try starts afresh.
-function heightmapFor(island, seed, settings) {
+function heightmapFor(island, seed, settings, looks) {
   if (!built.has(seed)) {
     built.set(
       seed,
-      build(island, seed, settings).catch((err) => {
+      build(island, seed, settings, looks).catch((err) => {
         built.delete(seed);
         throw err;
       }),
@@ -382,47 +452,46 @@ function heightmapFor(island, seed, settings) {
 }
 
 // The grids' jobs: rows of a level each, filled by the workers (or here, if
-// they can't run) into one array per kind, levels one after another; then
-// how lush, from the whole grids.
-function build(island, seed, settings) {
+// they can't run) and stored as they come (heightmap.js createGrids). Each
+// level, once its rows are all in and while the workers build the rest, also
+// goes to the GPU's formats: its info as half floats, and over the coarsest
+// grid the ground's albedo from above (`looks`: albedo.js's surfaces; the
+// light from below averages it over tens of metres, chunks/lighting.wgsl
+// groundAlbedo). Kept with the grids, so a quality change uploads them as they are.
+function build(island, seed, settings, looks) {
   const { samples, rowsPerTask } = settings;
   const levels = layoutLevels(settings);
-  const perLevel = samples * samples;
-  const heightData = new Float32Array(levels.length * perLevel);
-  const infoData = new Float32Array(4 * levels.length * perLevel);
-  const groundData = new Uint8Array(GROUND * levels.length * perLevel);
   const tasks = [];
   levels.forEach((_, level) => {
     for (let j0 = 0; j0 < samples; j0 += rowsPerTask) tasks.push({ seed, level, j0, j1: Math.min(j0 + rowsPerTask, samples) });
   });
-  const store = ({ level, j0, heights, info, ground }) => {
-    heightData.set(heights, level * perLevel + j0 * samples);
-    infoData.set(info, 4 * (level * perLevel + j0 * samples));
-    groundData.set(ground, GROUND * (level * perLevel + j0 * samples));
+  const collect = () => {
+    const perLevel = 4 * samples * samples;
+    const infoHalf = new Uint16Array(levels.length * perLevel);
+    let albedoHalf = null;
+    const grids = createGrids(island, settings, (k, level) => {
+      halves(level.info, infoHalf.subarray(k * perLevel, (k + 1) * perLevel));
+      if (k === levels.length - 1) albedoHalf = halves(albedoMap(level, looks));
+    });
+    return { store: grids.store, finish: () => Object.assign(grids.finish(), { infoHalf, albedoHalf }) };
   };
-  const finish = () => {
-    const data = levels.map((_, k) => ({
-      heights: heightData.subarray(k * perLevel, (k + 1) * perLevel),
-      info: infoData.subarray(4 * k * perLevel, 4 * (k + 1) * perLevel),
-      ground: groundData.subarray(GROUND * k * perLevel, GROUND * (k + 1) * perLevel),
-    }));
-    fillLush(island, settings, data);
-    return Object.assign(createHeightmap(island, settings, data), { heightData, infoData, groundData });
-  };
-  return inWorkers(tasks, store, settings.maxWorkers).then(finish, (err) => {
+  const grids = collect();
+  return inWorkers(tasks, grids.store, settings.maxWorkers).then(grids.finish, (err) => {
     // Workers that won't start or run (a browser that refuses them from
-    // file://, say): build here instead, slower but the same grids. If the
-    // island itself throws, it throws here too.
+    // file://, say): build here instead, slower but the same grids, afresh
+    // as some rows may be in. If the island or a level's work throws, it
+    // throws here too.
     console.warn(`terrain: ${err.message}; building the heightmap without workers`);
+    const here = collect();
     for (const task of tasks) {
       const rows = task.j1 - task.j0;
       const heights = new Float32Array(rows * samples);
       const info = new Float32Array(4 * rows * samples);
       const ground = new Uint8Array(GROUND * rows * samples);
       fillRows(island, levels[task.level], samples, task.j0, task.j1, heights, info, ground);
-      store({ ...task, heights, info, ground });
+      here.store({ ...task, heights, info, ground });
     }
-    return finish();
+    return here.finish();
   });
 }
 
@@ -445,18 +514,26 @@ function inWorkers(tasks, store, maxWorkers) {
     }
     for (const worker of workers) {
       worker.onmessage = ({ data }) => {
-        store(data);
+        give(worker); // its next job first: storing may finish a level, which takes a while
+        try {
+          store(data);
+        } catch (err) {
+          stop();
+          reject(err);
+          return;
+        }
         if (++done === tasks.length) {
           stop();
           resolve();
-        } else {
-          give(worker);
         }
       };
       worker.onerror = worker.onmessageerror = (e) => {
         stop();
         reject(new Error(`a heightmap worker failed (${e.message || e.type})`));
       };
+      // Two jobs each, the second queued behind the first: a worker carries
+      // on while this thread is busy with a level whose rows are all in.
+      give(worker);
       give(worker);
     }
   });

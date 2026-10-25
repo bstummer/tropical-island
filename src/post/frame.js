@@ -7,7 +7,8 @@
 //      nothing else did.
 //   3. after-opaque pass: meshes in pass 'afterOpaque' into the same target.
 //      They may read the opaque scene through `opaque` (water: the seabed's
-//      colour, the depth below the surface).
+//      colour, the depth below the surface): the opaque pass then resolves
+//      into a texture of its own, and this one into the HDR target's colour.
 //   4. translucent pass: meshes marked with translucent() into a layer of their
 //      own, in linear light, depth-tested against everything above.
 //   5. composite: scene x the layer's transmittance + the layer, in linear light
@@ -16,6 +17,8 @@
 //
 // Steps 3 to 6 cost nothing in a frame with nothing for them: without
 // translucent meshes and post passes the output reads the HDR target directly.
+// What no later pass reads (the target's samples once resolved, its depth) is
+// not stored, which tile-based GPUs would otherwise write out every frame.
 //
 // The HDR target holds half-float colour (the compressed, exposed radiance of
 // chunks/scene-output.wgsl), with 4 samples, and reversed 32-bit float depth
@@ -39,7 +42,7 @@
 //   translucent(node) puts the meshes under node in the translucent pass and sets up
 //                     their materials: blending, no depth writes, and sceneOutput()
 //                     writing linear, premultiplied colour. Returns node.
-//   opaque            { color, depth }: the opaque scene, compressed like the HDR target
+//   opaque            { color, depth }: the opaque scene, resolved, compressed like the HDR target
 //                     (sceneRadiance() reads the colour back as radiance times the
 //                     exposure, as sceneOutput() takes it) and its depth (one sample
 //                     a pixel, texture_depth_2d), for materials of meshes in pass
@@ -74,10 +77,18 @@ export function createFrame(ctx, display) {
   const sceneTarget = createTarget(gpu, { name: 'scene', width: 1, height: 1, format: 'rgba16float', samples: SAMPLES, depth: true });
   // The translucent pass's target: linear premultiplied colour, transmittance
   // in alpha. Its depth is the scene's resolved to one sample, which is also
-  // what `opaque.depth` and depth posts read, so it exists from the start (for
-  // materials to hold) but takes the frame's size only once a frame uses it.
+  // what `opaque.depth` and depth posts read.
   const layerTarget = createTarget(gpu, { name: 'layer', width: 1, height: 1, format: 'rgba16float', depth: true });
-  let layerSized = false;
+  // The opaque scene resolved, for after-opaque materials (`opaque.color`).
+  const opaqueTarget = createTarget(gpu, { name: 'opaque', width: 1, height: 1, format: 'rgba16float' });
+  // Those two exist from the start, for materials to hold, but take the
+  // frame's size only once a frame uses them.
+  const sized = new Set();
+  const sizedTarget = (target) => {
+    if (!sized.has(target)) target.setSize(size.width, size.height);
+    sized.add(target);
+    return target;
+  };
   // Created on first use, kept until dispose().
   const postTargets = [null, null]; // linear HDR: the composite's, and the post chain's ping-pong partner
   // Capture mode reads the output back (core/capture.js): it draws into a texture the canvas then copies.
@@ -110,8 +121,7 @@ export function createFrame(ctx, display) {
   let postCount = 0;
   const stopResize = display.onResize(() => {
     ({ width: size.width, height: size.height } = display.buffer);
-    for (const target of [sceneTarget, ...postTargets, outputTarget]) target?.setSize(size.width, size.height);
-    if (layerSized) layerTarget.setSize(size.width, size.height);
+    for (const target of [sceneTarget, ...postTargets, outputTarget, ...sized]) target?.setSize(size.width, size.height);
     output.uniforms.uHeight.value = size.height;
     for (const fn of listeners) fn(size);
   });
@@ -183,7 +193,7 @@ export function createFrame(ctx, display) {
     passes: PASSES,
     skyOrder: 1e9,
     sceneTarget,
-    opaque: { color: sceneTarget.color, depth: layerTarget.depth },
+    opaque: { color: opaqueTarget.color, depth: layerTarget.depth },
     get output() {
       return outputTarget?.color ?? null;
     },
@@ -242,24 +252,22 @@ export function createFrame(ctx, display) {
       for (const pass of passes) pass(renderer);
       const use = used();
       const linear = use.translucent || posts.length > 0;
+      // The layer hides behind the scene, after-opaque meshes included, and so do depth posts.
+      const depthAfter = use.translucent || posts.some((p) => p.depth);
       // The scene's depth so far, one sample a pixel, into the layer's depth.
       // The layer's colour is cleared on the way: nothing in front yet, everything shows through.
-      const resolveDepth = () => {
-        if (!layerSized) layerTarget.setSize(size.width, size.height);
-        layerSized = true;
-        depthResolve.render(layerTarget, { clearColor: [0, 0, 0, 1], clearDepth: 0 });
-      };
+      const resolveDepth = () => depthResolve.render(sizedTarget(layerTarget), { clearColor: [0, 0, 0, 1], clearDepth: 0 });
 
-      renderer.render(scene, camera, sceneTarget, { pass: 'opaque', clearColor: [0, 0, 0, 1], clearDepth: 0 });
+      // The after-opaque pass draws on the opaque pass's samples and depth, and
+      // reads the opaque scene resolved into a texture of its own.
+      const opaque = use.afterOpaque ? { resolveInto: sizedTarget(opaqueTarget).color } : { keepSamples: false, keepDepth: depthAfter };
+      renderer.render(scene, camera, sceneTarget, { pass: 'opaque', clearColor: [0, 0, 0, 1], clearDepth: 0, ...opaque });
       if (use.afterOpaque) {
-        // It reads the opaque scene resolved, so its own samples resolve after it, in a pass of their own.
         resolveDepth();
-        renderer.render(scene, camera, sceneTarget, { pass: 'afterOpaque', resolve: false });
-        renderer.render([], null, sceneTarget);
+        renderer.render(scene, camera, sceneTarget, { pass: 'afterOpaque', keepSamples: false, keepDepth: depthAfter });
       }
 
-      // The layer hides behind the scene, after-opaque meshes included, and so do depth posts.
-      if (use.translucent || posts.some((p) => p.depth)) resolveDepth();
+      if (depthAfter) resolveDepth();
       if (use.translucent) renderer.render(scene, camera, layerTarget, { pass: 'translucent' });
 
       let input = sceneTarget.color;
@@ -286,7 +294,7 @@ export function createFrame(ctx, display) {
       listeners.clear();
       passes.clear();
       posts.length = 0;
-      for (const target of [sceneTarget, layerTarget, ...postTargets, outputTarget]) target?.dispose();
+      for (const target of [sceneTarget, layerTarget, opaqueTarget, ...postTargets, outputTarget]) target?.dispose();
       output.dispose();
       composite.dispose();
       depthResolve.dispose();

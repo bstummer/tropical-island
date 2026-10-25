@@ -44,14 +44,18 @@ export async function measureOverdraw({ renderer, scene, camera, frame }) {
     ]),
   );
 
-  const swapped = meshes.map((mesh) => [mesh, mesh.material]);
   try {
-    for (const mesh of meshes) mesh.material = counting.get(mesh.material);
-    frame.passes.forEach((pass, i) => renderer.render(scene, camera, target, { pass, ...(i === 0 && { clearColor: [0, 0, 0, 0], clearDepth: 0 }) }));
-  } finally {
-    for (const [mesh, material] of swapped) mesh.material = material;
-  }
-  try {
+    // Their pipelines are made in the background, all at once, rather than one
+    // by one as the passes first draw with them.
+    const problems = await renderer.compile(meshes.map((mesh) => ({ material: counting.get(mesh.material), geometry: mesh.geometry })), camera, target);
+    if (problems.length) throw new Error(`overdraw: ${problems.join('; ')}`);
+    const swapped = meshes.map((mesh) => [mesh, mesh.material]);
+    try {
+      for (const mesh of meshes) mesh.material = counting.get(mesh.material);
+      frame.passes.forEach((pass, i) => renderer.render(scene, camera, target, { pass, ...(i === 0 && { clearColor: [0, 0, 0, 0], clearDepth: 0 }) }));
+    } finally {
+      for (const [mesh, material] of swapped) mesh.material = material;
+    }
     const pixels = await target.color.read();
     const counts = new Uint8Array(width * height);
     for (let i = 0; i < counts.length; i++) counts[i] = pixels[4 * i];

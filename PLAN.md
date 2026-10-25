@@ -928,6 +928,20 @@ GPU does the same work as before, so the user's review needs no benchmark or bro
   once a frame, for the main camera, into the meshes' shared instance buffers: a shadow pass reusing
   them would miss casters out of view, such as the volcano with the sun behind it. The mesh's shape
   depends on where the camera is (its levels of detail), so whatever draws it must agree on that camera.
+- Known from the optimization review (2026-10-25), for the renderer (`src/gpu/`):
+  - Each `renderer.render()` encodes and submits its own pass, so uniforms written between passes apply
+    in order: a frame is 3 submits, and 37 when the sky's tables follow the camera's height. Cascades
+    multiply passes. One command encoder a frame needs a slot per pass for what changes between passes
+    (the materials' uniform buffers, and the objects' slots, which start at 0 every pass), as a ring
+    with dynamic offsets.
+  - Group 0 (`chunks/frame.wgsl`) binds the frame's tables to every scene material, also in a pass that
+    draws into one of them. A shadow map can't go there: give it, and whatever else the frame draws into,
+    a group of its own, bound by the passes that read it.
+  - The sky's 3D aerial table takes 32 render passes, one a slice (WebGL had no compute). Make it one
+    compute pass once the renderer has compute pipelines.
+  - A system with many meshes keeps their instances in one set of attributes, each mesh drawing its
+    range (`gpu/geometry.js` Attribute, `firstInstance`): the terrain and the rocks do. A shadow pass
+    that needs other instances than the main view's needs ranges of its own.
 - **Done when** low-sun captures show long, soft shadows from the rocks and terrain, with no acne, no
   detached shadows and no hard edges, and the camera-offset captures show no shimmer (the tool turns the
   camera but can't move it yet).
@@ -966,6 +980,11 @@ GPU does the same work as before, so the user's review needs no benchmark or bro
   sea the ground is soaked but has no film of water (`chunks/wet.wgsl`): the water's surface mirrors.
   The terrain's shader reads 9 textures of the 16 a shader is sure to have (the surfaces' tiles share
   one array, `textures/surfaces.js`).
+- Known from the optimization review (2026-10-25): the terrain leaves out nodes a metre and more under
+  the placeholder water (TEMPORARY in `world/terrain.js`, beside the `hidden` early-out in
+  `terrain.wgsl`): the seabed the water shows needs them back, culled by what the water hides instead.
+  The after-opaque pass draws on the opaque pass's samples, which resolve into a texture of their own
+  for it (`frame.opaque.color`), and it resolves the HDR target itself: no pass of its own for that.
 - **Done when** the placeholder water is gone and the lagoon reads as tropical at every time of day.
 
 ### 7. Shoreline (the hero)
@@ -1019,8 +1038,9 @@ GPU does the same work as before, so the user's review needs no benchmark or bro
   checks it against; rocks move by it each frame in a pass of nine texels each (`world/rocks.js`, about
   700 rocks), which won't scale to plants by the hundred thousand: they need their offsets another way.
   Placement by rules is `world/scatter.js`, and what it places keeps clear of what is there already
-  (`ctx.rocks.clearance`), so palms don't grow through boulders. It runs on the main thread at boot (the
-  rocks take 0.1–0.4 s): plants by the hundred thousand need workers. Plants also bend with the planet
+  (`ctx.rocks.clearance`), so palms don't grow through boulders. It runs on the main thread at boot,
+  while the GPU makes the surfaces' tiles (`ctx.terrain.grids`), and is kept per seed through a quality
+  change (the rocks take 0.13–0.3 s cold): plants by the hundred thousand need workers. Plants also bend with the planet
   (`chunks/planet.wgsl`), or the far ones float.
 - **Done when** palms glow when backlit at golden hour, fronds sway and flutter, their shade sits soft on
   the sand, close-ups hold up, and nothing flickers: the shimmer score stays low and the user sees none in
@@ -1190,6 +1210,8 @@ GPU does the same work as before, so the user's review needs no benchmark or bro
   note that the game needs WebGPU.
 - Known from Stage 3: the heightmap's workers are untried outside Chromium; without them the grids
   build in the main thread, about a second on a fast desktop, and with two cores there is one worker.
+  Boot waits on the surfaces' tiles (`textures/`, made and read back on the GPU), not on the grids, which
+  are in a second or two before them: making the tiles faster is the lever for boot.
   The terrain's fragment shader is most of a SwiftShader frame, its aerial perspective and its filtered
   slopes the largest parts.
 - The tools install only Chromium's headless shell. Automated Firefox runs need Playwright's Firefox
@@ -1299,6 +1321,14 @@ Not part of the plan. Build one only if the user asks for it: a passing rain sho
 
 Newest first. One short entry per session, only a few lines: date, stage, what changed, what is still
 open, next step. Details belong in code comments.
+
+- **2026-10-25, an optimization review of the port, checked and acted on** (with two helper agents). CI
+  was red on `74dbabc` (player mode's canvas shot timed out under SwiftShader load): fixed, proven on two
+  CPUs. Uniforms packed by writers made once, shared by the terrain's variants (frame JS about halved);
+  terrain under the placeholder water culled, variants picked per 8 m tile; a frame stores nothing no
+  later pass reads; boot overlaps compiles and placement with the tiles. SwiftShader: frames 9–33% and
+  boots ~1 s faster, `verify`'s capture 664 → 346 s, every view byte-identical. Deferred to Stage 5's
+  notes: one encoder a frame, group 0's split, the aerial table in compute. Next: 4.8 or Stage 5.
 
 - **2026-10-24, Stage 4c planned and built: no runtime dependencies.** The user decided three goes
   (Decisions). Its maths is now `src/maths/`, ported in three's order of operations and held to three's

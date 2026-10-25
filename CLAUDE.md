@@ -41,7 +41,7 @@ When choosing between approaches, pick the one that looks better in the screensh
 |---|---|
 | `npm install` | Installs deps; `postinstall` downloads Playwright's Chromium headless shell (cached per machine), the only browser the tools use. |
 | `npm run dev` | Vite dev server. JS edits reload the page. Shader edits (`.wgsl`, including `#include`d chunks) are hot-swapped into live scene materials without a reload, so the camera stays put; shaders of fullscreen passes and of the sky's lookup tables reload the page. |
-| `npm test` | Unit and invariant tests: `node --test` over `tests/*.test.js` (Node's built-in runner, no test deps). |
+| `npm test` | Unit and invariant tests: `node --test --test-concurrency=4` over `tests/*.test.js` (Node's built-in runner, no test deps; without the flag, CI's two CPUs run one file at a time). |
 | `npm run build` | Production build to `dist/index.html` (single file, no sourcemaps). The build fails if it would emit anything other than `index.html`, or bundle a module from outside `src/`. |
 | `npm run check` | `tools/check-build.js`: exactly one file in dist, no `<script src>`/`<link href>`, no URLs except XML namespaces, no network APIs or `import()`, size vs budget (warn > 3 MB raw, fail > 6 MB), plus the src/ lint: determinism, and imports of src/ files only. |
 | `npm run shot -- [args]` | Builds, then `tools/screenshot.js`: one PNG per view + `contact-sheet.png` + `info.json` in `screenshots/<label>/`, plus each view's measurements (banding view, zoomed crops, shimmer, motion strip, overdraw) in `screenshots/<label>/<view>/`, with the numbers and over-limit warnings in `info.json`. A reused label replaces the old capture. With `--checks` (`verify` passes it) the tool also checks itself and the game: that the shimmer and cost measurements still catch test scenes built to fail them, that the frame keeps its promises (smooth dark edges against a bright sky, depth precision from a hilltop, dithered gradients without bands, translucent layers blended in linear light and hidden behind the scene, the opaque scene handed to what draws after it), that errors nothing shows on screen (a broken shader out of sight, a validation error, a lost device, blending outside the translucent pass) fail a capture, that captures are reproducible, also after the time of day changed in the page (on every view, through every named time), that the GPU's sky maths agrees with the JS, that the terrain's heights on the GPU are the ones JS knows and keep close to the island's between samples, and the mesh's own height as drawn is its JS twin's, and that the light from below reads the ground's albedo map where JS expects it (`terrain` fixture, also with deliberate mistakes), that the rocks' offsets in the mesh as drawn and their vertex shader put them where their JS twins do (`rocks` fixture, likewise), that the green's patches on the GPU are the ones JS knows (`patches` fixture), that the sky's lookup tables agree with direct marches through the same air, and the sunlight by height with one in JS, also in the last minutes of daylight (`haze` fixture), and that the light reads neutral at midday and warm at golden hour, and that a quality change (default preset to low and back) leaks no GPU resources and brings back the same picture. Then it runs the game in player mode until it draws (no `?capture`: real-time loop, input, start screen, frame readout, walking on the ground, and a canvas that shows what the capture of the same view does), which captures never exercise, and a short benchmark run (`screenshots/<label>/benchmark.txt`). |
@@ -62,7 +62,8 @@ anything at night is an error. Also
 `tonemap=<name>` and `exposure=<x>` (a curve from `config.post.tonemaps`, and a factor on the exposure, which follows the light; to compare looks), and `fixture=<name>` (a test scene
 from `src/fixtures/` instead of the island; `tonecard` is an HDR test card for judging the look, `light` shows the lighting on test objects without the island). In the game,
 `stats=1` shows the frame readout (F3 toggles it) and `bench=1` runs the benchmark: it visits every view and ends
-with a summary of frame and GPU times to paste into a session (`benchSeconds=<s>` sets the time per view).
+with a summary of frame and GPU times to paste into a session (`benchSeconds=<s>` sets the time per view,
+`benchWarmupFrames=<n>` the frames each view waits at least before it is measured).
 
 Dev-only keys: **P** logs the camera as a ready-to-paste `views.js` entry and copies it to the clipboard.
 **,** and **.** step the time of day (Shift: to the previous or next named time).
@@ -79,11 +80,13 @@ Cloud sessions run in a Linux container with no GPU and no display, so screensho
 
 ### Deploying
 
-`.github/workflows/deploy.yml` runs on every push. On `main` it runs all three jobs; on any other branch (and for a
-manual "Run workflow" there) it runs only the build job:
+`.github/workflows/deploy.yml` runs on every push that changes more than Markdown (no `.md` file goes into the
+build or the checks, so a docs-only push publishes nothing). On `main` it runs all three jobs; on any other branch
+(and for a manual "Run workflow" there) it runs only the build job:
 
 1. **build** (read-only token): `npm ci`, then `npm run verify -- --gl swiftshader` (runners have no GPU).
-   It uploads the screenshots as a workflow artifact for review, even when the run fails.
+   It uploads the screenshots as a workflow artifact for review: all of them for 14 days when the run fails, the
+   views, contact sheet and numbers for 7 days when it passes (the rest comes back from a capture of the commit).
 2. **deploy-pages**: publishes `dist/` to https://bstummer.github.io/tropical-island/. It needs
    Settings → Pages → Source: "GitHub Actions". With "Deploy from a branch", GitHub's own Jekyll build
    also publishes the raw repo on every push and races this job, so the job fails until that is set.
@@ -248,12 +251,13 @@ after input.
 night throws), `clock` (`elapsed`, `dt`, `frame`,
 `frozen`, `interval`), `stats` (GPU counts, memory and GPU time from `core/gpu-stats.js`), `rng` (`rng('name')` returns a stream with `next/range/int/chance/pick/normal`), `terrain`
 (`world/terrain.js`: `island`, `heightAt(x, z)` the ground's height at its finest, which the mesh matches near the camera but
-not far out, where its coarser levels stray from it, `heightmap` and its `ready`, `mesh` and `meshHeightAtCove` (the
+not far out, where its coarser levels stray from it, `heightmap` and its `ready`, `grids` (a promise of the heightmap
+as soon as its grids are in, before `ready`, which waits for the surfaces' tiles too), `mesh` and `meshHeightAtCove` (the
 mesh as drawn, for what stands on it: chunks/terrain-mesh.wgsl and its JS twin), `surfaces` (the ground's
 surfaces' uniforms, for what is made of them or lies on them), `greenAt(x, z)` (whether the green inland is green or
 bare there, as drawn: world/green.js); it exists while the terrain
 system does, so systems that read it in `create()` come after `terrain` in `WORLD_SYSTEMS`), `rocks`
-(`world/rocks.js`: `ready`, then `placed` and `shapes`, and `clearance`, the rocks' footprints, which later
+(`world/rocks.js`: `ready`, then `placed` and `shapes`, kept per seed through a quality change, so read-only, and `clearance`, the rocks' footprints, which later
 placement passes to `world/scatter.js` to keep clear of them; likewise after `rocks`), `sky` (`sky/sky.js`:
 `ready`, the first light state; after `sky` in `WORLD_SYSTEMS`), and `frame`
 (`post/frame.js`: `size` and `onResize(fn)` for the drawing buffer, `uniforms` every scene material shares (the

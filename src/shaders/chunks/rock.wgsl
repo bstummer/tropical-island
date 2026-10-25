@@ -86,18 +86,32 @@ fn rockCrest(noise: vec4f, ridged: f32) -> vec4f {
 // a table: measured with a JS port of noise.wgsl over 120,000 points, at a
 // sharpness of 0.8 and rock()'s weights (as the octaves fade far away, they
 // stray by 0.2 at most, at the top).
+// Written out piece by piece: a loop over arrays in function memory costs
+// SwiftShader loads and stores at every pixel.
 fn rockRank(zIn: f32) -> vec2f {
-  var Z = array<f32, 15>(-4.0, -2.38, -1.84, -1.35, -0.8, -0.43, -0.14, 0.13, 0.38, 0.62, 0.88, 1.2, 1.41, 1.61, 2.1);
-  var Q = array<f32, 15>(0.0, 0.02, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.98, 1.0);
-  let z = clamp(zIn, Z[0], Z[14]);
+  let z = clamp(zIn, -4.0, 2.1);
   var rank = vec2f(0.0);
-  for (var i = 0; i < 14; i++) {
-    let slope = (Q[i + 1] - Q[i]) / (Z[i + 1] - Z[i]);
-    if (z >= Z[i] && z <= Z[i + 1]) {
-      rank = vec2f(Q[i] + (z - Z[i]) * slope, slope);
-    }
-  }
-  return rank;
+  rank = rockRankPiece(z, -4.0, -2.38, 0.0, 0.02, rank);
+  rank = rockRankPiece(z, -2.38, -1.84, 0.02, 0.05, rank);
+  rank = rockRankPiece(z, -1.84, -1.35, 0.05, 0.1, rank);
+  rank = rockRankPiece(z, -1.35, -0.8, 0.1, 0.2, rank);
+  rank = rockRankPiece(z, -0.8, -0.43, 0.2, 0.3, rank);
+  rank = rockRankPiece(z, -0.43, -0.14, 0.3, 0.4, rank);
+  rank = rockRankPiece(z, -0.14, 0.13, 0.4, 0.5, rank);
+  rank = rockRankPiece(z, 0.13, 0.38, 0.5, 0.6, rank);
+  rank = rockRankPiece(z, 0.38, 0.62, 0.6, 0.7, rank);
+  rank = rockRankPiece(z, 0.62, 0.88, 0.7, 0.8, rank);
+  rank = rockRankPiece(z, 0.88, 1.2, 0.8, 0.9, rank);
+  rank = rockRankPiece(z, 1.2, 1.41, 0.9, 0.95, rank);
+  rank = rockRankPiece(z, 1.41, 1.61, 0.95, 0.98, rank);
+  return rockRankPiece(z, 1.61, 2.1, 0.98, 1.0, rank);
+}
+
+// One piece of rockRank's table, from z0 at q0 to z1 at q1: where z falls on
+// it, or `rank` if z lies elsewhere (a later piece wins where two meet).
+fn rockRankPiece(z: f32, z0: f32, z1: f32, q0: f32, q1: f32, rank: vec2f) -> vec2f {
+  let slope = (q1 - q0) / (z1 - z0);
+  return select(rank, vec2f(q0 + (z - z0) * slope, slope), z >= z0 && z <= z1);
 }
 
 // The tile read along one axis: the slope of its height across the plane

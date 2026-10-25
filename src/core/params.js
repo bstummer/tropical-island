@@ -13,6 +13,8 @@
 //   stats    1 = show the frame readout from the start (F3 toggles it)
 //   bench    1 = run the benchmark (core/benchmark.js) instead of the game
 //   benchSeconds  seconds measured per view, instead of config.bench.seconds
+//   benchWarmupFrames  frames each view waits at least before it is measured, instead of
+//            config.bench.warmupFrames (the screenshot tool's check of the benchmark waits one)
 import { sunPath } from '../sky/sun.js';
 
 export function parseParams(search) {
@@ -30,6 +32,7 @@ export function parseParams(search) {
     stats: q.get('stats') === '1',
     bench: q.get('bench') === '1',
     benchSeconds: number(q, 'benchSeconds', 0.05, 600),
+    benchWarmupFrames: number(q, 'benchWarmupFrames', 1, 1000, { whole: true }),
   };
 }
 
@@ -48,12 +51,12 @@ function timeOfDay(q, key) {
   }
 }
 
-function number(q, key, min, max) {
+function number(q, key, min, max, { whole = false } = {}) {
   const raw = text(q, key);
   if (raw === null) return null;
   const value = Number(raw);
-  if (!Number.isFinite(value) || value < min || value > max) {
-    throw new Error(`URL param ${key}=${raw} must be a number in [${min}, ${max}]`);
+  if (!Number.isFinite(value) || (whole && !Number.isInteger(value)) || value < min || value > max) {
+    throw new Error(`URL param ${key}=${raw} must be a ${whole ? 'whole ' : ''}number in [${min}, ${max}]`);
   }
   return value;
 }

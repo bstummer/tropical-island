@@ -1,5 +1,6 @@
 // The heightmap's grids (world/heightmap.js): how they nest and cover the
-// island, that they hold the island's heights and ground, that the drawn
+// island, that they hold the island's heights and ground however their rows
+// arrive, that the drawn
 // height has no seams, and that the drawn ground keeps the zones' rules. The
 // GPU's side is checked in the browser (src/fixtures/terrain.js).
 import test from 'node:test';
@@ -8,7 +9,7 @@ import { readFileSync } from 'node:fs';
 import { createRandom } from '../src/core/random.js';
 import { config } from '../src/config.js';
 import { createIsland, LAND_ZONES } from '../src/world/island.js';
-import { buildHeightmap, fillRows, GROUND, layoutLevels } from '../src/world/heightmap.js';
+import { buildHeightmap, createGrids, fillRows, GROUND, layoutLevels } from '../src/world/heightmap.js';
 
 const settings = config.world.terrain;
 const SEEDS = Array.from({ length: 20 }, (_, i) => i + 1);
@@ -200,6 +201,46 @@ test('rows filled in parts, as the workers fill them, are the rows filled whole'
       assert.deepEqual(part.ground, whole.ground.subarray(GROUND * j0 * samples, GROUND * j1 * samples), `ground of rows ${j0}-${j1}`);
     }
   }
+});
+
+test('rows stored in any order, as the workers return them, make the grids built whole; each level is handed on, lush and all, once its last rows are in', () => {
+  const island = createIsland(createRandom(2));
+  const whole = buildHeightmap(island, small);
+  const { samples } = small;
+  const levels = layoutLevels(small);
+  // Every level in blocks of 5 rows, shuffled.
+  const blocks = [];
+  levels.forEach((level, k) => {
+    for (let j0 = 0; j0 < samples; j0 += 5) {
+      const j1 = Math.min(j0 + 5, samples);
+      const rows = j1 - j0;
+      const block = { level: k, j0, heights: new Float32Array(rows * samples), info: new Float32Array(4 * rows * samples), ground: new Uint8Array(GROUND * rows * samples) };
+      fillRows(island, level, samples, j0, j1, block.heights, block.info, block.ground);
+      blocks.push(block);
+    }
+  });
+  const r = createRandom(2)('test/blocks');
+  for (let i = blocks.length - 1; i > 0; i--) {
+    const j = r.int(0, i);
+    [blocks[i], blocks[j]] = [blocks[j], blocks[i]];
+  }
+  const same = (level, k, when) => {
+    for (const kind of ['heights', 'info', 'ground']) assert.deepEqual(level[kind], whole.levels[k][kind], `level ${k}'s ${kind} ${when}`);
+  };
+  const handed = [];
+  const grids = createGrids(island, small, (k, level) => {
+    same(level, k, 'when handed on');
+    handed.push(k);
+  });
+  const lastBlock = levels.map((_, k) => blocks.findLastIndex((block) => block.level === k));
+  blocks.forEach((block, i) => {
+    grids.store(block);
+    const due = levels.map((_, k) => k).filter((k) => lastBlock[k] <= i).sort((p, q) => lastBlock[p] - lastBlock[q]);
+    assert.deepEqual(handed, due, `after ${i + 1} blocks`);
+  });
+  const built = grids.finish();
+  levels.forEach((_, k) => same(built.levels[k], k, 'when finished'));
+  assert.throws(() => createGrids(island, small).finish(), /rows missing/);
 });
 
 // The steepest the drawn ground gets in the cells round sample i, j (rise

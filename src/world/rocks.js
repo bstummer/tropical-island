@@ -27,17 +27,22 @@ import { Frustum, Matrix4, Sphere, Vector2 } from '../maths/index.js';
 import shader from './rocks.wgsl';
 import offsetsShader from './rock-offsets.wgsl';
 import { Material } from '../gpu/material.js';
-import { Geometry } from '../gpu/geometry.js';
+import { Attribute, Geometry } from '../gpu/geometry.js';
 import { Mesh } from '../gpu/scene.js';
 import { createTarget, Texture } from '../gpu/texture.js';
 import { makeRockShapes } from './rock-shapes.js';
 import { placeRocks } from './rock-placement.js';
 import { createClearance } from './scatter.js';
 
+// What depends on the seed alone, kept across quality changes as the
+// terrain's grids are: the prototypes, and the rocks, placed as soon as the
+// grids are in (ctx.terrain.grids), while the terrain waits for its surfaces.
+const kept = new Map(); // seed -> { shapes, placed: Promise of placeRocks's rocks }
+
 export function create(ctx) {
   const { scene, camera, frame, config, renderer, quality } = ctx;
   const settings = config.world.rocks;
-  const shapes = makeRockShapes(ctx.rng('rocks/shapes'), settings.shapes);
+  const { shapes, placed } = layoutFor(ctx, settings);
   const clearance = createClearance();
 
   const material = new Material({
@@ -51,8 +56,11 @@ export function create(ctx) {
   });
 
   let rocks = [];
+  // Every prototype's rocks in one set of attributes, each mesh drawing its range of them.
+  let instances = rockInstances(1);
+  let sinks = new Float64Array(0); // how far each rock in view sinks this frame; -1 out of view
   const meshes = shapes.map((shape) => {
-    const mesh = new Mesh(rockGeometry(shape, 1), material);
+    const mesh = new Mesh(rockGeometry(shape, instances), material);
     mesh.name = 'rocks';
     mesh.frustumCulled = false; // culled rock by rock
     mesh.renderOrder = -1; // before the terrain, which they hide in part
@@ -66,18 +74,17 @@ export function create(ctx) {
   const offsetsPass = createOffsetsPass(ctx);
 
   let disposed = false;
-  const ready = ctx.terrain.ready.then(() => {
+  const ready = Promise.all([placed, ctx.terrain.ready]).then(([all]) => {
     if (disposed) return;
-    const { heightmap, island } = ctx.terrain;
-    const { reach } = settings;
-    const region = { a: [-reach, reach], o: [-reach, reach], radius: reach };
-    rocks = placeRocks(heightmap, island, shapes, settings, region, (kind) => ctx.rng(`rocks/${kind}`).int(0, 0x7fffffff), clearance);
+    const { island } = ctx.terrain;
+    rocks = all;
+    for (const rock of rocks) clearance.claim(rock.footprint); // as placement claimed them
     ctx.rocks.placed = rocks;
-    const count = shapes.map(() => 0);
-    for (const rock of rocks) count[rock.shape]++;
+    instances = rockInstances(rocks.length);
+    sinks = new Float64Array(rocks.length);
     meshes.forEach((mesh, k) => {
       mesh.geometry.dispose();
-      mesh.geometry = rockGeometry(shapes[k], count[k]);
+      mesh.geometry = rockGeometry(shapes[k], instances);
     });
     places = rockPlaces(ctx, rocks, island);
     offsets = offsetsTarget(ctx, rocks.length);
@@ -105,6 +112,7 @@ export function create(ctx) {
     const pixelsPerRadian = frame.size.height / ((camera.fov * Math.PI) / 180);
     for (const mesh of meshes) mesh.geometry.instanceCount = 0;
     rocks.forEach((rock, id) => {
+      sinks[id] = -1;
       sphere.center.fromArray(rock.centre);
       const d = sphere.center.distanceTo(camera.position);
       const pixels = (rock.shows / d) * pixelsPerRadian;
@@ -114,11 +122,22 @@ export function create(ctx) {
       sphere.center.y -= (d * d) / (2 * groundRadius);
       sphere.radius = rock.radius + settings.stray * d;
       if (!frustum.intersectsSphere(sphere)) return;
-      const { geometry } = meshes[rock.shape];
-      const sink = rock.shows * Math.min(Math.max((full - pixels) / (full - least), 0), 1);
-      setInstance(geometry, geometry.instanceCount++, rock, id, sink);
+      sinks[id] = rock.shows * Math.min(Math.max((full - pixels) / (full - least), 0), 1);
+      meshes[rock.shape].geometry.instanceCount++;
     });
-    for (const { geometry } of meshes) for (const name of INSTANCED) geometry.update(name, 0, geometry.instanceCount);
+    // Each prototype's range of the rocks, in their order.
+    let count = 0;
+    for (const { geometry } of meshes) {
+      geometry.firstInstance = count;
+      count += geometry.instanceCount;
+      geometry.instanceCount = 0;
+    }
+    rocks.forEach((rock, id) => {
+      if (sinks[id] < 0) return;
+      const { geometry } = meshes[rock.shape];
+      setInstance(geometry, geometry.firstInstance + geometry.instanceCount++, rock, id, sinks[id]);
+    });
+    for (const name of INSTANCED) instances[name].update(0, count);
   });
 
   return {
@@ -140,20 +159,40 @@ export function create(ctx) {
   };
 }
 
+// The seed's prototypes and its rocks' placement (see `kept`). A failed
+// placement isn't kept, so the next try starts afresh.
+function layoutFor(ctx, settings) {
+  const seed = String(ctx.params.seed ?? ctx.config.defaults.seed);
+  if (!kept.has(seed)) {
+    const shapes = makeRockShapes(ctx.rng('rocks/shapes'), settings.shapes);
+    const { island } = ctx.terrain;
+    const { reach } = settings;
+    const region = { a: [-reach, reach], o: [-reach, reach], radius: reach };
+    const seedOf = (kind) => ctx.rng(`rocks/${kind}`).int(0, 0x7fffffff);
+    const placed = ctx.terrain.grids.then((heightmap) => placeRocks(heightmap, island, shapes, settings, region, seedOf, createClearance()));
+    placed.catch(() => kept.delete(seed));
+    kept.set(seed, { shapes, placed });
+  }
+  return kept.get(seed);
+}
+
 // Per instance (rocks.wgsl): its place and its texel of the offsets, its turn,
 // its scale and height, and how far its top stands above its place.
 const INSTANCED = ['aPlace', 'aTurn', 'aScale', 'aTop'];
 
-// A prototype's mesh, with room for `count` instances.
-export function rockGeometry(shape, count) {
+// The per-instance attributes, with room for `count` rocks.
+export function rockInstances(count) {
+  const size = (name) => (name === 'aTop' ? 1 : 4);
+  return Object.fromEntries(INSTANCED.map((name) => [name, new Attribute(new Float32Array(size(name) * Math.max(1, count)), size(name), { instance: true })]));
+}
+
+// A prototype's mesh, drawing `instances` (rockInstances', its own or shared).
+export function rockGeometry(shape, instances = rockInstances(1)) {
   const geometry = new Geometry();
   geometry.setAttribute('position', shape.positions, 3);
   geometry.setAttribute('normal', shape.normals, 3);
   geometry.setIndex(shape.index);
-  for (const name of INSTANCED) {
-    const size = name === 'aTop' ? 1 : 4;
-    geometry.setAttribute(name, new Float32Array(size * Math.max(1, count)), size, { instance: true });
-  }
+  for (const name of INSTANCED) geometry.setAttribute(name, instances[name]);
   geometry.instanceCount = 0;
   return geometry;
 }

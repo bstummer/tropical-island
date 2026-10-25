@@ -3,23 +3,30 @@
 // uniforms set between calls apply to the calls after), with three.js's frustum
 // culling and draw order. Pipelines are made per material, target and vertex
 // layout on first use, or ahead with compile(); bind groups as material.js says.
+// A pass packs each material's uniforms once, and the frame's (group 0) only
+// if something in it binds them.
 //
-//   render(scene, camera, target, { pass, clearColor, clearDepth, layer, level })
+//   render(scene, camera, target, { pass, clearColor, clearDepth, layer, level, resolve, resolveInto, keepSamples, keepDepth, viewport })
 //       scene: a Scene (its meshes in `pass`, or all) or a list of meshes; camera:
 //       core/camera.js's, or null for passes that need none; target: createTarget's,
 //       or canvas(); clearColor [r, g, b, a] and clearDepth clear first, else it
 //       draws over what is there; layer, level: of an array or 3D target; resolve
 //       false keeps a multisampled target from resolving (a pass that reads its colour);
+//       resolveInto: a texture to resolve into instead of the target's colour;
+//       keepSamples, keepDepth false: nothing after this pass reads the target's
+//       multisampled colour or its depth, so they needn't be stored (tile-based
+//       GPUs then never write them out);
 //       viewport [x, y, width, height] in pixels from the top left draws into that part only
 //   compile(scene, camera, target, { pass }) -> Promise of the materials whose
 //       shaders or pipelines failed, as "name: message", made in the background
+//       (it also waits for pipelines an earlier compile() is still making)
 //   fullscreen(material) -> { material, uniforms, render(target, options), compile(target), dispose() }:
 //       one triangle over the whole target; the material's vertex shader gets
 //       the vertex index (post/fullscreen.wgsl)
 //   setGlobals(uniforms)  ctx.frame.uniforms, bound at group 0 (chunks/frame.wgsl) with the camera
 //   canvas()              the canvas as a target, for the frame's output
 import { Box3, Frustum, Matrix3, Matrix4, Sphere, Vector3, Vector4 } from '../maths/index.js';
-import { reflect, structLayout, writeField } from './reflect.js';
+import { fieldWriter, reflect, structLayout, words } from './reflect.js';
 import { Bindings, layoutEntry } from './bindings.js';
 import { Geometry } from './geometry.js';
 import { signature } from './texture.js';
@@ -50,7 +57,7 @@ export function createRenderer(gpu) {
 
   // Group 2: every mesh's matrices, in one buffer with a slot per mesh drawn in a pass.
   const objectReflection = reflect(objectSource);
-  const objectFields = structLayout('Object', objectReflection.structs);
+  const objectWriters = structLayout('Object', objectReflection.structs).map((field) => [field.name, fieldWriter(field, 0, objectReflection.structs)]);
   const objectLayout = device.createBindGroupLayout({
     label: 'object',
     entries: [{ binding: 0, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform', hasDynamicOffset: true } }],
@@ -58,15 +65,17 @@ export function createRenderer(gpu) {
   let objectSlots = 0;
   let objectBuffer = null;
   let objectGroup = null;
-  const objectData = new ArrayBuffer(OBJECT_SLOT);
-  const objectView = new DataView(objectData);
-  const objectValues = { modelMatrix: { value: null }, modelViewMatrix: { value: new Matrix4() }, normalMatrix: { value: new Matrix3() } };
+  let objectData = null;
+  let objectWords = []; // words() of each slot of objectData
+  const objectValues = { modelMatrix: null, modelViewMatrix: new Matrix4(), normalMatrix: new Matrix3() };
   function objectSlotsFor(n) {
     if (n <= objectSlots) return;
     objectBuffer?.destroy();
     objectSlots = Math.max(64, 2 ** Math.ceil(Math.log2(n)));
     objectBuffer = stats.untracked(() => device.createBuffer({ label: 'objects', size: objectSlots * OBJECT_SLOT, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST }));
     objectGroup = device.createBindGroup({ label: 'objects', layout: objectLayout, entries: [{ binding: 0, resource: { buffer: objectBuffer, size: OBJECT_SLOT } }] });
+    objectData = new ArrayBuffer(objectSlots * OBJECT_SLOT);
+    objectWords = Array.from({ length: objectSlots }, (_, i) => words(objectData, i * OBJECT_SLOT, OBJECT_SLOT / 4));
   }
   objectSlotsFor(64);
 
@@ -87,7 +96,8 @@ export function createRenderer(gpu) {
       if (!reflection.entries[entry]) throw new Error(`material ${material.name}: its shader has no entry point "${entry}"`);
     }
     const shader = gpu.module(material.shader, material.name);
-    const bindings = new Bindings(gpu, reflection, 1, material.name);
+    const own = ownBindings(reflection, material);
+    const { bindings } = own;
     const layout = device.createPipelineLayout({
       label: material.name,
       bindGroupLayouts: [groups.has(0) ? frameBindings.layout : gpu.emptyLayout, bindings.layout, groups.has(2) ? objectLayout : gpu.emptyLayout],
@@ -103,18 +113,42 @@ export function createRenderer(gpu) {
       version: material.version,
       reflection,
       groups,
+      input: reflection.entries[material.vertex].input,
       shader,
-      bindings,
+      own,
       layout,
       constants,
       pipelines,
       dispose() {
         for (const { pipeline } of pipelines.values()) if (pipeline) stats.pipelineReleased(pipeline);
         pipelines.clear();
-        bindings.dispose();
+        own.release();
         gpu.releaseModule(source);
       },
     };
+  }
+
+  // A material's group 1. Materials with the same shader and the same
+  // uniforms object (the terrain's variants, which differ in overrides only)
+  // pack the same bytes: they share buffers and bind groups, packed once a
+  // pass for all of them. { bindings, packed: the pass `group` is for, group, release() }
+  const shared = new Map(); // reflection -> Map(uniforms -> its entry)
+  function ownBindings(reflection, material) {
+    let byUniforms = shared.get(reflection);
+    if (!byUniforms) shared.set(reflection, (byUniforms = new Map()));
+    const { uniforms } = material;
+    let own = byUniforms.get(uniforms);
+    if (!own) {
+      own = { bindings: new Bindings(gpu, reflection, 1, material.name), packed: -1, group: null, users: 0 };
+      own.release = () => {
+        if (--own.users > 0) return;
+        own.bindings.dispose();
+        byUniforms.delete(uniforms);
+      };
+      byUniforms.set(uniforms, own);
+    }
+    own.users++;
+    return own;
   }
 
   function sameGroup(reflection, expected, group, name, chunk) {
@@ -122,8 +156,15 @@ export function createRenderer(gpu) {
     if (entries(reflection) !== entries(expected)) throw new Error(`material ${name}: bind group ${group} must be ${chunk}'s, included as it is`);
   }
 
-  function vertexBuffers(material, s, geometry) {
-    return s.reflection.entries[material.vertex].input.map((input) => {
+  // How a material's vertex shader reads `geometry`: its vertex buffers'
+  // layout, the attributes in their order, and a number per distinct layout
+  // for pipelines' keys. Worked out again only when the geometry's attributes change.
+  const layoutIds = new Map(); // a layout as JSON -> its number
+  function vertexLayout(material, s, geometry) {
+    const g = geometryState(geometry);
+    let layout = g.layouts.get(s.input);
+    if (layout?.version === geometry.version) return layout;
+    const buffers = s.input.map((input) => {
       const attribute = geometry.attributes[input.name];
       if (!attribute) throw new Error(`material ${material.name}: the geometry has no attribute "${input.name}"`);
       return {
@@ -132,6 +173,19 @@ export function createRenderer(gpu) {
         attributes: [{ shaderLocation: input.location, offset: 0, format: attribute.format }],
       };
     });
+    const json = JSON.stringify(buffers);
+    if (!layoutIds.has(json)) layoutIds.set(json, layoutIds.size);
+    layout = { version: geometry.version, buffers, names: s.input.map((input) => input.name), id: layoutIds.get(json) };
+    g.layouts.set(s.input, layout);
+    return layout;
+  }
+
+  // What a pipeline drawing into a target must know of it, once per target.
+  const signatures = new WeakMap();
+  function signatureOf(target) {
+    let sig = signatures.get(target);
+    if (sig === undefined) signatures.set(target, (sig = signature(target)));
+    return sig;
   }
 
   function pipelineDescriptor(material, s, target, buffers) {
@@ -157,20 +211,21 @@ export function createRenderer(gpu) {
   // The pipeline for drawing `geometry` with `material` into `target`: made now if compile() didn't.
   function pipeline(material, target, geometry) {
     const s = state(material);
-    const buffers = vertexBuffers(material, s, geometry);
-    const key = `${signature(target)}|${JSON.stringify(buffers)}`;
+    const layout = vertexLayout(material, s, geometry);
+    const key = `${signatureOf(target)}|${layout.id}`;
     let entry = s.pipelines.get(key);
     if (!entry?.pipeline) {
-      const made = device.createRenderPipeline(pipelineDescriptor(material, s, target, buffers));
+      const made = device.createRenderPipeline(pipelineDescriptor(material, s, target, layout.buffers));
       stats.pipelineCreated(made);
       entry = { pipeline: made };
       s.pipelines.set(key, entry);
     }
-    return { s, pipeline: entry.pipeline };
+    return { s, layout, pipeline: entry.pipeline };
   }
 
   // Makes the pipelines for drawing the meshes into `target` in the background.
-  // Resolves to the problems, as "material: message".
+  // Resolves to the problems, as "material: message", once they are made,
+  // with those an earlier call is still making.
   function compile(scene, _camera, target, { pass } = {}) {
     const meshes = Array.isArray(scene) ? scene : scene.meshes(pass, [], true); // hidden ones too: they may show later
     const work = [];
@@ -179,55 +234,63 @@ export function createRenderer(gpu) {
     for (const mesh of meshes) {
       const { material, geometry } = mesh;
       let s;
-      let buffers;
+      let layout;
       try {
         s = state(material);
-        buffers = vertexBuffers(material, s, geometry);
+        layout = vertexLayout(material, s, geometry);
       } catch (err) {
         problems.push(`${material.name}: ${err.message}`);
         continue;
       }
-      const key = `${signature(target)}|${JSON.stringify(buffers)}`;
       if (!seen.has(material)) {
         seen.add(material);
         work.push(s.shader.compiled.then((errors) => problems.push(...errors.map((e) => `${material.name}: ${e}`))));
       }
-      if (s.pipelines.has(key)) continue;
-      const entry = { pipeline: null };
-      s.pipelines.set(key, entry);
-      work.push(
-        device.createRenderPipelineAsync(pipelineDescriptor(material, s, target, buffers)).then(
-          (made) => {
-            if (s.pipelines.get(key) !== entry || entry.pipeline) return; // disposed, or made by a draw meanwhile
-            entry.pipeline = made;
-            stats.pipelineCreated(made);
+      const key = `${signatureOf(target)}|${layout.id}`;
+      let entry = s.pipelines.get(key);
+      if (!entry) {
+        const made = { pipeline: null };
+        // Resolves to the error's message, or null once made.
+        made.done = device.createRenderPipelineAsync(pipelineDescriptor(material, s, target, layout.buffers)).then(
+          (pipeline) => {
+            if (s.pipelines.get(key) !== made) return null; // disposed, or made by a draw meanwhile
+            made.pipeline = pipeline;
+            stats.pipelineCreated(pipeline);
+            return null;
           },
           (err) => {
-            s.pipelines.delete(key);
-            problems.push(`${material.name}: ${err.message}`);
+            if (s.pipelines.get(key) === made) s.pipelines.delete(key);
+            return err.message;
           },
-        ),
-      );
+        );
+        s.pipelines.set(key, made);
+        entry = made;
+      }
+      if (entry.done) work.push(entry.done.then((error) => error && problems.push(`${material.name}: ${error}`)));
     }
     return Promise.all(work).then(() => [...new Set(problems)]);
   }
 
   // ---------------------------------------------------------------- geometry
 
+  function geometryState(geometry) {
+    return (geometry.gpu ??= { index: null, layouts: new Map() });
+  }
+
+  // Uploads what changed of the geometry's attributes (each once, however many share it) and its index.
   function geometryBuffers(geometry) {
-    let g = geometry.gpu;
-    if (!g) g = geometry.gpu = { buffers: new Map(), index: null };
-    for (const [name, attribute] of Object.entries(geometry.attributes)) {
-      let buffer = g.buffers.get(name);
-      if (!buffer || buffer.size !== attribute.array.byteLength) {
-        buffer?.destroy();
-        buffer = device.createBuffer({ label: name, size: Math.max(4, attribute.array.byteLength), usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
-        g.buffers.set(name, buffer);
+    const g = geometryState(geometry);
+    for (const name in geometry.attributes) {
+      const attribute = geometry.attributes[name];
+      const size = Math.max(4, attribute.array.byteLength);
+      if (attribute.gpu?.size !== size) {
+        attribute.gpu?.destroy();
+        attribute.gpu = device.createBuffer({ label: name, size, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
         attribute.dirty = [0, attribute.array.length];
       }
       if (attribute.dirty) {
         const [from, to] = attribute.dirty;
-        queue.writeBuffer(buffer, from * 4, attribute.array, from, to - from);
+        queue.writeBuffer(attribute.gpu, from * 4, attribute.array, from, to - from);
         attribute.dirty = null;
       }
     }
@@ -274,12 +337,14 @@ export function createRenderer(gpu) {
   const frustum = new Frustum();
   const sphere = new Sphere();
   const z = new Vector4();
+  let passes = 0; // render() calls so far, so a material packs its uniforms once a pass
 
-  // resolve: whether a multisampled target resolves into its colour at the end
-  // of the pass (not while the pass reads that colour, as the after-opaque pass does).
-  function attachments(target, layer, level, resolve) {
+  // resolve: whether a multisampled target resolves at the end of the pass
+  // (not while the pass reads that colour, as the after-opaque pass does), into
+  // its colour or `into`.
+  function attachments(target, layer, level, resolve, into) {
     if (target.canvas) return { view: gpu.context.getCurrentTexture().createView() };
-    if (target.msaa) return { view: target.msaa.view, ...(resolve && { resolveTarget: target.color.attachment(layer, level).view }) };
+    if (target.msaa) return { view: target.msaa.view, ...(resolve && { resolveTarget: (into ?? target.color).attachment(layer, level).view }) };
     return target.color.attachment(layer, level);
   }
 
@@ -289,7 +354,8 @@ export function createRenderer(gpu) {
     camera.cameraPosition.value.setFromMatrixPosition(cam.matrixWorld);
   }
 
-  function render(scene, cam, target, { pass, clearColor = null, clearDepth = null, layer = 0, level = 0, resolve = true, viewport = null } = {}) {
+  function render(scene, cam, target, options = {}) {
+    const { pass, clearColor = null, clearDepth = null, layer = 0, level = 0, resolve = true, resolveInto = null, keepSamples = true, keepDepth = true, viewport = null } = options;
     if (cam) {
       if (!Array.isArray(scene)) scene.updateMatrixWorld();
       setCamera(cam);
@@ -301,26 +367,35 @@ export function createRenderer(gpu) {
     const entries = [];
     for (const mesh of meshes) {
       if (!mesh.visible) continue;
+      // A mesh that culls itself (instanced, or one following the camera) has
+      // no place of its own to cull or sort it by: its sphere is its geometry's.
+      let depth = 0;
       if (cam && mesh.frustumCulled !== false) {
         sphere.copy(boundingSphere(mesh.geometry)).applyMatrix4(mesh.matrixWorld);
         if (!frustum.intersectsSphere(sphere)) continue;
+        depth = z.copy(sphere.center).applyMatrix4(projScreen).z;
       }
-      let depth = 0;
-      if (cam) depth = z.copy(boundingSphere(mesh.geometry).center).applyMatrix4(mesh.matrixWorld).applyMatrix4(projScreen).z;
       entries.push({ mesh, z: depth });
     }
     const items = drawOrder(entries);
 
     // Uniforms first: everything written before this pass is submitted applies to it.
-    const frameGroup = frameBindings.update(globals);
+    const thisPass = passes++;
+    let frameGroup = null;
     const draws = [];
     let slots = 0;
     for (const { mesh } of items) {
       const { geometry, material } = mesh;
       const instances = geometry.instances;
       if (instances <= 0 || geometry.count <= 0) continue;
-      const { s, pipeline: made } = pipeline(material, target, geometry);
-      const draw = { mesh, s, pipeline: made, group: s.bindings.update(material.uniforms), buffers: geometryBuffers(geometry), instances, slot: -1 };
+      const { s, layout, pipeline: made } = pipeline(material, target, geometry);
+      const { own } = s;
+      if (own.packed !== thisPass) {
+        own.group = own.bindings.update(material.uniforms);
+        own.packed = thisPass;
+      }
+      if (s.groups.has(0)) frameGroup ??= frameBindings.update(globals);
+      const draw = { mesh, s, layout, pipeline: made, group: own.group, buffers: geometryBuffers(geometry), instances, slot: -1 };
       if (s.groups.has(2)) draw.slot = slots++;
       draws.push(draw);
     }
@@ -329,45 +404,60 @@ export function createRenderer(gpu) {
       for (const draw of draws) {
         if (draw.slot < 0) continue;
         const { mesh } = draw;
-        objectValues.modelMatrix.value = mesh.matrixWorld;
-        if (cam) objectValues.modelViewMatrix.value.multiplyMatrices(cam.matrixWorldInverse, mesh.matrixWorld);
-        objectValues.normalMatrix.value.getNormalMatrix(objectValues.modelViewMatrix.value);
-        for (const field of objectFields) writeField(objectView, 0, field, objectValues[field.name].value, objectReflection.structs);
-        queue.writeBuffer(objectBuffer, draw.slot * OBJECT_SLOT, objectData);
+        objectValues.modelMatrix = mesh.matrixWorld;
+        if (cam) objectValues.modelViewMatrix.multiplyMatrices(cam.matrixWorldInverse, mesh.matrixWorld);
+        objectValues.normalMatrix.getNormalMatrix(objectValues.modelViewMatrix);
+        for (const [name, write] of objectWriters) write(objectWords[draw.slot], objectValues[name]);
       }
+      queue.writeBuffer(objectBuffer, 0, objectData, 0, slots * OBJECT_SLOT);
     }
 
-    const color = { ...attachments(target, layer, level, resolve), loadOp: clearColor ? 'clear' : 'load', storeOp: 'store', ...(clearColor && { clearValue: clearColor }) };
+    const samples = Boolean(target.msaa);
+    const color = {
+      ...attachments(target, layer, level, resolve, resolveInto),
+      loadOp: clearColor ? 'clear' : 'load',
+      storeOp: samples && !keepSamples ? 'discard' : 'store',
+      ...(clearColor && { clearValue: clearColor }),
+    };
     const descriptor = { label: target.name, colorAttachments: [color] };
     if (target.depth) {
       descriptor.depthStencilAttachment = {
         view: target.depth.view,
         depthLoadOp: clearDepth !== null ? 'clear' : 'load',
-        depthStoreOp: 'store',
+        depthStoreOp: keepDepth ? 'store' : 'discard',
         ...(clearDepth !== null && { depthClearValue: clearDepth }),
       };
     }
     // A pass that neither draws nor clears still resolves a multisampled target.
-    if (!draws.length && !clearColor && clearDepth === null && !(target.msaa && resolve)) return;
+    if (!draws.length && !clearColor && clearDepth === null && !(samples && resolve)) return;
     const encoder = device.createCommandEncoder({ label: target.name });
     const encoded = encoder.beginRenderPass(descriptor);
     if (viewport) {
       encoded.setViewport(...viewport, 0, 1);
       encoded.setScissorRect(...viewport);
     }
+    // State persists from draw to draw: set only what changes.
+    let bound = null;
+    const groups = [null, null, null];
+    const vertexBuffers = [];
+    let indexBuffer = null;
     for (const draw of draws) {
       const { geometry } = draw.mesh;
-      encoded.setPipeline(draw.pipeline);
-      encoded.setBindGroup(0, draw.s.groups.has(0) ? frameGroup : gpu.emptyGroup);
-      encoded.setBindGroup(1, draw.group);
-      if (draw.slot >= 0) encoded.setBindGroup(2, objectGroup, [draw.slot * OBJECT_SLOT]);
-      else encoded.setBindGroup(2, gpu.emptyGroup);
-      draw.s.reflection.entries[draw.mesh.material.vertex].input.forEach((input, i) => encoded.setVertexBuffer(i, draw.buffers.buffers.get(input.name)));
+      if (draw.pipeline !== bound) encoded.setPipeline((bound = draw.pipeline));
+      const frame = draw.s.groups.has(0) ? frameGroup : gpu.emptyGroup;
+      if (frame !== groups[0]) encoded.setBindGroup(0, (groups[0] = frame));
+      if (draw.group !== groups[1]) encoded.setBindGroup(1, (groups[1] = draw.group));
+      if (draw.slot >= 0) encoded.setBindGroup(2, (groups[2] = objectGroup), [draw.slot * OBJECT_SLOT]);
+      else if (groups[2] !== gpu.emptyGroup) encoded.setBindGroup(2, (groups[2] = gpu.emptyGroup));
+      draw.layout.names.forEach((name, i) => {
+        const buffer = geometry.attributes[name].gpu;
+        if (vertexBuffers[i] !== buffer) encoded.setVertexBuffer(i, (vertexBuffers[i] = buffer));
+      });
       if (geometry.index) {
-        encoded.setIndexBuffer(draw.buffers.index, draw.buffers.indexFormat);
-        encoded.drawIndexed(geometry.count, draw.instances);
+        if (draw.buffers.index !== indexBuffer) encoded.setIndexBuffer((indexBuffer = draw.buffers.index), draw.buffers.indexFormat);
+        encoded.drawIndexed(geometry.count, draw.instances, 0, 0, geometry.firstInstance);
       } else {
-        encoded.draw(geometry.count, draw.instances);
+        encoded.draw(geometry.count, draw.instances, 0, geometry.firstInstance);
       }
     }
     encoded.end();

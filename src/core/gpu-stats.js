@@ -4,8 +4,9 @@
 // blits (passes that only resolve, and texture copies) and pipelines used.
 // Only render passes and their draw()/drawIndexed() count: compute passes,
 // render bundles and indirect draws need counting here before anything uses them.
-// Live: the memory of textures, render targets (textures drawn into, the
-// canvas) and buffers, and the objects alive by kind, for teardown checks.
+// Live: the memory of textures (content: uploaded, or drawn once with its mip
+// chain), render targets (what the game draws into as it runs, and the canvas)
+// and buffers, and the objects alive by kind, for teardown checks.
 // Byte counts are what the formats need, before any padding the driver adds.
 // GPU time, where the device has timestamp queries: how long the frame's passes
 // ran, each from its start to its end, a few frames late. The gaps between
@@ -103,8 +104,12 @@ export function instrument(device) {
 
   wrap(device, 'createTexture', (texture, desc) => {
     if (!tracking) return;
-    // Uploaded data is a texture, even when mipmaps are drawn into it; anything else drawn into is a render target.
-    const target = Boolean(desc.usage & RENDER_ATTACHMENT) && !(desc.usage & COPY_DST);
+    // Content is a texture: uploaded data, even when mipmaps are drawn into it, and
+    // anything with a mip chain, drawn once and sampled from afar (src/textures/
+    // makes the ground's tiles at boot). Anything else drawn into is a render
+    // target: the frame's, the sky's tables, the rocks' offsets. A target with a
+    // mip chain drawn every frame (a bloom pyramid) would need telling apart here.
+    const target = Boolean(desc.usage & RENDER_ATTACHMENT) && !(desc.usage & COPY_DST) && (desc.mipLevelCount ?? 1) === 1;
     textures.set(texture, { bytes: textureBytes(desc), target });
     onDestroy(texture, () => textures.delete(texture));
   });
@@ -205,8 +210,9 @@ export function instrument(device) {
 // then the stamps are resolved and read back, a few frames late, and the
 // passes' durations summed. A pool of query sets, so frames in flight don't
 // wait for each other. Frames without passes, or with more than MAX_TIMED_PASSES,
-// report nothing.
-const MAX_TIMED_PASSES = 32;
+// report nothing. Sets as large as WebGPU allows (4096 queries), two stamps per
+// pass: a frame that renders the sky's tables again runs 34 passes and more.
+const MAX_TIMED_PASSES = 2048;
 
 export function createGpuTimer(device, untracked) {
   if (!device.features?.has('timestamp-query')) return null;

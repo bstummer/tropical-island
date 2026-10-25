@@ -109,8 +109,12 @@ export const sky = {
   // height above the sea, which no lit surface on the island comes near.
   sunlightTop: 2,
   // The camera height the sky is drawn for moves in these steps (metres): the sky
-  // follows the camera's height, but no faster than this.
+  // follows the camera's height, but no faster than this. In the game it moves
+  // only once the camera is more than heightSlack from it (metres), so walking
+  // along a slope or bobbing across a step doesn't draw the tables every time;
+  // a capture draws them for the step nearest the camera, as a fresh load does.
   heightStep: 1,
+  heightSlack: 0.75,
   // Exposure follows the light: key / E^compensation, where E is the illuminance
   // (sky/light.js) in units of the sun above the atmosphere. 1 would make every
   // hour as bright as noon, 0 leave sunset dark. The user's pick (PLAN.md,
@@ -593,8 +597,9 @@ export const capture = {
 //   passes                 render passes that draw or clear, per frame
 //   pipelines              render pipelines alive
 //   overdraw               fragments shaded per pixel of the main view, on average
-//   textureMB              textures, mipmaps included
-//   renderTargetMB         render targets (textures drawn into) and the canvas
+//   textureMB              textures, mipmaps included: uploaded, or made once with a mip chain (src/textures/)
+//   renderTargetMB         render targets (what the game draws into as it runs: the frame, the sky's tables,
+//                          the rocks' offsets) and the canvas
 export const budget = {
   high: { drawCalls: 1500, triangles: 3e6, passes: 16, pipelines: 64, overdraw: 5, textureMB: 512, renderTargetMB: 256 },
   medium: { drawCalls: 1000, triangles: 1.5e6, passes: 12, pipelines: 64, overdraw: 4, textureMB: 384, renderTargetMB: 160 },

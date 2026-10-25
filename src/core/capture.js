@@ -24,7 +24,8 @@ import { measureOverdraw } from './overdraw.js';
 import { missingSceneOutput, misplacedBlending } from '../post/scene-check.js';
 import { luminance, shIrradiance } from '../sky/light.js';
 
-// `app` is main.js's handle on the systems: { systems, setQuality(name), teardown() }.
+// `app` is main.js's handle on the systems: { systems, update(), setQuality(name), teardown() };
+// update() runs the systems' updates without drawing a frame.
 export async function runCapture(ctx, display, app, frame) {
   const { scene, camera, config, canvas } = ctx;
   const start = ctx.clock.elapsed;
@@ -112,17 +113,14 @@ function checkShaders({ scene, frame }, compiled) {
   if (problems.length) throw new Error(problems.join('; '));
 }
 
-// Renders `count` frames, and again whenever a system's update started work
-// that finishes later (the sky's light after a time change: `settled()`
-// returns its promise until it landed), so the last frame is the one a fresh
-// load at the same time and t gives.
+// Renders `count` frames once the work the systems' updates start has landed
+// (the sky's light after a time change: `settled()` returns its promise until
+// it did), so the frames are the ones a fresh load at the same time and t
+// gives, and none is drawn with the light it replaces.
 async function renderSettled(app, frame, count) {
   const pending = () => app.systems.map((s) => s.settled?.()).filter(Boolean);
+  for (app.update(); pending().length; app.update()) await Promise.all(pending());
   for (let i = 0; i < count; i++) frame();
-  for (let work = pending(); work.length; work = pending()) {
-    await Promise.all(work);
-    for (let i = 0; i < count; i++) frame();
-  }
 }
 
 // RGBA bytes as a PNG data URL, through a 2D canvas: lossless, the same bytes every time.

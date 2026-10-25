@@ -46,13 +46,17 @@ fn fragmentMain(in: Fullscreen) -> @location(0) vec4f {
   factor *= vec3f(1.0 + 0.02 * s.y, 1.0, 1.0 - 0.03 * s.y);
   height += 0.08 * s.x;
 
-  // Grit: in four cells of ten, a grain about a millimetre across.
+  // Grit: in four cells of ten, a grain about a millimetre across. Its centre
+  // lies 0.15 of a cell or more inside its cell and it reaches less than 0.3
+  // of one, so only its own cell and the nearer neighbour on each axis can
+  // reach p: 2 x 2 cells, the lower first, in the order a 3 x 3 search takes them.
   let n2 = cellsAcross(3.2);
   var p = uv * n2;
   var cell = floor(p);
-  for (var j = -1; j <= 1; j++) {
-    for (var i = -1; i <= 1; i++) {
-      let c = cell + vec2f(f32(i), f32(j));
+  var lower = cell + select(vec2f(0.0), vec2f(-1.0), p - cell < vec2f(0.5));
+  for (var j = 0; j <= 1; j++) {
+    for (var i = 0; i <= 1; i++) {
+      let c = lower + vec2f(f32(i), f32(j));
       let h = tileHash(c, n2, sandGrain.uSeed + 3.1) * 0.5 + 0.5;
       if (h.x > 0.42) {
         continue;
@@ -69,13 +73,16 @@ fn fragmentMain(in: Fullscreen) -> @location(0) vec4f {
     }
   }
 
-  // Shell fragments: in one cell of eight, an angular flake of 2 to 5 mm, with a darker rim.
+  // Shell fragments: in one cell of eight, an angular flake of 2 to 5 mm, with
+  // a darker rim. Its centre lies 0.2 of a cell or more inside its cell and it
+  // reaches 3 mm, a quarter of one at most: 2 x 2 cells, as the grit's.
   let n3 = cellsAcross(14.0);
   p = uv * n3;
   cell = floor(p);
-  for (var j = -1; j <= 1; j++) {
-    for (var i = -1; i <= 1; i++) {
-      let c = cell + vec2f(f32(i), f32(j));
+  lower = cell + select(vec2f(0.0), vec2f(-1.0), p - cell < vec2f(0.5));
+  for (var j = 0; j <= 1; j++) {
+    for (var i = 0; i <= 1; i++) {
+      let c = lower + vec2f(f32(i), f32(j));
       let h = tileHash(c, n3, sandGrain.uSeed + 11.9) * 0.5 + 0.5;
       if (h.x > 0.12) {
         continue;

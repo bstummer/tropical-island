@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { reflect, structLayout, structSize, writeField } from '../src/gpu/reflect.js';
+import { fieldWriter, reflect, structLayout, structSize, words } from '../src/gpu/reflect.js';
 
 const SOURCE = `
 // struct Commented { gone: f32 }
@@ -74,39 +74,42 @@ test('uniform layout follows WGSL alignment rules', () => {
   assert.equal(structSize('Light', structs), 384);
 });
 
-test('writeField packs numbers, vectors, matrices and arrays', () => {
+// Writes value as field into the buffer behind view, as Bindings packs a uniform.
+const writeField = (view, field, value, structs) => fieldWriter(field, 0, structs)(words(view.buffer), value);
+
+test('fieldWriter packs numbers, vectors, matrices and arrays', () => {
   const { structs } = reflect(SOURCE);
   const fields = Object.fromEntries(structLayout('Light', structs).map((f) => [f.name, f]));
   const view = new DataView(new ArrayBuffer(structSize('Light', structs)));
-  writeField(view, 0, fields.uSunDirection, { x: 1, y: 2, z: 3 });
-  writeField(view, 0, fields.uExposure, 0.5);
-  writeField(view, 0, fields.uSkySH, Array.from({ length: 9 }, (_, k) => [k, k + 0.5, k + 0.25]));
-  writeField(view, 0, fields.uWeights, [[7, 0, 0, 0], [8, 0, 0, 0]]);
-  writeField(view, 0, fields.uNormal, { elements: [1, 2, 3, 4, 5, 6, 7, 8, 9] });
-  writeField(view, 0, fields.uFlag, true);
+  writeField(view, fields.uSunDirection, { x: 1, y: 2, z: 3 });
+  writeField(view, fields.uExposure, 0.5);
+  writeField(view, fields.uSkySH, Array.from({ length: 9 }, (_, k) => [k, k + 0.5, k + 0.25]));
+  writeField(view, fields.uWeights, [[7, 0, 0, 0], [8, 0, 0, 0]]);
+  writeField(view, fields.uNormal, { elements: [1, 2, 3, 4, 5, 6, 7, 8, 9] });
+  writeField(view, fields.uFlag, true);
   const f = (at) => view.getFloat32(at, true);
   assert.deepEqual([f(0), f(4), f(8), f(12)], [1, 2, 3, 0.5]);
   assert.deepEqual([f(16 + 16 * 8), f(20 + 16 * 8), f(24 + 16 * 8)], [8, 8.5, 8.25]);
   assert.deepEqual([f(224), f(240)], [7, 8]);
   assert.deepEqual([f(320), f(324), f(328), f(336), f(352), f(360)], [1, 2, 3, 4, 7, 9]);
   assert.equal(view.getUint32(376, true), 1);
-  assert.throws(() => writeField(view, 0, fields.uSkySH, [[1, 2, 3]]), /has 1 elements, the shader 9/);
+  assert.throws(() => writeField(view, fields.uSkySH, [[1, 2, 3]]), /has 1 elements, the shader 9/);
 });
 
-test('writeField refuses values that would land half-written or wrapped', () => {
+test('fieldWriter refuses values that would land half-written or wrapped', () => {
   const { structs } = reflect(SOURCE);
   const fields = Object.fromEntries(structLayout('Light', structs).map((f) => [f.name, f]));
   const view = new DataView(new ArrayBuffer(structSize('Light', structs)));
   // A vector with more or fewer components than the field, also in an array.
-  assert.throws(() => writeField(view, 0, fields.uSunDirection, { x: 1, y: 2 }), /"uSunDirection" \(vec3f\) got 2 components/);
-  assert.throws(() => writeField(view, 0, fields.uSunDirection, { x: 1, y: 2, z: 3, w: 4 }), /got 4 components/);
-  assert.throws(() => writeField(view, 0, fields.uWeights, [{ x: 1, y: 2 }, [1, 2, 3, 4]]), /"uWeights\[0\]" \(vec4f\) got 2/);
+  assert.throws(() => writeField(view, fields.uSunDirection, { x: 1, y: 2 }), /"uSunDirection" \(vec3f\) got 2 components/);
+  assert.throws(() => writeField(view, fields.uSunDirection, { x: 1, y: 2, z: 3, w: 4 }), /got 4 components/);
+  assert.throws(() => writeField(view, fields.uWeights, [{ x: 1, y: 2 }, [1, 2, 3, 4]]), /"uWeights\[0\]" \(vec4f\) got 2/);
   // A matrix of the wrong size: a Matrix4's elements into a mat3x3f.
-  assert.throws(() => writeField(view, 0, fields.uNormal, { elements: new Array(16).fill(0) }), /needs 9 elements, got 16/);
+  assert.throws(() => writeField(view, fields.uNormal, { elements: new Array(16).fill(0) }), /needs 9 elements, got 16/);
   // Whole numbers in range only, and booleans only as u32.
-  assert.throws(() => writeField(view, 0, fields.uFlag, -1), /-1 is no u32/);
-  assert.throws(() => writeField(view, 0, fields.uFlag, 1.5), /1.5 is no u32/);
-  assert.throws(() => writeField(view, 0, fields.uExposure, true), /expected a number for f32/);
+  assert.throws(() => writeField(view, fields.uFlag, -1), /-1 is no u32/);
+  assert.throws(() => writeField(view, fields.uFlag, 1.5), /1.5 is no u32/);
+  assert.throws(() => writeField(view, fields.uExposure, true), /expected a number for f32/);
 });
 
 test('layouts that differ between browsers are refused', () => {

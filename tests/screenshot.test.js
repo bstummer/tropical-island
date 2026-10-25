@@ -5,6 +5,8 @@ import { shBasis, shIrradiance } from '../src/sky/light.js';
 import { coefficients, directions, texelCount, texels } from '../src/fixtures/maths-cases.js';
 import { answers as hazeAnswers } from '../src/fixtures/haze-cases.js';
 import { sunPath } from '../src/sky/sun.js';
+import { views } from '../src/views.js';
+import { config } from '../src/config.js';
 import {
   benchmarkProblems,
   blendMismatch,
@@ -381,9 +383,16 @@ test('patches problems: GPU patches on their twin pass; off it, a check that mis
 test('time check: four views in a row visit every named time, never their own', () => {
   const names = Object.keys(sunPath.times);
   for (const hours of [sunPath.times.midday, sunPath.times.sunset, 9.5, 14]) {
-    const targets = [0, 1, 2, 3].map((i) => timeChangeTarget(i, hours));
+    const targets = views.slice(0, 4).map((view) => timeChangeTarget(view.name, hours));
     for (const name of targets) assert.ok(Math.abs(sunPath.times[name] - hours) > 0.5, `${name} from ${hours} h`);
     const own = names.filter((n) => Math.abs(sunPath.times[n] - hours) <= 0.5);
     assert.deepEqual(new Set(targets), new Set(names.filter((n) => !own.includes(n))), `from ${hours} h`);
   }
+});
+
+test('time check: a full run of the views, each at its own time, covers every named time', () => {
+  const own = (view) => sunPath.toHours(view.timeOfDay ?? config.defaults.timeOfDay);
+  const targets = views.map((view) => timeChangeTarget(view.name, own(view)));
+  views.forEach((view, i) => assert.ok(Math.abs(sunPath.times[targets[i]] - own(view)) > 0.5, `${view.name} to ${targets[i]}`));
+  assert.deepEqual(new Set(targets), new Set(Object.keys(sunPath.times)));
 });

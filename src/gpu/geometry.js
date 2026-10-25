@@ -3,6 +3,11 @@
 // instance, and an optional index. The renderer creates the GPU buffers on
 // first use and uploads what changed since (update()).
 //
+// Geometries may share an Attribute, and with it its buffer: a system that
+// draws its instances with several meshes (a shader variant or a shape each)
+// keeps them all in one set of attributes, each mesh drawing a range of them
+// (firstInstance, instanceCount), and uploads them at once.
+//
 // plane(), box() and sphere() build the shapes three.js's PlaneGeometry,
 // BoxGeometry and SphereGeometry do, vertex for vertex (three.js, MIT).
 
@@ -10,23 +15,57 @@ import { Matrix3, Vector3 } from '../maths/index.js';
 
 const FORMATS = { 1: 'float32', 2: 'float32x2', 3: 'float32x3', 4: 'float32x4' };
 
+// array: a Float32Array (or plain array); itemSize: floats per vertex or instance.
+export class Attribute {
+  constructor(array, itemSize, { instance = false } = {}) {
+    this.array = array instanceof Float32Array ? array : new Float32Array(array);
+    this.itemSize = itemSize;
+    this.format = FORMATS[itemSize];
+    this.instance = instance;
+    this.dirty = [0, this.array.length]; // the floats changed since the last upload
+    this.users = 0; // geometries that hold it
+    this.gpu = null; // the renderer's buffer
+  }
+
+  // Marks `count` items (vertices or instances) from `start` for upload.
+  update(start = 0, count = Infinity) {
+    const from = start * this.itemSize;
+    const to = Math.min(this.array.length, count === Infinity ? Infinity : from + count * this.itemSize);
+    if (to <= from) return;
+    this.dirty = this.dirty ? [Math.min(this.dirty[0], from), Math.max(this.dirty[1], to)] : [from, to];
+  }
+}
+
+// A geometry lets go of an attribute: the last one frees its buffer.
+function release(attribute) {
+  if (attribute && --attribute.users === 0) {
+    attribute.gpu?.destroy();
+    attribute.gpu = null;
+  }
+}
+
 export class Geometry {
   constructor() {
     this.attributes = {};
     this.index = null;
-    // Instances to draw; Infinity: as many as the per-instance attributes hold, or 1.
+    // Instances to draw, from firstInstance; Infinity: as many as the per-instance attributes hold, or 1.
     this.instanceCount = Infinity;
+    this.firstInstance = 0;
     this.version = 0; // counts layout changes (attributes added), which pipelines depend on
     this.gpu = null; // the renderer's
   }
 
-  // array: a Float32Array (or plain array); itemSize: floats per vertex or instance.
+  // array: a Float32Array (or plain array) and itemSize, floats per vertex or
+  // instance; or an Attribute to share, made by the caller or another geometry.
   setAttribute(name, array, itemSize, { instance = false } = {}) {
-    const data = array instanceof Float32Array ? array : new Float32Array(array);
-    this.attributes[name] = { array: data, itemSize, format: FORMATS[itemSize], instance, dirty: [0, data.length] };
+    const attribute = array instanceof Attribute ? array : new Attribute(array, itemSize, { instance });
+    release(this.attributes[name]);
+    attribute.users++;
+    this.attributes[name] = attribute;
     this.version++;
     return this;
   }
+
 
   // Indices as three.js stores them: 16-bit unless one needs 32.
   setIndex(indices) {
@@ -55,11 +94,7 @@ export class Geometry {
 
   // Marks `count` items (vertices or instances) from `start` of an attribute for upload.
   update(name, start = 0, count = Infinity) {
-    const attribute = this.attributes[name];
-    const from = start * attribute.itemSize;
-    const to = Math.min(attribute.array.length, count === Infinity ? Infinity : from + count * attribute.itemSize);
-    if (to <= from) return;
-    attribute.dirty = attribute.dirty ? [Math.min(attribute.dirty[0], from), Math.max(attribute.dirty[1], to)] : [from, to];
+    this.attributes[name].update(start, count);
   }
 
   // Vertices (or indices) one instance draws.
@@ -74,11 +109,12 @@ export class Geometry {
     if (this.instanceCount !== Infinity) return this.instanceCount;
     let n = Infinity;
     for (const a of Object.values(this.attributes)) if (a.instance) n = Math.min(n, a.array.length / a.itemSize);
-    return n === Infinity ? 1 : n;
+    return n === Infinity ? 1 : n - this.firstInstance;
   }
 
   dispose() {
-    for (const buffer of this.gpu?.buffers.values() ?? []) buffer.destroy();
+    for (const attribute of Object.values(this.attributes)) release(attribute);
+    this.attributes = {};
     this.gpu?.index?.destroy();
     this.gpu = null;
   }

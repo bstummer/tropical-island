@@ -10,6 +10,8 @@ const GPU_ERROR_NOTE =
   'This game needs WebGPU: a recent Chrome or Edge, Firefox 141 or later on Windows, or Safari 26. ' +
   'If your browser has it, it may be turned off or your graphics driver blocked.';
 
+const DEFAULT_SAMPLER = {}; // linear, no mipmaps, clamped (sampler())
+
 // Thrown when the browser has no WebGPU: main.js shows it as it is.
 export class NeedsWebGPU extends Error {
   constructor(detail) {
@@ -53,6 +55,26 @@ export async function createDevice(canvas, { capture, onError, instrument }) {
   const layouts = new Map();
   const modules = new Map();
   const placeholders = new Map();
+  const samplersOf = new WeakMap(); // descriptor object -> sampler
+  function samplerFor({ mag = 'linear', min = 'linear', mipmap = 'nearest', wrap = 'clamp-to-edge', anisotropy = 1 }) {
+    const key = `${mag}/${min}/${mipmap}/${wrap}/${anisotropy}`;
+    if (!samplers.has(key)) {
+      samplers.set(
+        key,
+        device.createSampler({
+          label: key,
+          magFilter: mag,
+          minFilter: min,
+          mipmapFilter: mipmap,
+          addressModeU: wrap,
+          addressModeV: wrap,
+          addressModeW: wrap,
+          maxAnisotropy: anisotropy,
+        }),
+      );
+    }
+    return samplers.get(key);
+  }
   const emptyLayout = device.createBindGroupLayout({ label: 'empty', entries: [] });
   const emptyGroup = device.createBindGroup({ label: 'empty', layout: emptyLayout, entries: [] });
 
@@ -76,24 +98,11 @@ export async function createDevice(canvas, { capture, onError, instrument }) {
       return /swiftshader|llvmpipe|software|basic render|warp/i.test(gpu.describe()) || Boolean(adapter.info?.isFallbackAdapter);
     },
     // A sampler per descriptor: { mag, min, mipmap: 'linear'|'nearest', wrap: 'clamp-to-edge'|'repeat'|'mirror-repeat', anisotropy }.
-    sampler({ mag = 'linear', min = 'linear', mipmap = 'nearest', wrap = 'clamp-to-edge', anisotropy = 1 } = {}) {
-      const key = `${mag}/${min}/${mipmap}/${wrap}/${anisotropy}`;
-      if (!samplers.has(key)) {
-        samplers.set(
-          key,
-          device.createSampler({
-            label: key,
-            magFilter: mag,
-            minFilter: min,
-            mipmapFilter: mipmap,
-            addressModeU: wrap,
-            addressModeV: wrap,
-            addressModeW: wrap,
-            maxAnisotropy: anisotropy,
-          }),
-        );
-      }
-      return samplers.get(key);
+    // A descriptor object asked for again (a texture's, every frame) is found by its identity.
+    sampler(descriptor = DEFAULT_SAMPLER) {
+      let sampler = samplersOf.get(descriptor);
+      if (!sampler) samplersOf.set(descriptor, (sampler = samplerFor(descriptor)));
+      return sampler;
     },
     // A bind group layout per list of entries, so equal declarations share one.
     layout(entries) {
@@ -131,18 +140,20 @@ export async function createDevice(canvas, { capture, onError, instrument }) {
       return modules.size;
     },
     // A 1 x 1 texture of zeros standing in for a binding with no texture yet, by
-    // its WGSL type. (WebGL's unset texture read alpha 1: shaders guard such reads.)
+    // its WGSL type, in a format of the sample type the binding's layout says
+    // (bindings.js layoutEntry). (WebGL's unset texture read alpha 1: shaders guard such reads.)
     placeholder(type) {
       if (!placeholders.has(type)) {
         const depth = type.startsWith('texture_depth');
         const multisampled = type.includes('multisampled');
         const dimension = type.includes('3d') ? '3d' : '2d';
+        const integer = /<i32>/.test(type) ? 'rgba8sint' : /<u32>/.test(type) ? 'rgba8uint' : null;
         const texture = stats.untracked(() =>
           device.createTexture({
             label: `placeholder ${type}`,
             size: [1, 1, 1],
             dimension,
-            format: depth ? 'depth32float' : multisampled ? 'rgba16float' : 'rgba8unorm',
+            format: depth ? 'depth32float' : (integer ?? (multisampled ? 'rgba16float' : 'rgba8unorm')),
             sampleCount: multisampled ? 4 : 1,
             usage: GPUTextureUsage.TEXTURE_BINDING | (multisampled || depth ? GPUTextureUsage.RENDER_ATTACHMENT : GPUTextureUsage.COPY_DST),
           }),

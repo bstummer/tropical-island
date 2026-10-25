@@ -552,13 +552,19 @@ function islandBounds(lobes, { cove, seabed, coast }, fromCove) {
 }
 
 // An ellipse's inside, as an approximate signed distance (positive inside).
+// Square roots, not Math.hypot, which takes several times as long: the
+// heightmap's build calls this a few million times.
 function ellipse(a, o, { a: ca, o: co, ra, ro, cos, sin }) {
   const da = a - ca;
   const dz = o - co;
   const x = da * cos + dz * sin;
   const y = -da * sin + dz * cos;
-  const k0 = Math.hypot(x / ra, y / ro);
-  const k1 = Math.hypot(x / (ra * ra), y / (ro * ro));
+  const u0 = x / ra;
+  const v0 = y / ro;
+  const u1 = x / (ra * ra);
+  const v1 = y / (ro * ro);
+  const k0 = Math.sqrt(u0 * u0 + v0 * v0);
+  const k1 = Math.sqrt(u1 * u1 + v1 * v1);
   if (k1 < 1e-9) return Math.min(ra, ro);
   return -(k0 * (k0 - 1)) / k1;
 }
