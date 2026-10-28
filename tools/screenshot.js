@@ -15,7 +15,7 @@
 // images in <label>/tool-check/), errors that leave nothing wrong on screen must
 // fail a capture, captures must be reproducible (also after the time of day
 // changed in the page), and the game runs for a few frames in player mode (no
-// ?capture) and as the benchmark.
+// ?capture; also to show an error's cause, and in a window 1 px high) and as the benchmark.
 // Compare writes screenshots/compare/<A>_vs_<B>.png: A | B | diff for every view.
 // Exits non-zero on console errors, page errors, shader and WebGPU errors, a lost
 // device, network requests, capture errors, timeouts or a failed check, in
@@ -29,14 +29,16 @@
 import { chromium } from 'playwright';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join, relative } from 'node:path';
+import { basename, dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { findView, views as allViews } from '../src/views.js';
 import { config } from '../src/config.js';
+import { parseParams } from '../src/core/params.js';
 import { sunPath } from '../src/sky/sun.js';
 import { measureCost, measureShimmer, measureView, renderFrame, stopAnalysis } from './measure.js';
 import { decodeDataUrl, decodePng, encodePng } from './png.js';
 import { bandedShare, bandingView, brightestNear, meanColor, overdrawImage } from './image.js';
+import { labelName } from './labels.js';
 import { blendLayout, cardSpan } from '../src/fixtures/blend-layout.js';
 import { coefficients, directions, texels } from '../src/fixtures/maths-cases.js';
 import { answers as hazeAnswers } from '../src/fixtures/haze-cases.js';
@@ -56,12 +58,17 @@ const STALL_MS = 60_000;
 // And what they wait for must happen within this, frames or not: a game that
 // never starts drawing (its loop waits for the sky's light) fails, not hangs.
 const DONE_MS = 600_000;
-// Player mode and the benchmark only have to work: small, as SwiftShader draws every pixel on the CPU.
-// meanLevels: how far the canvas's mean colour may be from the capture's of the same view.
-const PLAYER_MODE = { frames: 30, viewport: { width: 320, height: 180 }, meanLevels: 4 };
+// Player mode and the benchmark only have to work: small, as SwiftShader draws every pixel on the CPU
+// (player mode as wide, at the capture's aspect: playerViewport).
+// meanLevels: how far the canvas's mean colour may be from the capture's of the same view;
+// blockLevels: how far the mean colour of each of its blocks × blocks blocks may be from the
+// capture's. Its fewer pixels draw less detail: up to 9 levels off in a block (the rocks view),
+// while upside down a view is 80 and more off, and shifted by an eighth of its width 20 and more.
+const PLAYER_MODE = { frames: 30, viewport: { width: 320, height: 180 }, meanLevels: 4, blocks: 4, blockLevels: 16 };
 // Per view: enough to prove the benchmark works, which needs no settled frame rate.
 const BENCH = { seconds: 0.25, warmupFrames: 1 };
 const CHECKS_AT_ONCE = 2; // see runChecks()
+const DEFAULT_SIZE = '1600x900';
 const SHEET_ORIGIN = 'http://contact-sheet.local';
 const PROBE_URL = 'http://localhost/'; // see probeWebGPU()
 
@@ -81,33 +88,15 @@ const SOFTWARE_GPU = /swiftshader|llvmpipe|softpipe|software|basic render|warp/i
 
 const OPTIONS = new Set(['views', 'label', 'size', 't', 'time', 'seed', 'quality', 'tonemap', 'exposure', 'fixture', 'gl']);
 const FLAGS = new Set(['checks']);
+// The tools' own folders in screenshots/, which no capture's label may name.
+const RESERVED_LABELS = { compare: 'compare sheets go there', map: 'tools/map.js writes its maps there' };
 
 // ---------------------------------------------------------------- capture
 
 async function capture(args) {
+  const { views, width, height, label, query } = planCapture(args);
   if (!existsSync(BUILT_HTML)) throw new Error('dist/index.html not found. Run `npm run build` first.');
-
-  const views = selectViews(args.views);
-  const [width, height] = parseSize(args.size ?? '1600x900');
-  const label = sanitize(args.label ?? defaultLabel());
-  if (label === 'compare') throw new Error('the label "compare" is taken: compare sheets go there');
   const outDir = join(SHOTS, label);
-  // A reused label replaces the old capture, so no file of it lingers into a compare.
-  rmSync(outDir, { recursive: true, force: true });
-  mkdirSync(outDir, { recursive: true });
-
-  const query = { capture: '1' };
-  for (const key of ['t', 'time', 'seed', 'quality', 'tonemap', 'exposure', 'fixture']) {
-    if (args[key] !== undefined) query[key] = args[key];
-  }
-  if (query.t !== undefined && !Number.isFinite(Number(query.t))) throw new Error('--t must be a number');
-  if (query.time !== undefined) {
-    try {
-      sunPath.toHours(/^[a-z-]+$/.test(query.time) ? query.time : Number(query.time));
-    } catch {
-      throw new Error(`--time must be a time of day in daylight, ${sunPath.describe()}`);
-    }
-  }
 
   const { browser, kind, gl } = await launch(args.gl ?? 'auto');
   console.log(`screenshot: WebGPU adapter = ${kind} (${gl}), Chromium ${browser.version()}`);
@@ -123,6 +112,10 @@ async function capture(args) {
 
   let toolChecks = [];
   try {
+    // A reused label replaces the old capture, so no file of it lingers into a
+    // compare. Only now: a capture that can't start keeps the old one.
+    removeCapture(outDir);
+    mkdirSync(outDir, { recursive: true });
     // Each view is reported once its analysis is done, while the next one renders.
     let reporting = Promise.resolve();
     for (const [i, view] of views.entries()) {
@@ -133,7 +126,7 @@ async function capture(args) {
         const result = await finishView(captured, query);
         if (existsSync(join(outDir, result.file))) outputs.push(join(outDir, result.file));
         if (result.files) outputs.push(join(outDir, view.name, '*.png'));
-        report(view.name, result.timing.pageMs, summarize(result), result.problems, result.consoleWarnings, result.warnings);
+        report(view.name, result.timing.pageMs, summarize(result, outDir), result.problems, result.consoleWarnings, result.warnings);
         delete result.consoleWarnings;
         results.push(result);
       });
@@ -149,7 +142,7 @@ async function capture(args) {
         delete check.consoleWarnings;
       }
       outputs.push(join(outDir, 'tool-check', '*.png'));
-      const canvas = player.canvasOff === null ? '' : `, its canvas ${player.canvasOff.toFixed(1)} levels off the capture's mean colour`;
+      const canvas = player.canvasOff === null ? '' : `, its canvas ${player.canvasOff.mean.toFixed(1)} levels off the capture's mean colour, ${player.canvasOff.block.toFixed(1)} in the worst block`;
       report('player mode', player.ms, `${views[0].name}, real-time loop without ?capture${canvas}`, player.problems, player.consoleWarnings);
       report('benchmark', bench.ms, bench.detail, bench.problems, bench.consoleWarnings);
     }
@@ -174,7 +167,8 @@ async function capture(args) {
     outputs.push(join(outDir, 'info.json'));
 
     const sheet = join(outDir, 'contact-sheet.png');
-    await renderPage(browser, contactSheetHtml(meta), sheetFiles(outDir, results), sheet);
+    const stills = sheetFiles(outDir, results);
+    await renderPage(browser, contactSheetHtml(meta, stills), stills, sheet);
     outputs.push(sheet);
   } finally {
     await stopAnalysis();
@@ -202,16 +196,18 @@ async function capture(args) {
 // loading the view fresh at the last motion frame's time, both reproduce the
 // pixels exactly. With `timeCheck`, changing the time of day in the page
 // (timeChangeTarget) must render as loading the view at that time does.
+// A view not done config.capture.timeouts.viewSeconds after its page got ready
+// fails: its pages close (watchdog), so a frame that never finishes can't hang the tool.
 async function captureView(context, fileUrl, query, view, outDir, { contractChecks, timeCheck, gpuTime }) {
   const started = Date.now();
   const { page, info, problems, consoleWarnings } = await openCapture(context, fileUrl, { ...query, view: view.name });
   const result = { view: view.name, file: `${view.name}.png`, info, timing: { loadMs: Date.now() - started }, problems, warnings: [], consoleWarnings };
   const still = join(outDir, result.file);
   let analysis = null;
+  const limit = pageLimit(page.viewportSize());
+  const dog = info && watchdog(context, page, limit);
   try {
-    if (!info) {
-      await shoot(page, still); // saved even when the capture failed: the picture often shows why
-    } else {
+    if (info) {
       const first = await page.evaluate(() => window.__CAPTURE__.image());
       await saveStill(page, info, first, still);
       // Rendering the start frame again must reproduce it exactly; otherwise extra
@@ -241,11 +237,62 @@ async function captureView(context, fileUrl, query, view, outDir, { contractChec
       }
     }
   } catch (err) {
-    problems.push(classify(err.message.split('\n')[0], 'capture error'));
+    if (!dog?.fired) problems.push(classify(err.message.split('\n')[0], 'capture error'));
   }
+  dog?.stop();
+  if (dog?.fired) problems.push({ kind: 'timeout', text: `not done ${limit} s after the page was ready: a frame never finished` });
+  // Saved even when the capture failed: the picture often shows why. A closed page has none.
+  if (!existsSync(still)) await shoot(page, still).catch(() => {});
   await page.close();
   result.timing.pageMs = Date.now() - started;
   return { result, analysis };
+}
+
+// How long a page may take once it is ready (watchdog): viewSeconds for a frame
+// of the default size, longer in proportion for one of more pixels, which
+// SwiftShader draws one by one.
+export function pageLimit({ width, height }) {
+  const [w, h] = parseSize(DEFAULT_SIZE);
+  return config.capture.timeouts.viewSeconds * Math.max(1, (width * height) / (w * h));
+}
+
+// Closes `page`, and every page `context` opens until stop(), once `seconds`
+// have passed: whatever waits on them fails, rather than waiting forever.
+// `fired` says whether it did.
+export function watchdog(context, page, seconds) {
+  const pages = new Set([page]);
+  const opened = (p) => pages.add(p);
+  context.on('page', opened);
+  const dog = { fired: false };
+  const timer = setTimeout(() => {
+    dog.fired = true;
+    for (const p of pages) p.close().catch(() => {});
+  }, seconds * 1000);
+  dog.stop = () => {
+    clearTimeout(timer);
+    context.off('page', opened);
+  };
+  return dog;
+}
+
+// A stand-in for `context` that opens pages as it does, and tells its 'page'
+// listeners of its own alone: a watchdog on it closes the pages of one check,
+// not those of the check running beside it (runChecks).
+export function ownPages(context) {
+  const listeners = new Set();
+  return {
+    async newPage() {
+      const page = await context.newPage();
+      for (const fn of listeners) fn(page);
+      return page;
+    },
+    on(event, fn) {
+      if (event === 'page') listeners.add(fn);
+    },
+    off(event, fn) {
+      listeners.delete(fn);
+    },
+  };
 }
 
 // The still is the canvas's own PNG when the canvas fills the page pixel for
@@ -284,10 +331,10 @@ function limitsFor(query) {
   };
 }
 
-// The console line for a view: its measurements, or where the still went.
-function summarize(result) {
+// The console line for a view: its measurements, or where its still in `dir` went.
+export function summarize(result, dir) {
   const m = result.measurements;
-  if (!m) return rel(join(SHOTS, result.file));
+  if (!m) return existsSync(join(dir, result.file)) ? rel(join(dir, result.file)) : 'no still saved';
   const [, tris] = METRIC_LABELS.triangles;
   const count = (n, word, plural = `${word}s`) => `${n} ${n === 1 ? word : plural}`;
   const percent = (p, digits) => (Number.isFinite(p) ? `${p.toFixed(digits)}%` : '?');
@@ -304,6 +351,8 @@ function summarize(result) {
 async function openCapture(context, fileUrl, params) {
   const page = await context.newPage();
   const { problems, consoleWarnings } = watchPage(page, fileUrl);
+  let crashed = false;
+  page.once('crash', () => (crashed = true));
   let info = null;
   try {
     await page.goto(`${fileUrl}?${new URLSearchParams(params)}`);
@@ -321,9 +370,18 @@ async function openCapture(context, fileUrl, params) {
     }
     info = state.info ?? null;
   } catch (err) {
-    problems.push({ kind: 'timeout', text: `not ready after ${READY_TIMEOUT_MS / 1000} s: ${err.message.split('\n')[0]}` });
+    problems.push(notReady(err, { crashed, closed: page.isClosed() }));
   }
   return { page, info, problems, consoleWarnings };
+}
+
+// Why a capture page never got ready, as a problem: it crashed, it was closed
+// (a watchdog closes pages), its time ran out, or it failed otherwise (to load, say).
+export function notReady(err, { crashed, closed }) {
+  if (crashed) return { kind: 'page crash', text: 'the page crashed before it was ready' };
+  if (closed) return { kind: 'capture error', text: 'the page was closed before it was ready' };
+  if (err.name === 'TimeoutError') return { kind: 'timeout', text: `not ready after ${READY_TIMEOUT_MS / 1000} s` };
+  return { kind: 'capture error', text: `failed before it was ready: ${err.message.split('\n')[0]}` };
 }
 
 function shoot(page, path) {
@@ -338,7 +396,7 @@ function shoot(page, path) {
 async function runChecks(context, fileUrl, query, view, outDir) {
   const tasks = [
     () => checkBenchmark(context, fileUrl, query, outDir),
-    ...toolCheckTasks(context, fileUrl, query, view, outDir),
+    ...toolCheckTasks(context, fileUrl, query, outDir),
     () => checkPlayerMode(context, fileUrl, query, view, outDir),
   ];
   // SCREENSHOT_PROGRESS=1 says when each check is done, for finding one that hangs.
@@ -369,11 +427,15 @@ async function inParallel(tasks, limit) {
 
 // Each measurement must catch the problem it measures in a scene built to have
 // it (src/fixtures/), or the tool itself is broken. Images go to tool-check/.
+// The fixtures stand in front of the view they start from, built for the beach
+// view's field of view (the shimmer card's stripes and the silhouette's bars
+// are sized in its pixels): they start from it in every run, whichever views
+// the run captures.
 // Returns the checks as functions to run.
-function toolCheckTasks(context, fileUrl, query, view, outDir) {
+function toolCheckTasks(context, fileUrl, query, outDir) {
   const dir = join(outDir, 'tool-check');
   mkdirSync(dir, { recursive: true });
-  const params = { ...query, view: view.name };
+  const params = { ...query, view: 'beach' };
   return [
     () => checkFixture(context, fileUrl, { ...params, fixture: 'shimmer' }, async (page, info, problems) => {
       const { limitPercent, threshold } = config.capture.shimmer;
@@ -409,6 +471,8 @@ function toolCheckTasks(context, fileUrl, query, view, outDir) {
     // plane through; hardware GL shows none), 42% without reversed depth.
     () => checkClean(context, fileUrl, { ...params, fixture: 'depth' }, dir, 'two planes 5 cm apart, from a hilltop'),
     () => checkErrors(context, fileUrl, params),
+    () => checkErrorOverlay(context, fileUrl, params),
+    () => checkTinyWindow(context, fileUrl, params),
     // Slow gradients must come out dithered, without bands.
     () => checkFixture(context, fileUrl, { ...params, fixture: 'gradient' }, async (page, info, problems) => {
       const image = decodeDataUrl(await page.evaluate(() => window.__CAPTURE__.image()));
@@ -471,21 +535,23 @@ function toolCheckTasks(context, fileUrl, query, view, outDir) {
     }),
     // The heights and the ground the GPU draws are the ones JS knows
     // (src/fixtures/terrain.js), the comparison catches a sampler half a metre
-    // off, the drawn ground keeps close to the island's between samples, the
+    // off, each level keeps close to the island's heights between samples, the
     // mesh's own height on the GPU is its JS twin's, the light from below
-    // reads the ground's albedo JS expects where it expects it, and a far
-    // pixel reads the ground's mipmaps where JS expects them.
+    // reads the ground's albedo JS expects where it expects it, the ground is
+    // as wet as JS expects, and a far pixel reads the ground's mipmaps where
+    // JS expects them.
     () => checkFixture(context, fileUrl, { ...params, fixture: 'terrain' }, async (page, info, problems) => {
       const t = await page.evaluate(() => window.__TERRAIN__);
       for (const text of terrainProblems(t, config.capture.terrain)) problems.push({ kind: 'tool check', text: `terrain fixture: ${text}` });
-      const { limit, mesh, bounce } = config.capture.terrain;
+      const { limit, mesh, bounce, wet } = config.capture.terrain;
       return (
         `${t.points} points: GPU vs world/heightmap.js off by ${t.gpu.toExponential(1)} m (limit ${limit}), ` +
         `${t.mistaken.toFixed(2)} m half a metre off; the ground at ${t.ground.gpu.toFixed(2)} of its limits ` +
         `(${Object.entries(t.ground.fields).map(([f, v]) => `${f} ${v.toFixed(2)}`).join(', ')}), ` +
-        `${t.ground.mistaken.toFixed(1)} half a metre off; drawn vs world/island.js per level (median) ${t.island.map((l) => `${l.median.toFixed(3)} m`).join(', ')}; ` +
+        `${t.ground.mistaken.toFixed(1)} half a metre off; each level vs world/island.js (median) ${t.island.map((l) => `${l.median.toFixed(4)} m`).join(', ')}; ` +
         `the mesh's height at ${t.mesh.points} points off its twin by ${t.mesh.gpu.toExponential(1)} m (limit ${mesh}), ${t.mesh.mistaken.toFixed(2)} m for a camera 30 m off; ` +
         `the light from below's albedo at ${t.bounce.points} points off world/albedo.js's by ${t.bounce.gpu.toExponential(1)} (limit ${bounce}), ${t.bounce.mistaken.toFixed(2)} half a texel off; ` +
+        `the ground's wetness at ${t.wet.points} heights off world/albedo.js's by ${t.wet.gpu.toExponential(1)} (limit ${wet}), ${t.wet.mistaken.toFixed(2)} 5 cm off; ` +
         `the far ground at ${t.far.points} points, ${t.far.lod} mips up, at ${t.far.gpu.toFixed(2)} of its limits, ${t.far.mistaken.toFixed(1)} a quarter of a texel off`
       );
     }),
@@ -508,11 +574,30 @@ function toolCheckTasks(context, fileUrl, query, view, outDir) {
       const pct = (v) => `${(100 * v).toFixed(2)}%`;
       return Object.entries(s).map(([name, t]) => `${name} tile: ${pct(t.whole)} of texels change shifted a whole tile, ${pct(t.half)} half a tile`).join('; ');
     }),
-    // The green's patches on the GPU are the ones JS knows (src/fixtures/patches.js).
+    // The green's patches on the GPU are the ones JS knows, and the green lies
+    // where it lies from wherever it is seen (src/fixtures/patches.js).
     () => checkFixture(context, fileUrl, { ...params, fixture: 'patches' }, async (page, info, problems) => {
       const p = await page.evaluate(() => window.__PATCHES__);
       for (const text of patchesProblems(p, config.capture.patches)) problems.push({ kind: 'tool check', text: `patches fixture: ${text}` });
-      return `${p.points} points: GPU vs world/green.js off by ${p.gpu.toExponential(1)} (limit ${config.capture.patches.limit}), ${p.mistaken.toFixed(2)} a tenth of a patch off`;
+      const { seen } = config.capture.patches;
+      return (
+        `${p.points} points: GPU vs world/green.js off by ${p.gpu.toExponential(1)} (limit ${config.capture.patches.limit}), ${p.mistaken.toFixed(2)} a tenth of a patch off; ` +
+        `${p.seen?.cells} cells seen from near and far: sand ${p.seen?.share?.toFixed(3)} (limit ${seen.share}), albedo ${p.seen?.albedo?.toFixed(3)} (limit ${seen.albedo}), ` +
+        `${p.seen?.mistaken?.share?.toFixed(2)} and ${p.seen?.mistaken?.albedo?.toFixed(2)} a tenth of a patch off`
+      );
+    }),
+    // The green's detail tiles on the GPU average to what JS says, and the
+    // green near the camera keeps its albedo (src/fixtures/green-tiles.js).
+    () => checkFixture(context, fileUrl, { ...params, fixture: 'green-tiles' }, async (page, info, problems) => {
+      const g = await page.evaluate(() => window.__GREEN_TILES__);
+      for (const text of greenTilesProblems(g, config.capture.greenTiles)) problems.push({ kind: 'tool check', text: `green-tiles fixture: ${text}` });
+      const { layers, lift, between } = config.capture.greenTiles;
+      const pct = ({ lift: v, at }) => `${(100 * v).toFixed(1)}% (${at})`;
+      return (
+        `${g.points} points by ${g.footprints} pixel sizes: greenTile vs world/green.js greenLayers off by ${g.layers.gpu.toExponential(1)} (limit ${layers}), ` +
+        `${g.layers.mistaken.toFixed(2)} with nothing between the covers; the green near the camera off its albedo by ${pct(g.lifts.sharp)} (limit ${100 * lift}%), ` +
+        `${pct(g.lifts.between)} where a pixel sees a few leaves (limit ${100 * between}%), ${pct(g.lifts.mistaken)} with the leaves at half their share`
+      );
     }),
     // The sky's tables agree with the air they come from (src/fixtures/haze.js): from
     // the beach at golden hour, and at sunset from 190 m up off the headland (a
@@ -534,28 +619,35 @@ function toolCheckTasks(context, fileUrl, query, view, outDir) {
       }),
     ),
     // Teardown: what a quality change rebuilds must go away completely and come
-    // back the same. Also with the blend fixture, which makes the frame create
-    // the targets of its translucent pass and post chain.
+    // back the same, and the final teardown must leave nothing alive. Also with
+    // the blend fixture, which makes the frame create the targets of its
+    // translucent pass and post chain.
     ...[{ name: 'teardown' }, { name: 'teardown blend', fixture: 'blend' }].map((check) => () =>
       checkFixture(context, fileUrl, { ...params, ...check }, async (page, info, problems) => {
-        const { leaks, samePicture, trip } = await qualityRoundTrip(page, query);
+        const { leaks, left, samePicture, trip } = await qualityRoundTrip(page, query);
         if (leaks.length) problems.push({ kind: 'tool check', text: `${check.name}: ${trip} leaks ${leaks.join(', ')}` });
+        if (left.length) problems.push({ kind: 'tool check', text: `${check.name}: the final teardown leaves ${left.join(', ')}` });
         if (!samePicture) problems.push({ kind: 'tool check', text: `${check.name}: the picture changed after ${trip}` });
-        return `${trip}: ${leaks.length ? `leaks ${leaks.join(', ')}` : 'nothing leaked'}, ${samePicture ? 'same picture' : 'picture changed'}`;
+        return (
+          `${trip}: ${leaks.length ? `leaks ${leaks.join(', ')}` : 'nothing leaked'}, ${samePicture ? 'same picture' : 'picture changed'}; ` +
+          `${left.length ? `the final teardown leaves ${left.join(', ')}` : 'nothing left after the final teardown'}`
+        );
       }),
     ),
     () => checkFixture(context, fileUrl, { ...params, fixture: 'leaky' }, async (page, info, problems) => {
-      const { leaks, trip } = await qualityRoundTrip(page, query);
-      // It forgets a texture, a render target and a mesh in the scene.
-      const expected = ['Texture', 'RenderTarget', 'left in the scene'];
-      if (!expected.every((what) => leaks.some((leak) => leak.includes(what)))) {
-        problems.push({ kind: 'tool check', text: `leaky fixture: ${trip} reports only ${leaks.join(', ') || 'nothing'}` });
+      const { leaks, left, trip } = await qualityRoundTrip(page, query);
+      // It forgets a texture and a render target, which every build makes again,
+      // and a mesh in the scene, whose material keeps a shader module: every build
+      // shares that one, so only the final teardown shows it.
+      const expected = [[leaks, 'Texture'], [leaks, 'RenderTarget'], [left, 'left in the scene'], [left, 'ShaderModule']];
+      if (!expected.every(([found, what]) => found.some((item) => item.includes(what)))) {
+        problems.push({ kind: 'tool check', text: `leaky fixture: ${trip} reports only ${leaks.join(', ') || 'nothing'}, the final teardown ${left.join(', ') || 'nothing'}` });
       }
-      return `caught ${leaks.join(', ')}`;
+      return `caught ${leaks.join(', ')}; left ${left.join(', ')}`;
     }),
     // The time-of-day check must catch a system that reads the time only at boot.
-    () => checkFixture(context, fileUrl, { ...params, fixture: 'stale-time' }, async (page, info, problems) => {
-      const changed = await changeTime(context, fileUrl, { ...params, fixture: 'stale-time' }, page, timeChangeTarget(view.name, info.timeOfDay));
+    () => checkFixture(context, fileUrl, { ...params, fixture: 'stale-time' }, async (page, info, problems, own) => {
+      const changed = await changeTime(own, fileUrl, { ...params, fixture: 'stale-time' }, page, timeChangeTarget(params.view, info.timeOfDay));
       problems.push(...changed.problems);
       if (changed.same !== false) problems.push({ kind: 'tool check', text: `stale-time fixture: changing the time to ${changed.time} in the page went unnoticed` });
       return `a time read only at boot: ${changed.same === false ? 'caught' : 'missed'}`;
@@ -591,15 +683,21 @@ async function changeTime(context, fileUrl, params, page, time) {
 
 // Errors that leave nothing wrong on screen, or only blank and stale frames
 // that would pass every measurement, must still fail a capture: a shader that
-// doesn't compile, a material without sceneOutput() and one that blends outside
-// the translucent pass, all out of sight
+// doesn't compile, one that compiles but makes no pipeline, a material without
+// sceneOutput() and one that blends outside the translucent pass, all out of sight
 // (src/fixtures/broken.js), then a validation error and a lost device. Those
-// problems are expected here; anything else on the page still fails the check.
+// problems are expected here; anything else on the page still fails the check,
+// and so does a page not done within config.capture.timeouts.viewSeconds (watchdog).
 async function checkErrors(context, fileUrl, params) {
   const started = Date.now();
-  const { page, info, problems, consoleWarnings } = await openCapture(context, fileUrl, { ...params, fixture: 'broken' });
+  const own = ownPages(context);
+  const { page, info, problems, consoleWarnings } = await openCapture(own, fileUrl, { ...params, fixture: 'broken' });
+  const limit = pageLimit(page.viewportSize());
+  const dog = watchdog(own, page, limit);
   const expected = [
     ['a hidden shader that fails to compile', (p) => p.kind === 'shader error' && /fixture-broken/.test(p.text)],
+    // Not the compiler's "line l:c" message: its module compiles.
+    ["a hidden pipeline that can't be made", (p) => p.kind === 'shader error' && /fixture-unmade: (?!line \d+:\d+ )/.test(p.text)],
     ['a material without sceneOutput()', (p) => /without sceneOutput\(\): fixture-unwrapped/.test(p.text)],
     ['a material that blends outside the translucent pass', (p) => /blend outside the translucent pass.*: fixture-blended/.test(p.text)],
     ['a validation error', (p) => p.kind === 'webgpu error' && /MAP_WRITE|MapWrite|usage/i.test(p.text)],
@@ -617,8 +715,10 @@ async function checkErrors(context, fileUrl, params) {
     });
     await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 100))); // for the console messages to arrive
   } catch (err) {
-    problems.push(classify(err.message.split('\n')[0], 'capture error'));
+    if (!dog.fired) problems.push(classify(err.message.split('\n')[0], 'capture error'));
   }
+  dog.stop();
+  if (dog.fired) problems.push({ kind: 'timeout', text: `not done ${limit} s after the page loaded: breaking its GPU never finished` });
   await page.close();
 
   const seen = new Set();
@@ -637,8 +737,8 @@ async function checkErrors(context, fileUrl, params) {
 
 // Rebuilds the world with another preset and back, as a quality change in the
 // game would, with a window resize on the way, then tears it down for good.
-// Returns what grew on the GPU or was left in the scene, and whether the
-// picture came back the same.
+// Returns what grew on the GPU, what the final teardown left (teardownLeftovers),
+// and whether the picture came back the same.
 async function qualityRoundTrip(page, query) {
   const home = query.quality ?? config.quality.default;
   const away = home === 'low' ? 'high' : 'low';
@@ -655,10 +755,8 @@ async function qualityRoundTrip(page, query) {
   await page.evaluate((preset) => window.__CAPTURE__.rebuild(preset), home);
   const after = await page.evaluate(() => window.__CAPTURE__.resources());
   const samePicture = (await page.evaluate(() => window.__CAPTURE__.image())) === picture;
-  const left = await page.evaluate(() => window.__CAPTURE__.teardown());
-  const leaks = resourceLeaks(before, after);
-  if (left.sceneObjects) leaks.push(`${left.sceneObjects} object(s) left in the scene`);
-  return { leaks, samePicture, trip: `${home} → ${away} (and a resize) → ${home}` };
+  const left = teardownLeftovers(await page.evaluate(() => window.__CAPTURE__.teardown()));
+  return { leaks: resourceLeaks(before, after), left, samePicture, trip: `${home} → ${away} (and a resize) → ${home}` };
 }
 
 // The blend fixture (src/fixtures/blend.js) band by band: each translucent card
@@ -709,12 +807,13 @@ export function mathsMismatch(values) {
 
 // The terrain fixture's results (src/fixtures/terrain.js): the GPU's heights
 // within `limit` of heightmap.js's and its ground within its limits (a share
-// of them, at most 1), the deliberate mistakes beyond them, and per level the
-// drawn ground's median miss of the island within islandMedian of the level's
-// spacing, the light from below's albedo within `bounce`, and the far ground
-// within its limits (a share of them, at most 1), their mistakes beyond them.
+// of them, at most 1), the deliberate mistakes beyond them, and per level its
+// own heights' median miss of the island within islandMedian of the level's
+// spacing, the light from below's albedo within `bounce`, the ground's wetness
+// within `wet`, and the far ground within its limits (a share of them, at
+// most 1), their mistakes beyond them.
 // Returns problem texts.
-export function terrainProblems(t, { limit, islandMedian, mesh, bounce }) {
+export function terrainProblems(t, { limit, islandMedian, mesh, bounce, wet }) {
   const problems = [];
   if (!(t.gpu <= limit)) problems.push(`GPU vs world/heightmap.js off by ${t.gpu?.toExponential(1)} m (limit ${limit})`);
   if (!(t.mistaken > limit)) problems.push(`a sampler half a metre off is only ${t.mistaken?.toExponential(1)} m off, within the limit: the check misses it`);
@@ -724,6 +823,8 @@ export function terrainProblems(t, { limit, islandMedian, mesh, bounce }) {
   if (!(t.mesh?.mistaken > mesh)) problems.push(`the mesh's height for a camera 30 m off is only ${t.mesh?.mistaken?.toExponential(1)} m off, within the limit: the check misses it`);
   if (!(t.bounce?.gpu <= bounce)) problems.push(`the ground's albedo the GPU's light from below reads vs world/albedo.js's off by ${t.bounce?.gpu?.toExponential(1)} (limit ${bounce})`);
   if (!(t.bounce?.mistaken > bounce)) problems.push(`the albedo map read half a texel off is only ${t.bounce?.mistaken?.toExponential(1)} off, within the limit: the check misses it`);
+  if (!(t.wet?.gpu <= wet)) problems.push(`the ground's wetness on the GPU vs world/albedo.js sandWetness off by ${t.wet?.gpu?.toExponential(1)} (limit ${wet})`);
+  if (!(t.wet?.mistaken > wet)) problems.push(`the ground's wetness 5 cm off is only ${t.wet?.mistaken?.toExponential(1)} off, within the limit: the check misses it`);
   if (!(t.far?.gpu <= 1)) problems.push(`the far ground the GPU reads from the mipmaps vs JS's at ${t.far?.gpu?.toFixed(2)} of its limits`);
   if (!(t.far?.mistaken > 1)) problems.push(`the far ground's mipmaps a quarter of a texel off are only ${t.far?.mistaken?.toFixed(2)} of its limits: the check misses it`);
   for (const { texel, median } of t.island) {
@@ -760,12 +861,34 @@ export function surfaceProblems(s, { share, mistaken, tiles }) {
 }
 
 // The patches fixture's results (src/fixtures/patches.js): the GPU's patches
-// within `limit` of world/green.js's, and the deliberate mistake beyond it.
-// Returns problem texts.
-export function patchesProblems(p, { limit }) {
+// within `limit` of world/green.js's, and the green seen from any camera
+// within `seen`'s limits of the nearest's (the sand's share, the albedo); the
+// deliberate mistakes beyond them. Returns problem texts.
+export function patchesProblems(p, { limit, seen }) {
   const problems = [];
   if (!(p?.gpu <= limit)) problems.push(`GPU vs world/green.js off by ${p?.gpu?.toExponential(1)} (limit ${limit})`);
   if (!(p?.mistaken > limit)) problems.push(`points a tenth of a patch off are only ${p?.mistaken?.toExponential(1)} off, within the limit: the check misses it`);
+  for (const what of ['share', 'albedo']) {
+    const name = what === 'share' ? "the sand's share" : 'the albedo';
+    if (!(p?.seen?.[what] <= seen[what])) problems.push(`the green changes with where the camera stands: ${name} by ${p?.seen?.[what]?.toFixed(3)} (limit ${seen[what]})`);
+    if (!(p?.seen?.mistaken?.[what] > seen[what])) problems.push(`cells a tenth of a patch off change ${name} only by ${p?.seen?.mistaken?.[what]?.toFixed(3)}, within the limit: the check misses it`);
+  }
+  return problems;
+}
+
+// The green-tiles fixture's results (src/fixtures/green-tiles.js): greenTile's
+// averages on the GPU within `layers` of world/green.js greenLayers', the
+// green near the camera within `lift` of its albedo, and within `between`
+// where a pixel sees a few leaves, and the deliberate mistakes beyond them.
+// Returns problem texts.
+export function greenTilesProblems(g, { layers, lift, between }) {
+  const problems = [];
+  const off = (v) => `${(100 * v?.lift).toFixed(1)}% off its albedo${v?.at ? ` at ${v.at}` : ''}`;
+  if (!(g?.layers?.gpu <= layers)) problems.push(`greenTile on the GPU vs world/green.js greenLayers off by ${g?.layers?.gpu?.toExponential(1)} (limit ${layers})`);
+  if (!(g?.layers?.mistaken > layers)) problems.push(`greenTile with nothing between the covers is only ${g?.layers?.mistaken?.toExponential(1)} off, within the limit: the check misses it`);
+  if (!(Math.abs(g?.lifts?.sharp?.lift) <= lift)) problems.push(`the green near the camera reads ${off(g?.lifts?.sharp)} (limit ${100 * lift}%)`);
+  if (!(Math.abs(g?.lifts?.between?.lift) <= between)) problems.push(`where a pixel sees a few leaves, the green reads ${off(g?.lifts?.between)} (limit ${100 * between}%)`);
+  if (!(Math.abs(g?.lifts?.mistaken?.lift) > between)) problems.push(`the leaves at half their share read only ${off(g?.lifts?.mistaken)}, within the limit: the check misses it`);
   return problems;
 }
 
@@ -807,6 +930,16 @@ export function resourceLeaks(before, after) {
   return leaks;
 }
 
+// What a final __CAPTURE__.teardown() left alive, as phrases ("21 ShaderModule"):
+// anything but the canvas, the page's own. A quality change can't show what
+// every build shares (a shader module, cached by its source): it doesn't grow.
+export function teardownLeftovers(left) {
+  const nothing = { objects: {}, textureBytes: 0, renderTargetBytes: left.canvasBytes, bufferBytes: 0 };
+  const leftovers = resourceLeaks(nothing, left).map((leak) => leak.slice(1)); // without the +
+  if (left.sceneObjects) leftovers.push(`${left.sceneObjects} object(s) left in the scene`);
+  return leftovers;
+}
+
 // A fixture the frame must render without shimmer: under `limit` percent of
 // the frame, or of its edge pixels with `edges`.
 function checkClean(context, fileUrl, params, dir, what, { edges = false, limit = config.capture.shimmer.limitPercent } = {}) {
@@ -820,17 +953,25 @@ function checkClean(context, fileUrl, params, dir, what, { edges = false, limit 
 }
 
 // Opens a capture page (a fixture, or the island when params.name names the
-// check instead) and runs `check(page, info, problems)`, which returns a one-line detail.
+// check instead) and runs `check(page, info, problems, own)`, which returns a
+// one-line detail, and opens any more pages it needs through `own` (ownPages).
+// A check not done config.capture.timeouts.viewSeconds after its page got ready
+// fails: its pages close (watchdog), so a readback that never returns can't hang the tool.
 async function checkFixture(context, fileUrl, { name, ...params }, check) {
   const started = Date.now();
-  const { page, info, problems, consoleWarnings } = await openCapture(context, fileUrl, params);
+  const own = ownPages(context);
+  const { page, info, problems, consoleWarnings } = await openCapture(own, fileUrl, params);
   let detail = 'not measured';
   if (info) {
+    const limit = pageLimit(page.viewportSize());
+    const dog = watchdog(own, page, limit);
     try {
-      detail = await check(page, info, problems);
+      detail = await check(page, info, problems, own);
     } catch (err) {
-      problems.push(classify(err.message.split('\n')[0], 'capture error'));
+      if (!dog.fired) problems.push(classify(err.message.split('\n')[0], 'capture error'));
     }
+    dog.stop();
+    if (dog.fired) problems.push({ kind: 'timeout', text: `not done ${limit} s after the page was ready: a frame or readback never finished` });
   }
   await page.close();
   return { name: name ?? params.fixture, detail, problems, consoleWarnings, ms: Date.now() - started };
@@ -878,12 +1019,20 @@ export function describeWarning({ metric, value, limit }) {
   return `${label} ${format(value)} is over the limit of ${format(limit)}`;
 }
 
+// Player mode's page: as wide as PLAYER_MODE.viewport, at the aspect of the
+// capture's `size`, so that its canvas shows what the capture does (the field
+// of view is vertical: at another aspect it shows more or less of the sides).
+export function playerViewport(size) {
+  const { width } = PLAYER_MODE.viewport;
+  return { width, height: Math.max(1, Math.round((width * size.height) / size.width)) };
+}
+
 // Capture mode freezes time and skips input, so it never runs the game the way
 // players get it. Run it that way for a few frames: no errors or requests, and
 // the start screen must be up.
 async function checkPlayerMode(context, fileUrl, query, view, outDir) {
   const page = await context.newPage();
-  await page.setViewportSize(PLAYER_MODE.viewport);
+  await page.setViewportSize(playerViewport(page.viewportSize())); // a new page is the capture's size
   await stubPointerLock(page);
   const { problems, consoleWarnings } = watchPage(page, fileUrl);
   await holdableFrames(page);
@@ -891,7 +1040,7 @@ async function checkPlayerMode(context, fileUrl, query, view, outDir) {
   const params = new URLSearchParams({ ...query, view: view.name, stats: '1' }); // with the frame readout
   params.delete('capture');
   const started = Date.now();
-  let canvasOff = null; // how far the canvas's mean colour is from the capture's
+  let canvasOff = null; // levels between the canvas and the capture: { mean: of their mean colours, block: the worst block's }
   try {
     await page.goto(`${fileUrl}?${params}`);
     await untilDone(page, (frames) => window.__FRAMES__ >= frames, PLAYER_MODE.frames);
@@ -913,13 +1062,19 @@ async function checkPlayerMode(context, fileUrl, query, view, outDir) {
     // straight onto the canvas, captures into a texture of their own (post/frame.js).
     const reference = join(outDir, `${view.name}.png`);
     if (existsSync(reference)) {
-      const shown = await canvasMean(page);
+      const shot = await canvasShot(page);
       const captured = decodePng(readFileSync(reference));
-      const expected = meanColor(captured, 0, 0, captured.width, captured.height);
-      const off = (canvasOff = Math.max(...shown.map((v, c) => Math.abs(v - expected[c]))));
+      const [shown, expected] = [shot, captured].map((image) => meanColor(image, 0, 0, image.width, image.height));
+      const off = Math.max(...shown.map((v, c) => Math.abs(v - expected[c])));
+      // Block by block too: upside down or shifted, a canvas keeps its mean colour.
+      const { blocks, blockLevels } = PLAYER_MODE;
+      canvasOff = { mean: off, block: blockMismatch(shot, captured, blocks) };
       if (!(off <= PLAYER_MODE.meanLevels)) {
         const levels = (c) => c.map((v) => v.toFixed(1)).join(', ');
         problems.push({ kind: 'player mode', text: `the canvas's mean colour (${levels(shown)}) is ${off.toFixed(1)} levels off the capture's (${levels(expected)}; limit ${PLAYER_MODE.meanLevels})` });
+      }
+      if (!(canvasOff.block <= blockLevels)) {
+        problems.push({ kind: 'player mode', text: `the canvas is ${canvasOff.block.toFixed(1)} levels off the capture in the worst of its ${blocks}×${blocks} blocks (limit ${blockLevels}): upside down, shifted or cut?` });
       }
     }
     // Start, walk on the ground for a few frames, and fly again. The pointer
@@ -950,8 +1105,14 @@ async function checkPlayerMode(context, fileUrl, query, view, outDir) {
     const walked = await where(start);
     const { eye, float } = config.movement.walk;
     const moved = Math.hypot(walked[0] - start[0], walked[2] - start[2]);
-    if (!(moved > 0.05 && (Math.abs(walked[3] - eye) < 0.02 || walked[1] <= float + 0.02))) {
-      problems.push({ kind: 'player mode', text: `walking (${config.movement.walk.key}, W and Space) moved the camera ${moved.toFixed(2)} m to ${walked[3].toFixed(2)} m above the ground, not at eye height (${eye} m)` });
+    // At eye height over the ground, or at `float` over water deeper than that
+    // (core/input.js). The readout rounds to centimetres.
+    const height = Math.max(walked[1] - walked[3] + eye, float);
+    if (!(moved > 0.05 && Math.abs(walked[1] - height) < 0.02)) {
+      problems.push({
+        kind: 'player mode',
+        text: `walking (${config.movement.walk.key}, W and Space) moved the camera ${moved.toFixed(2)} m to ${walked[1].toFixed(2)} m, ${walked[3].toFixed(2)} m above the ground: not at eye height (${eye} m), nor at ${float} m over deeper water`,
+      });
     }
     await page.keyboard.press(config.movement.walk.key);
   } catch (err) {
@@ -961,25 +1122,129 @@ async function checkPlayerMode(context, fileUrl, query, view, outDir) {
   return { problems, consoleWarnings, ms: Date.now() - started, canvasOff };
 }
 
-// The mean colour of the page's canvas as shown, with everything over it hidden
-// for the shot. The shot waits for frames of the browser's compositor, which on
+// Player mode stops on an error and shows it, and its overlay must keep the
+// first one, the cause, over what follows from it: ?fixture=broken's shader
+// that doesn't compile, then the pipelines that can't be made, its own "invalid
+// due to a previous error". Those two reports are expected; anything else fails.
+async function checkErrorOverlay(context, fileUrl, params) {
+  const started = Date.now();
+  const { page, url, problems, consoleWarnings } = await openPlayer(context, fileUrl, { ...params, fixture: 'broken' });
+  const failed = [];
+  let detail = 'did not finish';
+  try {
+    await page.goto(url);
+    // The pipelines are reported after the cause: only then could they have
+    // replaced it. Within the time a capture page has to get ready, or fail.
+    const deadline = Date.now() + READY_TIMEOUT_MS;
+    while (!problems.some((p) => p.text.includes('fixture-unmade'))) {
+      if (Date.now() > deadline) throw new Error(`the pipeline that can't be made (fixture-unmade) not reported after ${READY_TIMEOUT_MS / 1000} s`);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    const shown = await page.evaluate(() => {
+      const box = document.getElementById('error');
+      return box.hidden ? null : box.textContent.replace(/\s+/g, ' ').trim();
+    });
+    detail = shown === null ? 'no overlay' : `the overlay says "${shown.slice(0, 160)}"`;
+    if (shown === null || !shown.includes('undeclaredRadiance') || shown.includes('invalid due to a previous error')) {
+      failed.push({ kind: 'player mode', text: `${detail}, not the cause: the shader that doesn't compile (undeclaredRadiance)` });
+    }
+  } catch (err) {
+    failed.push({ kind: 'player mode', text: err.message.split('\n')[0] });
+  }
+  await page.close();
+  failed.push(...problems.filter((p) => !/fixture-(broken|unmade)/.test(p.text)));
+  return { name: 'error overlay', detail, problems: failed, consoleWarnings, ms: Date.now() - started };
+}
+
+// A window 1 px high, where the low preset's render scale would floor the
+// drawing buffer to 0 px, which no texture can be: the game must keep drawing
+// without an error, and draw at full size again once the window is back. The
+// readout says the size of the frames it draws.
+async function checkTinyWindow(context, fileUrl, params) {
+  const started = Date.now();
+  const { page, url, problems, consoleWarnings } = await openPlayer(context, fileUrl, { ...params, fixture: 'gradient', quality: 'low', stats: '1' });
+  const { width, height } = PLAYER_MODE.viewport;
+  // Resolves to { size } of a frame drawn more than 1 px high or not, as `tall`
+  // says, or to { error } once the overlay shows.
+  const drawn = (tall) =>
+    untilDone(
+      page,
+      (tall) => {
+        const box = document.getElementById('error');
+        if (!box.hidden) return { error: box.textContent.replace(/\s+/g, ' ').trim() };
+        const size = document.getElementById('readout').textContent.match(/(\d+)×(\d+) · MSAA/)?.slice(1).map(Number);
+        return size && (size[1] > 1) === tall && { size };
+      },
+      tall,
+    );
+  const sizes = [];
+  try {
+    await page.goto(url);
+    for (const [h, tall] of [[height, true], [1, false], [height, true]]) {
+      await page.setViewportSize({ width, height: h });
+      const { size, error } = await drawn(tall);
+      if (error) throw new Error(`the game stopped in a window ${h} px high: ${error}`);
+      if (!(size[0] >= 1 && size[1] >= 1)) throw new Error(`the game drew ${size.join('×')} px in a window ${h} px high`);
+      sizes.push(size.join('×'));
+    }
+  } catch (err) {
+    problems.push({ kind: 'player mode', text: err.message.split('\n')[0] });
+  }
+  await page.close();
+  const detail = sizes.length === 3 ? `the low preset drew ${sizes[0]}, ${sizes[1]} in a window 1 px high, then ${sizes[2]} again` : `drew ${sizes.join(', ') || 'nothing'}`;
+  return { name: 'tiny window', detail, problems, consoleWarnings, ms: Date.now() - started };
+}
+
+// A page of the game as players get it, without ?capture, at player mode's
+// size: its pointer lock stubbed, its frames counted (untilDone). Returns the
+// page and the `url` to load, with what watchPage reports.
+async function openPlayer(context, fileUrl, params) {
+  const page = await context.newPage();
+  await page.setViewportSize(PLAYER_MODE.viewport);
+  await stubPointerLock(page);
+  await countFrames(page);
+  const search = new URLSearchParams(params);
+  search.delete('capture');
+  return { page, url: `${fileUrl}?${search}`, ...watchPage(page, fileUrl) };
+}
+
+// The page's canvas as shown, decoded, with everything over it hidden for the
+// shot. The shot waits for frames of the browser's compositor, which on
 // SwiftShader queue behind the frames of every page that draws: the game's loop
 // is held meanwhile (holdableFrames), and beside another check it can still
 // take a minute on a CI runner's two CPUs.
-async function canvasMean(page) {
+async function canvasShot(page) {
   await page.evaluate(() => {
     window.__HOLD_FRAMES__(true);
     for (const el of document.body.children) if (el.id !== 'view') el.style.visibility = 'hidden';
   });
   try {
-    const image = decodePng(await page.locator('#view').screenshot({ timeout: DONE_MS }));
-    return meanColor(image, 0, 0, image.width, image.height);
+    return decodePng(await page.locator('#view').screenshot({ timeout: DONE_MS }));
   } finally {
     await page.evaluate(() => {
       for (const el of document.body.children) el.style.visibility = '';
       window.__HOLD_FRAMES__(false);
     });
   }
+}
+
+// The largest difference, in 8-bit levels of any channel, between the mean
+// colours of two images cut into blocks × blocks blocks each, block by block.
+// The images may differ in size: the blocks cover the same share of each.
+export function blockMismatch(a, b, blocks) {
+  const block = (image, i, j) => {
+    const [x0, x1] = [i, i + 1].map((k) => Math.round((k * image.width) / blocks));
+    const [y0, y1] = [j, j + 1].map((k) => Math.round((k * image.height) / blocks));
+    return meanColor(image, x0, y0, x1 - x0, y1 - y0);
+  };
+  let worst = 0;
+  for (let j = 0; j < blocks; j++) {
+    for (let i = 0; i < blocks; i++) {
+      const [ca, cb] = [block(a, i, j), block(b, i, j)];
+      for (let c = 0; c < 3; c++) worst = Math.max(worst, Math.abs(ca[c] - cb[c]));
+    }
+  }
+  return worst;
 }
 
 // Lets the tool hold the page's animation frames: window.__HOLD_FRAMES__(true)
@@ -1068,7 +1333,7 @@ async function checkBenchmark(context, fileUrl, query, outDir) {
     await page.goto(`${fileUrl}?${params}`);
     const { summary, results } = await untilDone(page, () => window.__BENCH__?.done && window.__BENCH__);
     writeFileSync(join(outDir, 'benchmark.txt'), `${summary}\n`);
-    problems.push(...benchmarkProblems(summary, results, allViews.map((v) => v.name)));
+    problems.push(...benchmarkProblems(summary, results, allViews));
     if (await page.evaluate(() => document.getElementById('start').checkVisibility())) {
       problems.push({ kind: 'benchmark', text: 'the start screen shows during the benchmark' });
     }
@@ -1080,15 +1345,20 @@ async function checkBenchmark(context, fileUrl, query, outDir) {
   return { problems, consoleWarnings, detail, ms: Date.now() - started };
 }
 
-// What is wrong with a benchmark result, if anything: every view measured, and
-// a summary that says where it ran.
-export function benchmarkProblems(summary, results, viewNames) {
+// What is wrong with a benchmark result, if anything: every view measured, from
+// where views.js puts it, and a summary that says where it ran.
+export function benchmarkProblems(summary, results, views) {
   const problems = [];
   const measured = results.map((r) => r.view);
+  const viewNames = views.map((v) => v.name);
   if (String(measured) !== String(viewNames)) problems.push(`measured views ${measured.join(', ') || 'none'}, expected ${viewNames.join(', ')}`);
   for (const r of results) {
     if (!r.frameMs.length || !r.frameMs.every((ms) => Number.isFinite(ms) && ms > 0)) problems.push(`no valid frame times for ${r.view}`);
     if (!r.counts?.drawCalls) problems.push(`no GPU counts for ${r.view}`);
+    const at = views.find((v) => v.name === r.view)?.position;
+    if (at && !(r.camera?.length === 3 && r.camera.every((v, i) => Math.abs(v - at[i]) < 0.01))) {
+      problems.push(`${r.view} was measured from ${r.camera?.map((v) => v.toFixed(2)).join(', ') ?? 'nowhere'}, not from the view at ${at.join(', ')}`);
+    }
   }
   for (const line of ['build', 'gpu', 'browser', 'screen', 'preset']) {
     if (!new RegExp(`^${line} +\\S`, 'm').test(summary)) problems.push(`the summary has no "${line}" line`);
@@ -1103,7 +1373,7 @@ const GPU_ERROR = /^WebGPU|\[Invalid [A-Z]|GPUValidationError|validation error|W
 
 // Turns console errors, WebGPU errors, page errors and requests for anything but
 // the built file into problems.
-function watchPage(page, fileUrl) {
+export function watchPage(page, fileUrl) {
   const problems = [];
   const consoleWarnings = [];
   page.on('console', (msg) => {
@@ -1118,6 +1388,8 @@ function watchPage(page, fileUrl) {
       problems.push({ kind: 'network request', text: url });
     }
   });
+  // A WebSocket is no request to Playwright.
+  page.on('websocket', (ws) => problems.push({ kind: 'network request', text: ws.url() }));
   return { problems, consoleWarnings };
 }
 
@@ -1146,17 +1418,8 @@ function classify(text, fallback = 'console error') {
 // ---------------------------------------------------------------- compare
 
 async function compare(args) {
-  const [labelA, labelB] = args.compare;
-  const sides = [labelA, labelB].map((label) => {
-    const dir = join(SHOTS, label);
-    if (!existsSync(dir)) throw new Error(`no screenshots for label "${label}" (${rel(dir)})`);
-    const infoFile = join(dir, 'info.json');
-    const info = existsSync(infoFile) ? JSON.parse(readFileSync(infoFile, 'utf8')) : null;
-    // The views info.json lists, so stray files from older captures stay out.
-    const listed = info?.results?.map((r) => r.file);
-    const pngs = new Set(listed ?? readdirSync(dir).filter((f) => f.endsWith('.png') && f !== 'contact-sheet.png'));
-    return { label, dir, info, pngs };
-  });
+  const sides = args.compare.map((label) => readCapture(label));
+  const [labelA, labelB] = sides.map((side) => side.label);
 
   // views.js order first, then anything else found on disk.
   const names = [...new Set([...sides[0].pngs, ...sides[1].pngs].map((f) => f.slice(0, -4)))];
@@ -1178,22 +1441,36 @@ async function compare(args) {
 
   const outDir = join(SHOTS, 'compare');
   mkdirSync(outDir, { recursive: true });
-  const out = join(outDir, `${sanitize(labelA)}_vs_${sanitize(labelB)}.png`);
+  const out = join(outDir, `${labelA}_vs_${labelB}.png`);
 
   const browser = await chromium.launch({ headless: true }); // headless shell only, see launch()
   try {
     const stats = await renderPage(browser, compareSheetHtml(sides, rows), files, out);
     console.log(`screenshot: compare ${labelA} vs ${labelB}`);
     for (const warning of mismatchWarnings(sides)) console.log(`  WARN ${warning}`);
-    for (const s of stats ?? []) {
-      const changes = rows.find((r) => r.name === s.name)?.changes ?? [];
-      console.log(`  ${s.name.padEnd(14)} ${s.summary}${changes.length ? `; ${changes.join(', ')}` : ''}`);
+    for (const { name, a, b, changes } of rows) {
+      const summary = stats?.find((s) => s.name === name)?.summary ?? `no still in ${[!a && labelA, !b && labelB].filter(Boolean).join(' and ')}`;
+      console.log(`  ${name.padEnd(14)} ${summary}${changes.length ? `; ${changes.join(', ')}` : ''}`);
     }
   } finally {
     await browser.close();
   }
   printOutputs([out]);
   return 0;
+}
+
+// One side of a compare: the capture a label names, in the folder a capture
+// with that label writes (labelFolder), its info.json, and its stills: the ones
+// info.json lists, so stray files from older captures stay out, that exist (a
+// view that failed early may have none).
+export function readCapture(label, shots = SHOTS) {
+  const folder = labelFolder(label);
+  const dir = join(shots, folder);
+  if (!existsSync(dir)) throw new Error(`no capture labelled "${label}": ${rel(dir)} does not exist`);
+  const infoFile = join(dir, 'info.json');
+  const info = existsSync(infoFile) ? JSON.parse(readFileSync(infoFile, 'utf8')) : null;
+  const listed = info?.results?.map((r) => r.file) ?? readdirSync(dir).filter((f) => f.endsWith('.png') && f !== 'contact-sheet.png');
+  return { label: folder, dir, info, pngs: new Set(listed.filter((f) => existsSync(join(dir, f)))) };
 }
 
 // How a view's numbers changed between two captures, as "label before → after"
@@ -1225,9 +1502,6 @@ export function mismatchWarnings([a, b]) {
 
 // mode: 'auto' (hardware, falling back to SwiftShader), 'hardware' or 'swiftshader'.
 async function launch(mode) {
-  if (!['auto', 'hardware', 'swiftshader'].includes(mode)) {
-    throw new Error(`--gl must be auto, hardware or swiftshader (got "${mode}")`);
-  }
   const order = mode === 'auto' ? ['hardware', 'swiftshader'] : [mode];
   const tried = [];
   for (const kind of order) {
@@ -1291,7 +1565,8 @@ async function renderPage(browser, html, files, outPath) {
       const path = decodeURIComponent(new URL(route.request().url()).pathname);
       if (path === '/') return route.fulfill({ contentType: 'text/html', body: html });
       const file = files.get(path);
-      return file ? route.fulfill({ path: file }) : route.fulfill({ status: 404, body: 'not found' });
+      // A missing file would leave the request hanging, and the sheet with it.
+      return file && existsSync(file) ? route.fulfill({ path: file }) : route.fulfill({ status: 404, body: 'not found' });
     });
     await page.goto(`${SHEET_ORIGIN}/`);
     const width = await page.evaluate(() => document.documentElement.scrollWidth);
@@ -1305,8 +1580,9 @@ async function renderPage(browser, html, files, outPath) {
   }
 }
 
-function sheetFiles(dir, results) {
-  return new Map(results.map((r) => [`/${r.file}`, join(dir, r.file)]));
+// The stills of `results` in `dir` that exist, by their path on the sheet's page.
+export function sheetFiles(dir, results) {
+  return new Map(results.filter((r) => existsSync(join(dir, r.file))).map((r) => [`/${r.file}`, join(dir, r.file)]));
 }
 
 // ---------------------------------------------------------------- sheets
@@ -1328,7 +1604,8 @@ const SHEET_CSS = `
   .same { color: #6fd08c; } .diff { color: #ffb454; }
 `;
 
-function contactSheetHtml(meta) {
+// `stills`: the stills that exist, as sheetFiles() gives them.
+function contactSheetHtml(meta, stills) {
   const [w, h] = meta.size;
   const cols = meta.results.length <= 1 ? 1 : meta.results.length <= 4 ? 2 : 3;
   const cell = Math.min(w, 800);
@@ -1338,13 +1615,14 @@ function contactSheetHtml(meta) {
     const status = r.problems.length ? ` · <span class="diff">${r.problems.length} problem(s)</span>` : '';
     const numbers = r.measurements ? `<br>${esc(summarize(r))}` : '';
     const warnings = r.warnings.map((w) => `<br><span class="diff">⚠ ${esc(describeWarning(w))}</span>`).join('');
-    return `<figure><img src="/${esc(r.file)}" class="${r.problems.length ? 'bad' : ''}">
+    const picture = stills.has(`/${r.file}`) ? `<img src="/${esc(r.file)}" class="${r.problems.length ? 'bad' : ''}">` : `<div class="missing bad">no still</div>`;
+    return `<figure>${picture}
       <figcaption><b>${esc(r.view)}</b><span>${detail}${status}${numbers}${warnings}</span></figcaption></figure>`;
   });
   return htmlDocument(`
     <h1>${esc(meta.label)}</h1>
     <div class="meta">${w}×${h} · ${esc(meta.backend)}: ${esc(meta.gl)} · Chromium ${esc(meta.browser)}${params ? ` · ${esc(params)}` : ''} · ${esc(meta.createdAt)}</div>
-    <div class="grid" style="--cell:${cell}px; grid-template-columns: repeat(${cols}, ${cell}px)">${figures.join('')}</div>
+    <div class="grid" style="--cell:${cell}px; --aspect:${w} / ${h}; grid-template-columns: repeat(${cols}, ${cell}px)">${figures.join('')}</div>
     <script>
       Promise.all([...document.images].map((img) => img.decode().catch(() => {}))).then(() => { window.__SHEET_DONE__ = true; });
     </script>`);
@@ -1399,10 +1677,10 @@ function compareSheetHtml(sides, rows) {
         }
         canvas.width = w; canvas.height = h;
         canvas.getContext('2d').putImageData(out, 0, 0);
-        const pct = (100 * changed) / (w * h);
-        const summary = changed ? pct.toFixed(pct < 0.01 ? 4 : 2) + '% of pixels differ, ' + ((100 * large) / (w * h)).toFixed(2) + '% by more than 2 levels (max channel delta ' + max + ')' : 'identical';
+        const summary = diffSummary({ changed, large, max, total: w * h });
         return { name: canvas.dataset.view, summary, changed, maxDelta: max };
       }
+      ${diffSummary}
       Promise.all([...document.images].map((i) => i.decode().catch(() => {})))
         .then(() => Promise.all([...document.querySelectorAll('canvas[data-a]')].map(diff)))
         .then((stats) => {
@@ -1414,6 +1692,19 @@ function compareSheetHtml(sides, rows) {
           window.__SHEET_DONE__ = stats;
         });
     </script>`);
+}
+
+// A view's line on the compare sheet: how many of its `total` pixels differ,
+// and by more than 2 levels (the dither's reach), as counts and as shares that
+// never round a real change to zero. Also runs in the sheet's page, so it uses
+// nothing outside itself.
+export function diffSummary({ changed, large, max, total }) {
+  if (!changed) return 'identical';
+  const share = (n) => {
+    const percent = (100 * n) / total;
+    return `${n === 0 || percent >= 0.01 ? percent.toFixed(2) : percent.toPrecision(2)}% (${n} px)`;
+  };
+  return `${share(changed)} of pixels differ, ${share(large)} by more than 2 levels (max channel delta ${max})`;
 }
 
 function htmlDocument(body) {
@@ -1449,6 +1740,29 @@ export function parseArgs(argv) {
   return out;
 }
 
+// What a capture's args ask for: { views, width, height, label (its folder),
+// query (the page's URL params) }. Throws for any arg that is wrong, before a
+// capture deletes anything: --gl, and the params the page would refuse.
+export function planCapture(args) {
+  const views = selectViews(args.views);
+  const [width, height] = parseSize(args.size ?? DEFAULT_SIZE);
+  const label = labelFolder(args.label ?? defaultLabel());
+  if (!['auto', 'hardware', 'swiftshader'].includes(args.gl ?? 'auto')) throw new Error(`--gl must be auto, hardware or swiftshader (got "${args.gl}")`);
+  const query = { capture: '1' };
+  for (const key of ['t', 'time', 'seed', 'quality', 'tonemap', 'exposure', 'fixture']) {
+    if (args[key] !== undefined) query[key] = args[key];
+  }
+  // The params as the page reads them, and the preset and curve they name (only the page knows its fixtures).
+  parseParams(new URLSearchParams(query));
+  if (query.quality !== undefined && !Object.hasOwn(config.quality.presets, query.quality)) {
+    throw new Error(`--quality must be one of ${Object.keys(config.quality.presets).join(', ')} (got "${query.quality}")`);
+  }
+  if (query.tonemap !== undefined && !Object.hasOwn(config.post.tonemaps, query.tonemap)) {
+    throw new Error(`--tonemap must be one of ${Object.keys(config.post.tonemaps).join(', ')} (got "${query.tonemap}")`);
+  }
+  return { views, width, height, label, query };
+}
+
 // The views a run captures: all but the disabled ones (views.js), or those named, disabled or not.
 function selectViews(list) {
   if (!list || list === 'all') return allViews;
@@ -1472,8 +1786,34 @@ function defaultLabel() {
   }
 }
 
-function sanitize(label) {
-  return label.replace(/[^\w.-]+/g, '-');
+// The folder in screenshots/ a capture's label names (tools/labels.js). Throws
+// for a label that would name no capture's folder of its own there: one without
+// a letter or digit ('', '.', '..'), or one of the tools' own folders, in any
+// case (Windows and macOS ignore it).
+export function labelFolder(label) {
+  const folder = labelName(label);
+  const name = folder.toLowerCase();
+  if (Object.hasOwn(RESERVED_LABELS, name)) throw new Error(`the label "${label}" is taken: ${RESERVED_LABELS[name]}`);
+  return folder;
+}
+
+// Deletes a capture's folder, and refuses anything else, however `dir` came
+// about: it must be a folder right inside `shots` that a label names.
+export function removeCapture(dir, shots = SHOTS) {
+  const path = resolve(dir);
+  if (dirname(path) !== resolve(shots) || !isLabelFolder(basename(path))) {
+    throw new Error(`refusing to delete ${path}: not a capture's folder in ${resolve(shots)}`);
+  }
+  rmSync(path, { recursive: true, force: true });
+}
+
+// Whether `name` is a folder labelFolder() gives.
+function isLabelFolder(name) {
+  try {
+    return labelFolder(name) === name;
+  } catch {
+    return false;
+  }
 }
 
 function printOutputs(paths) {

@@ -45,9 +45,10 @@ export function createRenderer(gpu) {
     return reflections.get(source);
   };
 
-  // Group 0: the frame's uniforms and the camera.
+  // Group 0: the frame's uniforms and the camera. Its buffer lives as long as
+  // the renderer, as the objects' does: untracked, so a teardown leaves nothing counted.
   const frameReflection = reflect(frameSource);
-  const frameBindings = new Bindings(gpu, frameReflection, 0, 'frame');
+  const frameBindings = stats.untracked(() => new Bindings(gpu, frameReflection, 0, 'frame'));
   const camera = {
     projectionMatrix: { value: new Matrix4() },
     viewMatrix: { value: new Matrix4() },

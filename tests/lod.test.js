@@ -2,12 +2,16 @@
 // ground once, neighbours differ by at most a level, and where a node meets a
 // coarser one its vertices have finished morphing while the coarser side's
 // haven't begun, so there are no cracks, however steep the ground. And the
-// mesh's height (createMeshHeight) is that of the mesh the GPU draws.
+// mesh's height (createMeshHeight, and its twin on the GPU) is that of the
+// mesh the GPU draws: its grid as world/terrain-nodes.js builds it.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { config } from '../src/config.js';
 import { createRandom } from '../src/core/random.js';
-import { createLod, createMeshHeight, lodRanges } from '../src/world/lod.js';
+import { Attribute } from '../src/gpu/geometry.js';
+import { createLod, createMeshHeight, gridIndex, lodRanges } from '../src/world/lod.js';
+import { gridGeometry } from '../src/world/terrain-nodes.js';
 
 const { leaf, grid, morph } = config.world.terrain;
 const levels = Math.log2(4096 / leaf) + 1; // a root 4 km across, as the game's
@@ -79,23 +83,24 @@ const sideOf = (node) => node.spacing * (node.quarter ? grid / 2 : grid);
 const holds = (node, a, o) => a >= node.a && a <= node.a + sideOf(node) && o >= node.o && o <= node.o + sideOf(node);
 
 // A drawn node as the GPU draws it, built apart from lod.js: its vertices moved
-// and lifted as world/terrain.wgsl does, its triangles as terrain.js's gridGeometry.
-// Heights are taken only for the vertices a point needs.
+// and lifted as world/terrain.wgsl does, its grid and triangles as
+// world/terrain-nodes.js builds them. Heights are taken only for the vertices a
+// point needs.
 function drawnNode(node, cam, morphs) {
   const quads = node.quarter ? grid / 2 : grid;
   const [start, end] = morphs[node.level];
   const heightLevel = (level) => heightLevels[Math.min(level, levels - 1)];
   const fract = (x) => x - Math.floor(x);
-  const positions = new Float64Array(2 * (quads + 1) ** 2);
-  const ks = new Float64Array((quads + 1) ** 2);
-  for (let j = 0; j <= quads; j++) {
-    for (let i = 0; i <= quads; i++) {
-      const v = j * (quads + 1) + i;
-      const k = Math.min(Math.max((Math.hypot(node.a + i * node.spacing - cam[0], node.o + j * node.spacing - cam[2]) - start) / (end - start), 0), 1);
-      positions[2 * v] = node.a + (i - fract(i * 0.5) * 2 * k) * node.spacing;
-      positions[2 * v + 1] = node.o + (j - fract(j * 0.5) * 2 * k) * node.spacing;
-      ks[v] = k;
-    }
+  const built = gridTriangles(quads);
+  const count = built.vertices.length / 2;
+  const positions = new Float64Array(2 * count);
+  const ks = new Float64Array(count);
+  for (let v = 0; v < count; v++) {
+    const [i, j] = [built.vertices[2 * v], built.vertices[2 * v + 1]];
+    const k = Math.min(Math.max((Math.hypot(node.a + i * node.spacing - cam[0], node.o + j * node.spacing - cam[2]) - start) / (end - start), 0), 1);
+    positions[2 * v] = node.a + (i - fract(i * 0.5) * 2 * k) * node.spacing;
+    positions[2 * v + 1] = node.o + (j - fract(j * 0.5) * 2 * k) * node.spacing;
+    ks[v] = k;
   }
   const height = (v) => {
     const [a, o, k] = [positions[2 * v], positions[2 * v + 1], ks[v]];
@@ -103,27 +108,30 @@ function drawnNode(node, cam, morphs) {
     const coarse = heightAtCove(a, o, heightLevel(node.level + 1));
     return k < 1 ? heightAtCove(a, o, heightLevel(node.level)) * (1 - k) + coarse * k : coarse;
   };
-  return { positions, height, spacing: node.spacing, ...gridTriangles(quads) };
+  return { positions, height, spacing: node.spacing, index: built.index, facing: built.facing };
 }
 
-// The triangles of a grid of quads, and their areas before the morph, in quads.
+// A node's grid of quads as world/terrain-nodes.js builds it, the geometry the
+// GPU draws: its vertices (i, j) in quads from the node's corner, its index
+// buffer, and its triangles' areas before the morph, in quads.
 const triangles = new Map();
-function gridTriangles(quads) {
-  if (!triangles.has(quads)) {
-    const index = [];
+function gridTriangles(quads, mirrored = false) {
+  const key = `${quads} ${mirrored}`;
+  if (!triangles.has(key)) {
+    const geometry = gridGeometry(quads, new Attribute(new Float32Array(4), 4, { instance: true }), mirrored);
+    const xyz = geometry.attributes.position.array; // x, 0, z
+    const vertices = new Float64Array((2 * xyz.length) / 3);
+    for (let v = 0; v < xyz.length / 3; v++) [vertices[2 * v], vertices[2 * v + 1]] = [xyz[3 * v], xyz[3 * v + 2]];
+    const index = Int32Array.from(geometry.index.array);
     const facing = [];
-    const at = (i, j) => j * (quads + 1) + i;
-    for (let j = 0; j < quads; j++) {
-      for (let i = 0; i < quads; i++) index.push(at(i, j), at(i, j + 1), at(i + 1, j), at(i + 1, j), at(i, j + 1), at(i + 1, j + 1));
-    }
-    const ij = (v) => [v % (quads + 1), Math.floor(v / (quads + 1))];
+    const ij = (v) => [vertices[2 * v], vertices[2 * v + 1]];
     for (let t = 0; t < index.length; t += 3) {
       const [[i0, j0], [i1, j1], [i2, j2]] = [ij(index[t]), ij(index[t + 1]), ij(index[t + 2])];
       facing.push((i1 - i0) * (j2 - j0) - (j1 - j0) * (i2 - i0));
     }
-    triangles.set(quads, { index: Int32Array.from(index), facing: Float64Array.from(facing) });
+    triangles.set(key, { vertices, index, facing: Float64Array.from(facing) });
   }
-  return triangles.get(quads);
+  return triangles.get(key);
 }
 
 // Adds to `out` the heights drawn at a, o in a drawn node: of every one of its
@@ -266,6 +274,50 @@ for (const [preset, { terrainDetail, terrainRatio }] of Object.entries(config.qu
     for (const [what, count] of Object.entries(tried)) assert.ok(count > 50, `only ${count} ${what} tried`);
   });
 }
+
+// The node under the camera, none of it morphing: inside each triangle of the
+// grid the terrain draws, the mesh's height is linear between that triangle's
+// corners, so the twin splits every quad as the index buffer does.
+test("inside every triangle the terrain draws, the mesh height is that triangle's", () => {
+  const { ranges, morphs } = lodRanges(128, levels, morph, leaf);
+  const meshHeight = createMeshHeight({ origin, levels, leaf, grid }, { ranges, morphs }, heightAtCove, heightLevels);
+  const cam = cameras[0];
+  const node = lod.select(cam, ranges, () => true, []).find((n) => holds(n, cam[0], cam[2]));
+  assert.ok(node.level === 0 && !node.quarter, 'the camera is not over a whole node of level 0');
+  const { vertices, index } = gridTriangles(grid);
+  const corner = (v) => [node.a + vertices[2 * v] * node.spacing, node.o + vertices[2 * v + 1] * node.spacing];
+  for (let t = 0; t < index.length; t += 3) {
+    const corners = [index[t], index[t + 1], index[t + 2]].map(corner);
+    assert.ok(corners.every(([a, o]) => Math.hypot(a - cam[0], o - cam[2]) < morphs[0][0]), 'a corner has begun to morph');
+    const heights = corners.map(([a, o]) => heightAtCove(a, o, heightLevels[0]));
+    for (const w of [[1 / 3, 1 / 3, 1 / 3], [0.6, 0.3, 0.1], [0.1, 0.6, 0.3], [0.3, 0.1, 0.6]]) {
+      const [a, o] = [0, 1].map((c) => w[0] * corners[0][c] + w[1] * corners[1][c] + w[2] * corners[2][c]);
+      const drawn = w[0] * heights[0] + w[1] * heights[1] + w[2] * heights[2];
+      const quad = corners.map(([ca, co]) => `${(ca - node.a) / node.spacing},${(co - node.o) / node.spacing}`).join(' ');
+      assert.ok(Math.abs(meshHeight(a, o, cam) - drawn) < 1e-9, `the triangle ${quad}: ${meshHeight(a, o, cam)} at ${a}, ${o}, drawn at ${drawn}`);
+    }
+  }
+});
+
+test('a mirrored grid draws the same triangles, wound the other way', () => {
+  // A triangle's corners from its least: the same triangle wound the same way gives the same key.
+  const key = (corners) => {
+    const k = corners.indexOf(Math.min(...corners));
+    return [...corners.slice(k), ...corners.slice(0, k)].join();
+  };
+  const keys = (index, reversed) => Array.from({ length: index.length / 3 }, (_, t) => key(reversed ? [index[3 * t + 2], index[3 * t + 1], index[3 * t]] : [index[3 * t], index[3 * t + 1], index[3 * t + 2]])).sort();
+  for (const quads of [grid, grid / 2]) assert.deepEqual(keys(gridTriangles(quads, true).index, false), keys(gridTriangles(quads).index, true), `${quads} quads`);
+});
+
+// chunks/terrain-mesh.wgsl, the twin on the GPU, can't run here (the terrain
+// fixture holds it to createMeshHeight in the browser): its block of 2 x 2
+// quads must be split as the grid the terrain draws.
+test("the mesh height's twin on the GPU splits the quads as the mesh does", () => {
+  const wgsl = readFileSync(new URL('../src/shaders/chunks/terrain-mesh.wgsl', import.meta.url), 'utf8');
+  const block = wgsl.match(/const TERRAIN_BLOCK = array<i32, 24>\(([^)]*)\);/);
+  assert.ok(block, 'no TERRAIN_BLOCK in chunks/terrain-mesh.wgsl');
+  assert.deepEqual(block[1].split(',').map(Number), gridIndex(2));
+});
 
 test('the mesh height is NaN off the ground, and the finest height at vertices near the camera', () => {
   const { ranges, morphs } = lodRanges(128, levels, morph, leaf);

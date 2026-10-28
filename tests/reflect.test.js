@@ -112,6 +112,29 @@ test('fieldWriter refuses values that would land half-written or wrapped', () =>
   assert.throws(() => writeField(view, fields.uExposure, true), /expected a number for f32/);
 });
 
+test('integers land as written, and those that would wrap are refused', () => {
+  const { structs } = reflect('struct Ints { uCount: i32, uMask: u32, uCell: vec2i, uTile: vec2<u32> }');
+  const fields = Object.fromEntries(structLayout('Ints', structs).map((f) => [f.name, f]));
+  const view = new DataView(new ArrayBuffer(structSize('Ints', structs)));
+  writeField(view, fields.uCount, -(2 ** 31));
+  writeField(view, fields.uMask, 2 ** 32 - 1);
+  writeField(view, fields.uCell, [-1, 2 ** 31 - 1]);
+  writeField(view, fields.uTile, { x: 0, y: 7 });
+  assert.deepEqual([view.getInt32(0, true), view.getUint32(4, true), view.getInt32(8, true), view.getInt32(12, true)], [-(2 ** 31), 2 ** 32 - 1, -1, 2 ** 31 - 1]);
+  assert.deepEqual([view.getUint32(16, true), view.getUint32(20, true)], [0, 7]);
+  const wrapping = [
+    ['uCount', 2 ** 31],
+    ['uCount', -(2 ** 31) - 1],
+    ['uMask', 2 ** 32],
+    ['uMask', -1],
+    ['uCell', [0, 2 ** 31]],
+    ['uTile', [-1, 0]],
+  ];
+  for (const [name, value] of wrapping) assert.throws(() => writeField(view, fields[name], value), / is no [iu]32/, `${name} = ${value}`);
+  // A boolean only as u32.
+  assert.throws(() => writeField(view, fields.uCount, true), /expected a number for i32/);
+});
+
 test('layouts that differ between browsers are refused', () => {
   // Under uniform_buffer_standard_layout these sit closer than core WGSL puts them.
   const nested = reflect('struct In { x: f32 } struct Out { a: f32, s: In, b: f32 }').structs;

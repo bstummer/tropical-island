@@ -6,7 +6,9 @@
 // it, on dry sand that reaches the horizon; to the right, ramps of dry sand at
 // 15, 30 and 45 degrees; further left, walls of rock at 45, 70 and 90 degrees,
 // rising from the sea's level (where the sea wets them) at the ground. Any view places it: the ground lies
-// config.movement.walk.eye below the camera. With the sky (main.js adds it).
+// config.movement.walk.eye below the camera. With the sky (main.js adds it),
+// drawn as the island draws its ground at the preset, and lit from below by
+// the dry sand it stands on.
 //
 // For tools/screenshot.js it also checks that the sand's, the rock's and the
 // green's tiles repeat (textures/surfaces.js): made again shifted by a whole tile they
@@ -15,11 +17,12 @@
 // config.capture.surfaces.levels, per tile, goes to window.__SURFACES__ (a
 // whole tile's shift can still flip the odd texel on a cell's edge, by
 // rounding). Not part of the island.
-import { Euler, Matrix4, Vector2, Vector3, degToRad } from '../maths/index.js';
+import { Euler, Matrix4, Vector2, Vector3, Vector4, degToRad, toHalfFloat } from '../maths/index.js';
 import shader from './surfaces.wgsl';
 import { Material } from '../gpu/material.js';
 import { plane as planeGeometry } from '../gpu/geometry.js';
 import { Mesh, Node } from '../gpu/scene.js';
+import { Texture } from '../gpu/texture.js';
 import { createSurfaceTiles, LAYERS, tilesUniforms } from '../textures/surfaces.js';
 import { sandUniforms } from '../textures/sand.js';
 import { rockUniforms } from '../textures/rock.js';
@@ -33,23 +36,24 @@ const WALLS = { degrees: [45, 70, 90], width: 3, height: 5, ahead: 9, aside: -9.
 const CHECK_SIZE = 128; // texels across the tiles the check makes
 
 export function create(ctx) {
-  const { scene, camera, frame, config, renderer } = ctx;
+  const { scene, camera, frame, config, renderer, quality } = ctx;
   const { terrain } = config.world;
-  const sandSettings = terrain.sand;
-  const tiles = createSurfaceTiles(renderer, ctx.rng, 'fixtures/surfaces', terrain, ctx.quality.surfaceTexture);
+  const tiles = createSurfaceTiles(renderer, ctx.rng, 'fixtures/surfaces', terrain, quality.surfaceTexture);
 
   const yaw = new Euler().setFromQuaternion(camera.quaternion, 'YXZ').y;
   const forward = new Vector2(-Math.sin(yaw), -Math.cos(yaw));
   const right = new Vector2(-forward.y, forward.x);
+  // The surfaces show their detail as far as the preset has them, as on the island (world/terrain.js).
+  const ranged = (surface) => ({ ...surface, range: surface.range * quality.groundDetail });
   // The tiles' averages are read back from the GPU: zeros until then.
   const surfaceUniforms = ({ sand, rock, green }) => ({
-    ...sandUniforms(sand, sandSettings, config.world.island.zones.wetSand, config.sky.sun.sunsetYaw),
-    ...rockUniforms(rock, terrain.rock),
-    ...greenUniforms(green, terrain.albedo, terrain.green, [1, 2]),
+    ...sandUniforms(sand, ranged(terrain.sand), config.world.island.zones.wetSand, config.sky.sun.sunsetYaw),
+    ...rockUniforms(rock, ranged(terrain.rock)),
+    ...greenUniforms(green, terrain.albedo, ranged(terrain.green), [1, 2]),
   });
   const shared = {
     ...tilesUniforms(tiles),
-    ...surfaceUniforms({ sand: { grainMean: new Vector3() }, rock: { mean: new Vector3() }, green: { grassMean: new Vector3(), grassCover: 0, litterCover: 0 } }),
+    ...surfaceUniforms({ sand: { grainMean: new Vector3() }, rock: { mean: new Vector4() }, green: { grassMean: new Vector3(), grassCover: 0, litterCover: 0 } }),
     uDrySand: { value: new Vector3(...terrain.albedo.drySand) },
     uWetSand: { value: new Vector3(...terrain.albedo.wetSand) },
     uRock: { value: new Vector3(...terrain.albedo.rock) },
@@ -135,10 +139,21 @@ export function create(ctx) {
     group.add(ramp);
   });
 
+  // The ground's albedo from above, as world/terrain.js keeps the island's for
+  // the light from below: a map of one texel of dry sand, which its clamped
+  // edge spreads everywhere. Half floats, as the lighting filters the map.
+  const bounce = new Texture(ctx.gpu, { name: 'fixture-surfaces albedo', width: 1, height: 1, format: 'rgba16float', data: true });
+  bounce.upload(new Uint16Array([...terrain.albedo.drySand, 1].map((v) => toHalfFloat(v))));
+  frame.uniforms.uBounceMap.value = bounce;
+  frame.uniforms.uBounceLayout.value.set(0, 0, 1, 0);
+
   return {
     ready,
     update() {},
     dispose() {
+      frame.uniforms.uBounceMap.value = null;
+      frame.uniforms.uBounceLayout.value.set(0, 0, 0, 0);
+      bounce.destroy();
       delete window.__SURFACES__;
       scene.remove(group);
       for (const g of geometries) g.dispose();
@@ -149,8 +164,8 @@ export function create(ctx) {
 }
 
 // The sand's, the rock's and the green's tiles made again shifted by a whole
-// tile across and down, and by half a tile: the share of texels that changed,
-// per tile.
+// tile across, down, and back along both, and by half a tile: the share of
+// texels that changed, per tile.
 async function tileCheck(ctx, settings) {
   const make = async (shift) => {
     const t = createSurfaceTiles(ctx.renderer, ctx.rng, 'fixtures/surfaces/tiles', settings, CHECK_SIZE, shift);
@@ -161,7 +176,9 @@ async function tileCheck(ctx, settings) {
     return Object.fromEntries(names.map((name, k) => [name, layers[k]]));
   };
   const base = await make([0, 0]);
-  const shifted = [await make([1, 0]), await make([0, 1])];
+  // Back a tile too: below zero, a `%` that should floor (CLAUDE.md §8) wraps
+  // every texel wrong, not only those along the tile's edge.
+  const shifted = [await make([1, 0]), await make([0, 1]), await make([-1, -1])];
   const half = await make([0.5, 0.5]);
   const { levels, tiles } = ctx.config.capture.surfaces;
   const changed = (a, b) => {

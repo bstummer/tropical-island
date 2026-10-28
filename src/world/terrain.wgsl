@@ -143,6 +143,13 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
     // Where rock meets sand or green, the rest of the pixel keeps their proportions.
     if (cover.y > 0.0) {
       let share = rockShare(cover.y, r);
+      // The rock's edge rounds down under what lies round it, which drifts up against it.
+      if (cover.y < 1.0) {
+        let edge = rockEdge(cover.y, r, max(length(dPdx), length(dPdy)));
+        r.normal = rockTilt(r.normal, edge);
+        s.normal = rockTilt(s.normal, edge);
+        gr.normal = rockTilt(gr.normal, edge);
+      }
       let rest = 1.0 - cover.y;
       cover.x *= select(0.0, (1.0 - share) / rest, rest > 0.001);
       cover.y = share;

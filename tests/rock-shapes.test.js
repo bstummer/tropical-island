@@ -124,6 +124,52 @@ test('each lies within its bounds, from y = 0 to its height, half-width 1, withi
   }
 });
 
+// Its centre of mass, of the solid: the tetrahedra its triangles make with the origin.
+function centreOfMass(shape) {
+  let volume = 0;
+  const sum = [0, 0, 0];
+  for (const { corners: [a, b, c] } of triangles(shape)) {
+    const v = dot(a, cross(b, c)) / 6;
+    volume += v;
+    for (let k = 0; k < 3; k++) sum[k] += (v * (a[k] + b[k] + c[k])) / 4;
+  }
+  return sum.map((x) => x / volume);
+}
+
+// Whether [x, z] lies in the triangle of corners [[x, z], ...], either way round.
+function inTriangle([x, z], [[x0, z0], [x1, z1], [x2, z2]]) {
+  const side = (ax, az, bx, bz) => (bx - ax) * (z - az) - (bz - az) * (x - ax);
+  const s = [side(x0, z0, x1, z1), side(x1, z1, x2, z2), side(x2, z2, x0, z0)];
+  return s.every((d) => d >= -1e-9) || s.every((d) => d <= 1e-9);
+}
+
+test('each lies in its resting pose: on a face at y = 0 that bears it, a column on its broadest side, its footprint round the y axis', () => {
+  for (const [name, shape] of everyShape()) {
+    const all = triangles(shape);
+    // The face it rests on faces straight down from its lowest point, and its centre of mass stands over it.
+    const base = all.filter(({ stored }) => stored[0][1] < -1 + 1e-6);
+    assert.ok(base.length, `${name}: no face faces straight down`);
+    for (const { corners } of base) for (const p of corners) assert.ok(Math.abs(p[1]) < TOLERANCE, `${name}: the face it rests on stands ${p[1]} above its lowest point`);
+    const [cx, , cz] = centreOfMass(shape);
+    assert.ok(base.some(({ corners }) => inTriangle([cx, cz], corners.map(([x, , z]) => [x, z]))), `${name}: its centre of mass stands off the face it rests on`);
+    if (shape.kind === 'column') {
+      // Its sides: the facets square to its axis, x.
+      const sides = new Map();
+      for (const { stored, area } of all) if (Math.abs(stored[0][0]) < 1e-6) sides.set(stored[0].join(), (sides.get(stored[0].join()) ?? 0) + area);
+      const down = sides.get(base[0].stored[0].join());
+      assert.ok(down, `${name}: it rests on an end`);
+      for (const area of sides.values()) assert.ok(area <= down + 1e-6, `${name}: it rests on a side of ${down.toFixed(3)}, another is ${area.toFixed(3)}`);
+    }
+    // The smallest circle round its footprint is centred on the y axis: the
+    // corners that reach it leave no gap of more than half a turn round it.
+    const { points } = weld(shape);
+    const reach = Math.max(...points.map(([x, , z]) => Math.hypot(x, z)));
+    const angles = points.filter(([x, , z]) => Math.hypot(x, z) > reach - TOLERANCE).map(([x, , z]) => Math.atan2(z, x)).sort((p, q) => p - q);
+    const gaps = angles.map((angle, k) => (k + 1 < angles.length ? angles[k + 1] : angles[0] + 2 * Math.PI) - angle);
+    assert.ok(Math.max(...gaps) <= Math.PI + 1e-4, `${name}: its footprint's corners lie off to one side of the y axis`);
+  }
+});
+
 test('the shapes vary: blocks and columns of five or six sides, no two alike', () => {
   for (const [seed, shapes] of bySeed) {
     assert.equal(shapes.filter((s) => s.kind === 'block').length, settings.blocks.count);

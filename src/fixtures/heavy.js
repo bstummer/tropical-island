@@ -33,6 +33,7 @@ export function create(ctx) {
   for (let i = 0; i < boxes; i++) {
     const mesh = new Mesh(cube, variants[i % variantCount]);
     mesh.position.set(((i % 40) - 19.5) * 0.4, (Math.floor(i / 40) - 9.5) * 0.4, -20);
+    mesh.frustumCulled = false; // a draw call even where the rows run out of the view
     group.add(mesh);
   }
 

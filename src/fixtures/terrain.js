@@ -5,7 +5,7 @@
 // the next, and exactly on samples. The points go in as world positions, so
 // the cove's frame is checked too, and some are read from a coarser level, as
 // the mesh's morph does. It compares them with world/heightmap.js's sampler,
-// and the sampler's heights with the island itself, and leaves the worst
+// and each level's heights with the island itself, and leaves the worst
 // differences in window.__TERRAIN__ for tools/screenshot.js: the ground's as
 // shares of its limits (config.capture.terrain.ground), per field and the worst. It also samples half a metre
 // off, a deliberate mistake the comparison has to catch. And the mesh's own
@@ -16,7 +16,10 @@
 // ground's albedo the light from below reads (chunks/lighting.wgsl
 // groundAlbedo, from world/terrain.js's map and its layout) against
 // world/albedo.js's map of the coarsest grid, filtered as the GPU filters it;
-// its deliberate mistake: the map's layout half a texel off. And the ground
+// its deliberate mistake: the map's layout half a texel off. And how wet the
+// ground is by its height above the sea (chunks/wet.wgsl groundWet) against
+// its JS twin, world/albedo.js sandWetness, which that map darkens the sand
+// by; its deliberate mistake: JS's heights 5 cm off. And the ground
 // as a far pixel reads it, from the fine grid's mipmaps (its band and the
 // reef's offset), against those mipmaps made in JS, which must line up with
 // where the GPU reads them; its deliberate mistake: JS's a quarter of a
@@ -25,14 +28,16 @@ import { fromHalfFloat, toHalfFloat } from '../maths/index.js';
 import shader from './terrain.wgsl';
 import meshShader from './terrain-mesh.wgsl';
 import bounceShader from './terrain-bounce.wgsl';
+import wetShader from './terrain-wet.wgsl';
 import { views } from '../views.js';
 import { Material } from '../gpu/material.js';
 import { createTarget, Texture } from '../gpu/texture.js';
-import { albedoMap } from '../world/albedo.js';
+import { albedoMap, sandWetness } from '../world/albedo.js';
 
 const PER_LEVEL = { inside: 48, edge: 32, samples: 16, coarser: 8 };
 const MESH = { cameras: 6, points: 400, reach: 2500, off: 30 }; // seeded cameras; points per camera, within reach m
 const BOUNCE = { points: 1024, off: 0.5 }; // seeded points over the island; the mistake, in texels
+const WET = { points: 256, from: -0.3, past: 0.3, off: 0.05 }; // heights from `from` m to `past` m above dry sand; the mistake, m
 const FAR = { points: 512, off: 0.25 }; // seeded points on the fine grid; the mistake, in texels of the mip level read
 
 export function create(ctx) {
@@ -100,6 +105,7 @@ export function create(ctx) {
     pointTexture.destroy();
     const mesh = await meshCheck(ctx, r);
     const bounce = await bounceCheck(ctx, ctx.rng('fixtures/terrain/bounce'));
+    const wet = await wetCheck(ctx, ctx.rng('fixtures/terrain/wet'));
     const far = await farCheck(ctx, ctx.rng('fixtures/terrain/far'));
 
     const out = {};
@@ -121,7 +127,8 @@ export function create(ctx) {
       heightmap.groundAtCove(...at, ground);
       groundOff(gpuGround[i]).forEach((off, c) => (worstGround[c] = Math.max(worstGround[c], off)));
       worstMistakenGround = Math.max(worstMistakenGround, ...groundOff(mistakenGround[i]));
-      if (from === 0) misses[k].push(Math.abs(drawn - island.evaluate(a, o, out).height));
+      // Level k from its own grid, also where a finer one covers it: far away the mesh draws it there.
+      misses[k].push(Math.abs(heightmap.heightAtCove(...at, k) - island.evaluate(a, o, out).height));
     });
     const median = (list) => list.sort((p, q) => p - q)[list.length >> 1];
     window.__TERRAIN__ = {
@@ -129,10 +136,11 @@ export function create(ctx) {
       gpu: worstGpu,
       mistaken: worstMistaken,
       ground: { gpu: Math.max(...worstGround), mistaken: worstMistakenGround, fields: Object.fromEntries(fields.map((f, c) => [f, worstGround[c]])) },
-      // Per level: its spacing, and the drawn ground's median miss of the island's.
+      // Per level: its spacing, and its own heights' median miss of the island's.
       island: heightmap.levels.map(({ texel }, k) => ({ texel, median: median(misses[k]) })),
       mesh,
       bounce,
+      wet,
       far,
     };
   });
@@ -244,6 +252,39 @@ async function bounceCheck(ctx, r) {
     });
   });
   return { points: BOUNCE.points, gpu: worst, mistaken: worstMistaken };
+}
+
+// How wet the ground is on the GPU (chunks/wet.wgsl groundWet, with the
+// terrain's own uniforms) against its JS twin, world/albedo.js sandWetness,
+// which the light from below's map darkens the sand by: at heights from under
+// the sea to above dry sand, at seeded points. The worst difference, and the
+// worst with JS's heights WET.off metres off, which must show.
+async function wetCheck(ctx, r) {
+  const { renderer, config, terrain } = ctx;
+  const { wetness } = config.world.terrain.sand;
+  const wetHeight = config.world.island.zones.wetSand;
+  const data = new Float32Array(4 * WET.points);
+  for (let i = 0; i < WET.points; i++) {
+    const height = WET.from + ((wetness.dry + WET.past - WET.from) * i) / (WET.points - 1);
+    data.set([r.range(-1000, 1000), r.range(-1000, 1000), height, 0], 4 * i);
+  }
+  const input = floats(ctx, data, WET.points, 1);
+  const pass = renderer.fullscreen(new Material({ name: 'fixture-terrain-wet', shader: wetShader, uniforms: { uPoints: { value: input }, uWet: terrain.surfaces.uWet } }));
+  const target = createTarget(renderer.gpu, { name: 'fixture-terrain-wet', width: WET.points, height: 1, format: 'rgba32float' });
+  pass.render(target);
+  const gpu = await target.color.read();
+  target.dispose();
+  pass.dispose();
+  input.destroy();
+
+  let worst = 0;
+  let worstMistaken = 0;
+  for (let i = 0; i < WET.points; i++) {
+    const height = data[4 * i + 2]; // as the GPU has it
+    worst = Math.max(worst, Math.abs(gpu[4 * i] - sandWetness(height, wetness, wetHeight)));
+    worstMistaken = Math.max(worstMistaken, Math.abs(gpu[4 * i] - sandWetness(height + WET.off, wetness, wetHeight)));
+  }
+  return { points: WET.points, gpu: worst, mistaken: worstMistaken };
 }
 
 // The ground as a far pixel reads it on the GPU (chunks/terrain.wgsl

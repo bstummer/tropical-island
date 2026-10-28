@@ -6,8 +6,8 @@
 // A render target (createTarget) is the textures one pass draws into: colour
 // (with samples > 1, drawn multisampled and resolved into `color`, which is
 // what others read) and optionally depth.
-import { fromHalfFloat } from '../maths/index.js';
 import { bytesPerTexel } from '../core/gpu-stats.js';
+import { readTexture } from './readback.js';
 import mipmapShader from './mipmap.wgsl';
 
 let nextUid = 0;
@@ -18,7 +18,7 @@ export class Texture {
   // width, height; depth: layers of an array, or the depth of a 3D texture;
   // dimension '2d' or '3d'; array: a 2D array (also with one layer); format;
   // mips: true for a full mip chain, or how many levels; samples; render: drawn into; data: uploaded into
-  // (also when mipmaps are drawn); sampler: { mag, min, mipmap, wrap, anisotropy } (device.js).
+  // (also when mipmaps are drawn); sampler: { mag, min, mipmap, wrap, anisotropy, compare } (device.js).
   constructor(gpu, { name = 'texture', width, height = 1, depth = 1, dimension = '2d', array = false, format = 'rgba8unorm', mips = false, samples = 1, render = false, data = false, sampler = {} }) {
     Object.assign(this, { gpu, name, width, height, depth, dimension, array, format, samples, render, data });
     this.uid = nextUid++;
@@ -96,29 +96,11 @@ export class Texture {
     this.texture = null;
   }
 
-  // Reads a rectangle of one layer back: a Uint8Array for 8-bit formats, else a
+  // Reads a rectangle { x, y, width, height } of one layer of mip level `level`
+  // back, the whole level by default: a Uint8Array for 8-bit formats, else a
   // Float32Array (half floats converted). Rows from the texture's first.
-  async read({ x = 0, y = 0, width = this.width, height = this.height, layer = 0, level = 0 } = {}) {
-    const texel = bytesPerTexel(this.format);
-    const rowBytes = width * texel;
-    const bytesPerRow = Math.ceil(rowBytes / 256) * 256;
-    const { device, queue } = this.gpu;
-    const buffer = device.createBuffer({ label: `read ${this.name}`, size: bytesPerRow * height, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
-    const encoder = device.createCommandEncoder();
-    encoder.copyTextureToBuffer({ texture: this.texture, mipLevel: level, origin: [x, y, layer] }, { buffer, bytesPerRow, rowsPerImage: height }, [width, height, 1]);
-    queue.submit([encoder.finish()]);
-    try {
-      await buffer.mapAsync(GPUMapMode.READ);
-      const mapped = new Uint8Array(buffer.getMappedRange());
-      const packed = new Uint8Array(rowBytes * height);
-      for (let row = 0; row < height; row++) packed.set(mapped.subarray(row * bytesPerRow, row * bytesPerRow + rowBytes), row * rowBytes);
-      buffer.unmap();
-      if (texel === 4 && this.format.endsWith('8unorm')) return packed;
-      if (this.format.includes('16float')) return Float32Array.from(new Uint16Array(packed.buffer), fromHalfFloat);
-      return new Float32Array(packed.buffer);
-    } finally {
-      buffer.destroy();
-    }
+  read(region) {
+    return readTexture(this.gpu, this, region);
   }
 }
 

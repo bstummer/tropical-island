@@ -1,5 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
 import { createImage } from '../tools/image.js';
 import { shBasis, shIrradiance } from '../src/sky/light.js';
 import { coefficients, directions, texelCount, texels } from '../src/fixtures/maths-cases.js';
@@ -10,22 +14,45 @@ import { config } from '../src/config.js';
 import {
   benchmarkProblems,
   blendMismatch,
+  blockMismatch,
   checkLimits,
   describeWarning,
+  diffSummary,
   explainLaunchError,
   hazeProblems,
   terrainProblems,
   surfaceProblems,
   patchesProblems,
+  greenTilesProblems,
   isSameFile,
+  labelFolder,
   mathsMismatch,
   metricChanges,
   mismatchWarnings,
+  notReady,
+  ownPages,
+  pageLimit,
   parseArgs,
+  planCapture,
+  playerViewport,
+  readCapture,
+  removeCapture,
   resourceLeaks,
   rockProblems,
+  sheetFiles,
+  summarize,
+  teardownLeftovers,
   timeChangeTarget,
+  watchdog,
+  watchPage,
 } from '../tools/screenshot.js';
+
+// A folder of its own under the system's temp folder, removed after the test.
+function scratch(t) {
+  const dir = mkdtempSync(join(tmpdir(), 'screenshot-test-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  return dir;
+}
 
 // ---------------------------------------------------------------- own-page requests
 
@@ -43,6 +70,21 @@ test('other files are still requests', () => {
   // Linux paths are case-sensitive: a different case is a different file.
   assert.equal(isSameFile('file:///home/Me/dist/index.html', 'file:///home/me/dist/index.html', 'linux'), false);
   assert.equal(isSameFile('file:///home/me/dist/index.html?t=1', 'file:///home/me/dist/index.html', 'linux'), true);
+});
+
+test('a watched page reports requests for other files and WebSockets, not its own file', () => {
+  const page = new EventEmitter();
+  const fileUrl = 'file:///home/me/dist/index.html';
+  const { problems } = watchPage(page, fileUrl);
+  page.emit('request', { url: () => `${fileUrl}?capture=1` });
+  page.emit('request', { url: () => 'data:image/png;base64,AAAA' });
+  assert.deepEqual(problems, []);
+  page.emit('request', { url: () => 'https://example.com/font.woff2' });
+  page.emit('websocket', { url: () => 'ws://localhost:5173/' }); // Playwright reports no request for it
+  assert.deepEqual(problems, [
+    { kind: 'network request', text: 'https://example.com/font.woff2' },
+    { kind: 'network request', text: 'ws://localhost:5173/' },
+  ]);
 });
 
 // ---------------------------------------------------------------- limits
@@ -65,6 +107,24 @@ test('compare lists the numbers that changed, as shown', () => {
   assert.deepEqual(metricChanges(undefined, after), []);
 });
 
+test("compare's diff line never reads a real change as zero, and counts the pixels", () => {
+  assert.equal(diffSummary({ changed: 0, large: 0, max: 0, total: 1440000 }), 'identical');
+  const small = diffSummary({ changed: 61, large: 20, max: 3, total: 1440000 });
+  assert.equal(small, '0.0042% (61 px) of pixels differ, 0.0014% (20 px) by more than 2 levels (max channel delta 3)');
+  // One pixel of a 4K frame, the smallest share there is.
+  assert.match(diffSummary({ changed: 1, large: 1, max: 9, total: 3840 * 2160 }), /^0\.000012% \(1 px\) of pixels differ, 0\.000012% \(1 px\) by more/);
+  assert.match(diffSummary({ changed: 400000, large: 0, max: 2, total: 1440000 }), /^27\.78% \(400000 px\) of pixels differ, 0\.00% \(0 px\) by more/);
+});
+
+test('a view whose capture failed reports where its still is, under its label, or that it has none', (t) => {
+  const dir = join(scratch(t), 'my-label');
+  mkdirSync(dir);
+  const failed = { view: 'beach', file: 'beach.png', problems: [{ kind: 'timeout', text: '...' }] };
+  assert.equal(summarize(failed, dir), 'no still saved');
+  writeFileSync(join(dir, 'beach.png'), '');
+  assert.ok(summarize(failed, dir).endsWith(join('my-label', 'beach.png')), summarize(failed, dir));
+});
+
 test('resource leaks list what grew, and nothing for what shrank or stayed', () => {
   const MB = 1024 * 1024;
   const before = { objects: { Texture: 5, Buffer: 9, Framebuffer: 2 }, textureBytes: 10 * MB, renderTargetBytes: 50 * MB, bufferBytes: 2 * MB };
@@ -74,16 +134,94 @@ test('resource leaks list what grew, and nothing for what shrank or stayed', () 
   assert.deepEqual(resourceLeaks(before, { ...before, renderTargetBytes: 66.5 * MB }), ['+16.5 MB render targets']);
 });
 
-test('a benchmark result must cover every view and say where it ran', () => {
-  const summary = ['build      abc', 'gpu        Test GPU', 'browser    Test', 'screen     640×360', 'preset     high (MSAA 4)'].join('\n');
-  const result = (view) => ({ view, frameMs: [16.7, 16.6], counts: { drawCalls: 4 } });
-  assert.deepEqual(benchmarkProblems(summary, [result('beach'), result('overview')], ['beach', 'overview']), []);
+test("player mode's canvas is compared with the capture block by block, at any size", () => {
+  // Sky above, sand below, a dark headland on the left: as a view looks.
+  const view = (width, height) => {
+    const image = createImage(width, height);
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const colour = y < height / 2 ? (x < width / 4 ? [40, 60, 30] : [120, 170, 230]) : [220, 200, 160];
+        image.data.set(colour, (y * width + x) * 4);
+      }
+    }
+    return image;
+  };
+  // Each pixel of the canvas from the canvas as drawn at (x, y).
+  const moved = (image, from) => {
+    const out = createImage(image.width, image.height);
+    for (let y = 0; y < image.height; y++) {
+      for (let x = 0; x < image.width; x++) {
+        const [sx, sy] = from(x, y);
+        out.data.set(image.data.subarray((sy * image.width + sx) * 4, (sy * image.width + sx + 1) * 4), (y * image.width + x) * 4);
+      }
+    }
+    return out;
+  };
+  const capture = view(160, 90);
+  const canvas = view(32, 18);
+  assert.equal(blockMismatch(canvas, capture, 4), 0);
+  const upsideDown = moved(canvas, (x, y) => [x, 17 - y]);
+  assert.ok(blockMismatch(upsideDown, capture, 1) < 1e-9, 'upside down, the mean colour stays');
+  assert.ok(blockMismatch(upsideDown, capture, 4) > 100);
+  const shifted = moved(canvas, (x, y) => [Math.max(x - 8, 0), y]); // a quarter of the width to the right
+  assert.ok(blockMismatch(shifted, capture, 4) > 80);
+});
 
-  const texts = (problems) => problems.map((p) => p.text).join('\n');
-  assert.match(texts(benchmarkProblems(summary, [result('beach')], ['beach', 'overview'])), /measured views beach, expected beach, overview/);
-  assert.match(texts(benchmarkProblems(summary, [{ ...result('beach'), frameMs: [] }], ['beach'])), /no valid frame times for beach/);
-  assert.match(texts(benchmarkProblems(summary, [{ ...result('beach'), counts: null }], ['beach'])), /no GPU counts for beach/);
-  assert.match(texts(benchmarkProblems(summary.replace('gpu        Test GPU', 'gpu'), [result('beach')], ['beach'])), /no "gpu" line/);
+test('a final teardown may leave the canvas and nothing else', () => {
+  const canvasBytes = 640 * 360 * 4;
+  const none = { Texture: 0, RenderTarget: 0, Buffer: 0, QuerySet: 0, Pipeline: 0, ShaderModule: 0 };
+  const clean = { objects: none, textureBytes: 0, renderTargetBytes: canvasBytes, canvasBytes, bufferBytes: 0, sceneObjects: 0 };
+  assert.deepEqual(teardownLeftovers(clean), []);
+  const left = { ...clean, objects: { ...none, Buffer: 1, ShaderModule: 21 }, renderTargetBytes: canvasBytes + 4096, bufferBytes: 464, sceneObjects: 3 };
+  assert.deepEqual(teardownLeftovers(left), ['1 Buffer', '21 ShaderModule', '4 KB render targets', '1 KB buffers', '3 object(s) left in the scene']);
+});
+
+const BENCH_SUMMARY = ['Tropical Island benchmark', 'build      abc', 'gpu        Test GPU', 'browser    Test', 'screen     640×360', 'preset     high (MSAA 4)'].join('\n');
+const BENCH_VIEWS = [
+  { name: 'beach', position: [3.11, 2.64, -11.59] },
+  { name: 'overview', position: [-411.46, 1078.81, -120.56] },
+];
+const benchRow = (name) => ({ view: name, frameMs: [16.7, 16.6], counts: { drawCalls: 4 }, camera: BENCH_VIEWS.find((v) => v.name === name).position.slice() });
+const benchTexts = (problems) => problems.map((p) => p.text);
+
+test('a benchmark result must cover every view and say where it ran', () => {
+  assert.deepEqual(benchmarkProblems(BENCH_SUMMARY, [benchRow('beach'), benchRow('overview')], BENCH_VIEWS), []);
+  assert.deepEqual(benchTexts(benchmarkProblems(BENCH_SUMMARY, [benchRow('beach')], BENCH_VIEWS)), ['measured views beach, expected beach, overview']);
+  assert.deepEqual(benchTexts(benchmarkProblems(BENCH_SUMMARY, [benchRow('overview'), benchRow('beach')], BENCH_VIEWS)), ['measured views overview, beach, expected beach, overview']);
+  for (const counts of [null, { drawCalls: 0 }]) {
+    assert.deepEqual(benchTexts(benchmarkProblems(BENCH_SUMMARY, [{ ...benchRow('beach'), counts }], BENCH_VIEWS.slice(0, 1))), ['no GPU counts for beach']);
+  }
+});
+
+test('a benchmark row needs frame times, every one a positive finite number', () => {
+  for (const frameMs of [[], [16.7, NaN], [16.7, 0], [-16.7], [16.7, Infinity], [null]]) {
+    const problems = benchTexts(benchmarkProblems(BENCH_SUMMARY, [{ ...benchRow('beach'), frameMs }], BENCH_VIEWS.slice(0, 1)));
+    assert.deepEqual(problems, ['no valid frame times for beach'], `frame times ${frameMs}`);
+  }
+  assert.deepEqual(benchmarkProblems(BENCH_SUMMARY, [{ ...benchRow('beach'), frameMs: [0.01] }], BENCH_VIEWS.slice(0, 1)), []);
+});
+
+test('the benchmark summary needs each of its lines, with a value, at the start of a line', () => {
+  const rows = [benchRow('beach')];
+  const views = BENCH_VIEWS.slice(0, 1);
+  for (const line of ['build', 'gpu', 'browser', 'screen', 'preset']) {
+    const without = BENCH_SUMMARY.split('\n').filter((l) => !l.startsWith(line)).join('\n');
+    assert.deepEqual(benchTexts(benchmarkProblems(without, rows, views)), [`the summary has no "${line}" line`]);
+    const empty = BENCH_SUMMARY.replace(new RegExp(`^${line} .*$`, 'm'), `${line}      `);
+    assert.deepEqual(benchTexts(benchmarkProblems(empty, rows, views)), [`the summary has no "${line}" line`], `an empty ${line} line`);
+    const inside = BENCH_SUMMARY.replace(new RegExp(`^${line} `, 'm'), `the ${line} `);
+    assert.deepEqual(benchTexts(benchmarkProblems(inside, rows, views)), [`the summary has no "${line}" line`], `${line} inside a line`);
+  }
+});
+
+test("each benchmark row must be measured from its view's position", () => {
+  // A benchmark that never moves the camera measures every view from the first.
+  const stuck = BENCH_VIEWS.map((v) => ({ ...benchRow(v.name), camera: BENCH_VIEWS[0].position.slice() }));
+  assert.deepEqual(benchTexts(benchmarkProblems(BENCH_SUMMARY, stuck, BENCH_VIEWS)), ['overview was measured from 3.11, 2.64, -11.59, not from the view at -411.46, 1078.81, -120.56']);
+  const missing = [benchRow('beach'), { ...benchRow('overview'), camera: undefined }];
+  assert.deepEqual(benchTexts(benchmarkProblems(BENCH_SUMMARY, missing, BENCH_VIEWS)), ['overview was measured from nowhere, not from the view at -411.46, 1078.81, -120.56']);
+  assert.equal(benchmarkProblems(BENCH_SUMMARY, [{ ...benchRow('beach'), camera: [3.11, 2.66, -11.59] }], BENCH_VIEWS.slice(0, 1)).length, 1);
+  assert.deepEqual(benchmarkProblems(BENCH_SUMMARY, [{ ...benchRow('beach'), camera: [3.111, 2.64, -11.59] }], BENCH_VIEWS.slice(0, 1)), []);
 });
 
 test('warnings read as sentences with units', () => {
@@ -158,6 +296,39 @@ test('a missing info.json is reported instead of guessed', () => {
   assert.match(mismatchWarnings([{ info: null }, side({})])[0], /info\.json missing/);
 });
 
+// ---------------------------------------------------------------- compare sides and the contact sheet
+
+// A capture as screenshots/<folder>/ holds it: info.json listing `listed`, and the stills in `saved`.
+function fakeCapture(shots, folder, listed, saved) {
+  mkdirSync(join(shots, folder), { recursive: true });
+  const results = listed.map((view) => ({ view, file: `${view}.png`, problems: [] }));
+  writeFileSync(join(shots, folder, 'info.json'), JSON.stringify({ ...info, results }));
+  for (const view of saved) writeFileSync(join(shots, folder, `${view}.png`), '');
+  return results;
+}
+
+test('compare finds a capture by its label as the capture wrote it, and says when there is none', (t) => {
+  const shots = scratch(t);
+  fakeCapture(shots, 'my-run', ['beach'], ['beach']);
+  const found = readCapture('my run', shots);
+  assert.equal(found.dir, join(shots, 'my-run'));
+  assert.deepEqual([...found.pngs], ['beach.png']);
+  assert.throws(() => readCapture('other', shots), /no capture labelled "other": .*other does not exist/);
+});
+
+test('compare refuses labels that name no capture of their own', (t) => {
+  const shots = join(scratch(t), 'screenshots');
+  mkdirSync(join(shots, 'compare'), { recursive: true });
+  for (const label of ['..', '.', '', 'compare', 'MAP']) assert.throws(() => readCapture(label, shots), /label/, label);
+});
+
+test("a view without a still is missing from compare's and the contact sheet's files, not a crash", (t) => {
+  const shots = scratch(t);
+  const results = fakeCapture(shots, 'run', ['beach', 'lagoon'], ['lagoon']); // beach failed before its still
+  assert.deepEqual([...readCapture('run', shots).pngs], ['lagoon.png']);
+  assert.deepEqual([...sheetFiles(join(shots, 'run'), results).keys()], ['/lagoon.png']);
+});
+
 // ---------------------------------------------------------------- arguments
 
 test('options parse in both --key value and --key=value form', () => {
@@ -184,6 +355,142 @@ test('unknown options, missing values and stray arguments fail', () => {
   assert.throws(() => parseArgs(['--label']), /--label needs a value/);
   assert.throws(() => parseArgs(['--label', '--views', 'beach']), /--label needs a value/);
   assert.throws(() => parseArgs(['beach']), /unexpected argument "beach"/);
+});
+
+// ---------------------------------------------------------------- labels
+
+// Labels that try to leave screenshots/, or to land on it or on a folder of the tools'.
+const BAD_LABELS = ['..', '.', '', '...', '../../..', '-', '_', './', '/', '\\', 'compare', 'Compare', 'COMPARE.', 'map', 'Map..'];
+
+test('a label names one folder of its own in screenshots/', () => {
+  assert.equal(labelFolder('before'), 'before');
+  assert.equal(labelFolder('my run: 2'), 'my-run-2');
+  assert.equal(labelFolder('v1.2_rc-3'), 'v1.2_rc-3');
+  assert.equal(labelFolder('after.'), 'after', 'Windows drops trailing dots');
+  const shots = resolve('screenshots');
+  for (const label of ['../x', '..\\x', 'a/../..', '..a', 'C:\\Windows', '/etc', 'compare/../..', '.git', 'mapper']) {
+    const folder = labelFolder(label);
+    assert.equal(dirname(resolve(shots, folder)), shots, `${label} -> ${folder}`);
+  }
+});
+
+test('labels without a letter or digit, or naming a folder of the tools, are refused in any case', () => {
+  for (const label of BAD_LABELS) assert.throws(() => labelFolder(label), /needs a letter or a digit|is taken/, JSON.stringify(label));
+});
+
+test('only a capture\'s own folder right inside screenshots/ can be deleted', (t) => {
+  const root = scratch(t);
+  const shots = join(root, 'screenshots');
+  const keep = join(root, 'keep.txt'); // stands for the repo: it must survive
+  writeFileSync(keep, '');
+  for (const name of ['compare', 'map', 'mine/nested']) mkdirSync(join(shots, name), { recursive: true });
+  for (const dir of ['..', '.', '', 'compare', 'MAP', 'mine/nested', '../keep.txt', 'a/../..'].map((p) => join(shots, p)).concat(root, shots)) {
+    assert.throws(() => removeCapture(dir, shots), /refusing to delete/, dir);
+  }
+  assert.ok(existsSync(keep) && existsSync(join(shots, 'compare')) && existsSync(join(shots, 'map')) && existsSync(join(shots, 'mine', 'nested')));
+  removeCapture(join(shots, 'mine'), shots);
+  assert.ok(!existsSync(join(shots, 'mine')));
+  removeCapture(join(shots, 'never-made'), shots); // nothing to delete is fine
+});
+
+// ---------------------------------------------------------------- capture args
+
+test('the args of a capture become its views, size, label and page params', () => {
+  const plan = planCapture({ views: 'beach,shoreline', size: '320x180', label: 'my run', t: '2.5', time: 'sunset', quality: 'low', tonemap: 'agx', exposure: '1.5', gl: 'swiftshader' });
+  assert.deepEqual(plan.views.map((v) => v.name), ['beach', 'shoreline']);
+  assert.deepEqual([plan.width, plan.height, plan.label], [320, 180, 'my-run']);
+  assert.deepEqual(plan.query, { capture: '1', t: '2.5', time: 'sunset', quality: 'low', tonemap: 'agx', exposure: '1.5' });
+});
+
+test('every arg a capture can get wrong fails before it deletes anything', () => {
+  const ok = { label: 'test' };
+  const cases = [
+    [{ views: 'beach,nowhere' }, /Unknown view "nowhere"/],
+    [{ size: '1600*900' }, /--size/],
+    [{ label: '..' }, /needs a letter or a digit/],
+    [{ label: 'compare' }, /is taken/],
+    [{ gl: 'opengl' }, /--gl/],
+    [{ t: 'soon' }, /t=soon/],
+    [{ t: '-1' }, /t=-1/],
+    [{ time: 'midnight' }, /time=midnight/],
+    [{ time: '23' }, /time=23/],
+    [{ exposure: '0' }, /exposure=0/],
+    [{ quality: 'ultra' }, /--quality/],
+    [{ quality: 'constructor' }, /--quality/],
+    [{ tonemap: 'toString' }, /--tonemap/],
+  ];
+  for (const [args, error] of cases) assert.throws(() => planCapture({ ...ok, ...args }), error, JSON.stringify(args));
+});
+
+// ---------------------------------------------------------------- watchdog
+
+const until = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const fakePage = () => ({ closed: false, close() { this.closed = true; return Promise.resolve(); } });
+
+test("a view's watchdog closes its page and the pages opened after it once its time is up", async () => {
+  const context = new EventEmitter();
+  const [page, later, other] = [fakePage(), fakePage(), fakePage()];
+  const dog = watchdog(context, page, 0.05);
+  context.emit('page', later);
+  await until(100);
+  assert.equal(dog.fired, true);
+  assert.deepEqual([page.closed, later.closed, other.closed], [true, true, false]);
+  dog.stop();
+  assert.equal(context.listenerCount('page'), 0);
+});
+
+test("a page's time limit grows with its frame's pixels beyond the default size, and never shrinks", () => {
+  const { viewSeconds } = config.capture.timeouts;
+  assert.equal(pageLimit({ width: 1600, height: 900 }), viewSeconds);
+  assert.equal(pageLimit({ width: 3200, height: 1800 }), 4 * viewSeconds);
+  assert.equal(pageLimit({ width: 320, height: 180 }), viewSeconds);
+});
+
+test("player mode's page keeps the capture's aspect, so its canvas shows what the capture does", () => {
+  assert.deepEqual(playerViewport({ width: 1600, height: 900 }), { width: 320, height: 180 });
+  assert.deepEqual(playerViewport({ width: 1200, height: 900 }), { width: 320, height: 240 });
+  assert.deepEqual(playerViewport({ width: 1920, height: 1200 }), { width: 320, height: 200 });
+  assert.deepEqual(playerViewport({ width: 900, height: 900 }), { width: 320, height: 320 });
+});
+
+test('a watchdog stopped in time closes nothing', async () => {
+  const context = new EventEmitter();
+  const page = fakePage();
+  const dog = watchdog(context, page, 0.05);
+  dog.stop();
+  context.emit('page', fakePage());
+  await until(100);
+  assert.deepEqual([dog.fired, page.closed], [false, false]);
+});
+
+test("a check's watchdog closes the pages the check opened, not those of the check beside it", async () => {
+  const context = new EventEmitter();
+  context.newPage = async () => {
+    const page = fakePage();
+    context.emit('page', page);
+    return page;
+  };
+  const own = ownPages(context);
+  const page = await own.newPage();
+  const dog = watchdog(own, page, 0.05);
+  const [later, beside] = [await own.newPage(), await context.newPage()];
+  await until(100);
+  assert.equal(dog.fired, true);
+  assert.deepEqual([page.closed, later.closed, beside.closed], [true, true, false]);
+  dog.stop();
+  assert.equal(context.listenerCount('page'), 0);
+});
+
+// ---------------------------------------------------------------- capture pages
+
+test('a capture page that never got ready says why: crashed, closed, out of time or failed', () => {
+  const timeout = Object.assign(new Error('page.waitForFunction: Timeout 180000ms exceeded.'), { name: 'TimeoutError' });
+  const closed = new Error('page.waitForFunction: Target page, context or browser has been closed');
+  assert.deepEqual(notReady(new Error('page.waitForFunction: Target crashed'), { crashed: true, closed: false }), { kind: 'page crash', text: 'the page crashed before it was ready' });
+  assert.deepEqual(notReady(closed, { crashed: false, closed: true }), { kind: 'capture error', text: 'the page was closed before it was ready' });
+  assert.deepEqual(notReady(timeout, { crashed: false, closed: false }), { kind: 'timeout', text: 'not ready after 180 s' });
+  const failed = notReady(new Error('page.goto: net::ERR_FILE_NOT_FOUND at file:///x\nCall log: ...'), { crashed: false, closed: false });
+  assert.deepEqual(failed, { kind: 'capture error', text: 'failed before it was ready: page.goto: net::ERR_FILE_NOT_FOUND at file:///x' });
 });
 
 // ---------------------------------------------------------------- blend fixture
@@ -296,10 +603,11 @@ const goodTerrain = {
   ground: { gpu: 0.3, mistaken: 9 },
   mesh: { points: 3000, gpu: 2e-4, mistaken: 3 },
   bounce: { points: 1024, gpu: 1e-3, mistaken: 0.1 },
+  wet: { points: 256, gpu: 1e-7, mistaken: 0.2 },
   far: { points: 512, lod: 7, gpu: 0.2, mistaken: 30 },
   island: [1, 2, 4, 8].map((texel) => ({ texel, median: 0.004 * texel })),
 };
-const terrainLimits = { limit: 0.002, islandMedian: 0.04, mesh: 0.01, bounce: 0.01 };
+const terrainLimits = { limit: 0.002, islandMedian: 0.04, mesh: 0.01, bounce: 0.01, wet: 0.001 };
 
 test('terrain problems: heights and ground that agree pass', () => {
   assert.deepEqual(terrainProblems(goodTerrain, terrainLimits), []);
@@ -330,6 +638,12 @@ test("terrain problems: the light from below's albedo off JS's, a mistake in its
   assert.match(terrainProblems({ ...goodTerrain, bounce: { points: 1024, gpu: 1e-3, mistaken: 0.004 } }, terrainLimits).join(), /half a texel off .* misses it/);
   assert.equal(terrainProblems({ ...goodTerrain, bounce: undefined }, terrainLimits).length, 2);
   assert.equal(terrainProblems({ ...goodTerrain, bounce: { points: 1024, gpu: NaN, mistaken: NaN } }, terrainLimits).length, 2);
+});
+
+test("terrain problems: the ground's wetness off its JS twin, a mistake in it the check misses, or no wetness read fail", () => {
+  assert.match(terrainProblems({ ...goodTerrain, wet: { points: 256, gpu: 0.03, mistaken: 0.2 } }, terrainLimits).join(), /wetness on the GPU vs world\/albedo\.js sandWetness/);
+  assert.match(terrainProblems({ ...goodTerrain, wet: { points: 256, gpu: 1e-7, mistaken: 1e-4 } }, terrainLimits).join(), /5 cm off .* misses it/);
+  assert.equal(terrainProblems({ ...goodTerrain, wet: undefined }, terrainLimits).length, 2);
 });
 
 test("terrain problems: the far ground off JS's mipmaps, a mistake in them the check misses, or no far read fail", () => {
@@ -377,13 +691,41 @@ test("surface problems: a tile that doesn't repeat, a check that can't see it, o
 });
 
 test('patches problems: GPU patches on their twin pass; off it, a check that misses its mistake, or no answer fail', () => {
-  const limits = { limit: 0.002 };
-  const good = { points: 1024, gpu: 3e-4, mistaken: 0.6 };
+  const limits = { limit: 0.002, seen: { share: 0.15, albedo: 0.15 } };
+  const seen = { cells: 1024, share: 0.06, albedo: 0.07, mistaken: { share: 0.9, albedo: 0.6 } };
+  const good = { points: 1024, gpu: 3e-4, mistaken: 0.6, seen };
   assert.deepEqual(patchesProblems(good, limits), []);
   assert.match(patchesProblems({ ...good, gpu: 0.4 }, limits).join(), /GPU vs world\/green\.js off/);
   assert.match(patchesProblems({ ...good, mistaken: 1e-4 }, limits).join(), /misses it/);
-  assert.equal(patchesProblems(undefined, limits).length, 2);
+  assert.equal(patchesProblems(undefined, limits).length, 6);
   assert.match(patchesProblems({ ...good, gpu: NaN }, limits).join(), /GPU/);
+});
+
+test('patches problems: the green seen the same from near and far passes; changed by the camera, or a check that misses its mistake, fails', () => {
+  const limits = { limit: 0.002, seen: { share: 0.15, albedo: 0.15 } };
+  const seen = { cells: 1024, share: 0.06, albedo: 0.07, mistaken: { share: 0.9, albedo: 0.6 } };
+  const good = { points: 1024, gpu: 3e-4, mistaken: 0.6, seen };
+  assert.match(patchesProblems({ ...good, seen: { ...seen, share: 0.48 } }, limits).join(), /camera stands: the sand's share/);
+  assert.match(patchesProblems({ ...good, seen: { ...seen, albedo: 0.5 } }, limits).join(), /camera stands: the albedo/);
+  assert.match(patchesProblems({ ...good, seen: { ...seen, mistaken: { share: 0.9, albedo: 0.1 } } }, limits).join(), /albedo only .* misses it/);
+  assert.match(patchesProblems({ ...good, seen: { ...seen, share: NaN } }, limits).join(), /sand's share/);
+  assert.equal(patchesProblems({ ...good, seen: undefined }, limits).length, 4);
+});
+
+test("green-tiles problems: the tiles' averages on their twin and the green near the camera on its albedo pass; off them, lifted either way, a check that misses its mistakes, or no answer fail", () => {
+  const limits = { layers: 0.01, lift: 0.015, between: 0.04 };
+  const at = (lift) => ({ lift, at: 'the scrub, pixels 6 mm across' });
+  const good = { points: 65536, footprints: 7, layers: { gpu: 0.002, mistaken: 0.19 }, lifts: { sharp: at(0.01), between: at(-0.03), mistaken: at(0.11) } };
+  const lifts = (key, lift) => ({ ...good, lifts: { ...good.lifts, [key]: at(lift) } });
+  assert.deepEqual(greenTilesProblems(good, limits), []);
+  assert.match(greenTilesProblems({ ...good, layers: { gpu: 0.02, mistaken: 0.19 } }, limits).join(), /greenLayers off/);
+  assert.match(greenTilesProblems({ ...good, layers: { gpu: 0.002, mistaken: 0.005 } }, limits).join(), /nothing between the covers .* misses it/);
+  assert.match(greenTilesProblems(lifts('sharp', 0.039), limits).join(), /reads 3\.9% off its albedo at the scrub, pixels 6 mm across \(limit 1\.5%\)/);
+  assert.match(greenTilesProblems(lifts('sharp', -0.02), limits).join(), /reads -2\.0% off/);
+  assert.match(greenTilesProblems(lifts('between', 0.051), limits).join(), /sees a few leaves/);
+  assert.match(greenTilesProblems(lifts('mistaken', 0.02), limits).join(), /half their share .* misses it/);
+  assert.equal(greenTilesProblems(undefined, limits).length, 5);
+  assert.match(greenTilesProblems(lifts('sharp', NaN), limits).join(), /near the camera/);
 });
 
 // ---------------------------------------------------------------- time check

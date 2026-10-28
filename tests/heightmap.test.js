@@ -38,19 +38,24 @@ const smallLevels = (island) => small.levels.map((_, k) => layoutLevel(island, s
 // island as the game's are: quick to build for every seed.
 const quarter = { blend: settings.blend / 4, levels: settings.levels.map((level) => ({ ...level, texel: 4 * level.texel })) };
 
-// The game's layout for a seed: the coarse grid built, the fine one laid out on it.
+// The game's layout for a seed: the coarse grid's heights (fillRows's, which
+// the fine one's layout reads alone), the fine one laid out on them.
 const gameLayouts = new Map();
 function gameLayout(seed) {
   if (!gameLayouts.has(seed)) {
     const island = createIsland(createRandom(seed));
     const coarse = layoutLevel(island, settings, 1);
-    const n = coarse.samples ** 2;
-    const heights = new Float32Array(n);
-    fillRows(island, coarse, 0, coarse.samples, heights, new Float32Array(4 * n), new Uint8Array(GROUND * n));
+    const { origin, texel, samples } = coarse;
+    const heights = new Float32Array(samples ** 2);
+    const out = {};
+    for (let j = 0; j < samples; j++) for (let i = 0; i < samples; i++) heights[j * samples + i] = island.evaluate(origin[0] + i * texel, origin[1] + j * texel, out).height;
     gameLayouts.set(seed, { island, levels: [layoutLevel(island, settings, 0, { ...coarse, heights }), coarse] });
   }
   return gameLayouts.get(seed);
 }
+// The game's layout is checked for these: seeds 17, 19, 48, 68 and 70 laid the
+// fine grid out past the coarse one's edge.
+const GAME_SEEDS = [...SEEDS, 48, 68, 70];
 
 // Round the cove, the game's grids but smaller, quick to build for every
 // seed: 2 m apart over the beach, the bay and the headland, where sand meets rock.
@@ -67,7 +72,7 @@ function coveMap(seed) {
 test("each level lies inside the next coarser one's full share", () => {
   const layouts = [
     { blend: small.blend, levels: smallLevels(null) },
-    ...[1, 2].map((seed) => ({ blend: settings.blend, levels: gameLayout(seed).levels })),
+    ...GAME_SEEDS.map((seed) => ({ blend: settings.blend, levels: gameLayout(seed).levels })),
     ...SEEDS.map((seed) => ({ blend: quarter.blend, levels: quarterMap(seed).levels })),
   ];
   for (const { blend, levels } of layouts) {
@@ -91,7 +96,7 @@ test('the grids laid out for an island halve exactly for every level of their mi
   // lie off where it is read, by up to a texel of it. The last level's texels
   // reach past a far pixel's footprint: 256 samples, 512 m on the fine grid.
   assert.ok(gridAlign(settings) >= 256);
-  for (const seed of [1, 2]) {
+  for (const seed of GAME_SEEDS) {
     const { levels } = gameLayout(seed);
     const coarse = levels.at(-1);
     for (const { texel, origin, samples } of levels) {
@@ -151,10 +156,9 @@ test('the coarse grid reaches past the island and its reef into deep water', () 
 
 test('the fine grid has its full say over all the land and the sea shallower than its depth, the cove no different', () => {
   // Wherever the fine grid hasn't, the ground lies deeper: checked every 8 m
-  // with the game's layout, for its seed and the next, and every 16 m with
-  // the quarter's, for every seed.
+  // with the game's layout and every 16 m with the quarter's, for every seed.
   const cases = [
-    ...[1, 2].map((seed) => ({ seed, ...gameLayout(seed), blend: settings.blend, step: 8 })),
+    ...GAME_SEEDS.map((seed) => ({ seed, ...gameLayout(seed), blend: settings.blend, step: 8 })),
     ...SEEDS.map((seed) => ({ seed, island: createIsland(createRandom(seed)), levels: quarterMap(seed).levels, blend: quarter.blend, step: 16 })),
   ];
   const out = {};

@@ -3,7 +3,7 @@
   "engine": "V8 13.6.233.17-node.53",
   "answers": {
     "scalars": "837:8e4f6b56752ef729",
-    "half floats from numbers": "6449:29efd78f259c84b1",
+    "half floats from numbers": "6449:056e5c13ba170e49",
     "half floats to numbers": "65536:ecc18b9b372011f0",
     "Vector3 arithmetic": "13415:17e02e8a3c93970c",
     "Vector3 through matrices": "3603:33045d779708a566",

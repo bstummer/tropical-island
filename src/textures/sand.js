@@ -8,7 +8,7 @@
 // grain's average factor (read back once, so it comes as a promise), which the
 // shader divides by, so the sand keeps its albedo on average. Settings:
 // config.world.terrain.sand.
-import { Vector2, Vector3 } from '../maths/index.js';
+import { Vector2, Vector3, Vector4 } from '../maths/index.js';
 import grainShader from './sand-grain.wgsl';
 import ripplesShader from './sand-ripples.wgsl';
 import { Material } from '../gpu/material.js';
@@ -48,8 +48,9 @@ export function sandUniforms(tiles, sand, wetHeight, seaYaw) {
     uSandGrainMean: { value: tiles.grainMean },
     uSandTiles: { value: new Vector3(sand.grain.tile, sand.ripples.tile, sand.ripples.strength) },
     uSandWind: { value: new Vector2(-Math.sin(yaw), -Math.cos(yaw)) },
-    uWet: { value: new Vector3(sand.wetness.film, wetHeight, sand.wetness.dry) },
-    uSandRoughness: { value: new Vector3(sand.roughness.dry, sand.roughness.wet, sand.roughness.film) },
+    uWet: { value: new Vector4(sand.wetness.film, wetHeight, sand.wetness.dry, sand.wetness.step) },
+    uSandRoughness: { value: new Vector4(sand.roughness.dry, sand.roughness.wet, sand.roughness.soaked, sand.roughness.film) },
     uSandRange: { value: sand.range },
+    uSandRumples: { value: new Vector2(sand.rumples.wavelength, sand.rumples.slope) },
   };
 }

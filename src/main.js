@@ -2,7 +2,7 @@
 // With ?capture=1, core/capture.js takes over the loop for tools/screenshot.js.
 import { config } from './config.js';
 import { findView } from './views.js';
-import { parseParams } from './core/params.js';
+import { lookup, parseParams } from './core/params.js';
 import { createClock } from './core/clock.js';
 import { createRandom } from './core/random.js';
 import { createRenderer } from './core/renderer.js';
@@ -37,6 +37,7 @@ import * as terrainFixture from './fixtures/terrain.js';
 import * as surfacesFixture from './fixtures/surfaces.js';
 import * as patchesFixture from './fixtures/patches.js';
 import * as rocksFixture from './fixtures/rocks.js';
+import * as greenTilesFixture from './fixtures/green-tiles.js';
 
 // Updated in this order every frame. Each module exports create(ctx) -> { update(dt, t), dispose(), ready? }
 // where the optional `ready` promise is awaited before a capture starts.
@@ -63,6 +64,7 @@ const FIXTURES = {
   surfaces: [sky, surfacesFixture],
   patches: [patchesFixture],
   rocks: [sky, terrain, rocks, rocksFixture],
+  'green-tiles': [greenTilesFixture],
 };
 
 let captureMode = false;
@@ -221,15 +223,12 @@ async function boot() {
 }
 
 function preset(name) {
-  const quality = config.quality.presets[name];
-  if (!quality) throw new Error(`Unknown quality "${name}". Presets: ${Object.keys(config.quality.presets).join(', ')}`);
-  return quality;
+  return lookup(config.quality.presets, name, 'quality', 'Presets');
 }
 
 function worldSystems(fixture) {
   if (!fixture) return WORLD_SYSTEMS;
-  if (!FIXTURES[fixture]) throw new Error(`Unknown fixture "${fixture}". Fixtures: ${Object.keys(FIXTURES).join(', ')}`);
-  return FIXTURES[fixture];
+  return lookup(FIXTURES, fixture, 'fixture', 'Fixtures');
 }
 
 function captureFail(err) {
@@ -245,8 +244,9 @@ function fail(err, title = 'Could not start.') {
     captureFail(err);
     return;
   }
-  if (document.pointerLockElement) document.exitPointerLock(); // free the cursor to read the error
   const box = document.getElementById('error');
+  if (!box.hidden) return; // the first error is the cause, the ones after it follow ("invalid due to a previous error")
+  if (document.pointerLockElement) document.exitPointerLock(); // free the cursor to read the error
   box.textContent = `${title}\n\n${err?.message ?? err}`;
   box.hidden = false;
 }

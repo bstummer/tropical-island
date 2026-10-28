@@ -1,6 +1,6 @@
 // Verifies that dist/ is a single, self-contained HTML file, that src/ only
 // gets time and randomness through core/clock.js and core/random.js, and that
-// it imports nothing from outside src/.
+// it imports and includes nothing from outside src/.
 // Usage: node tools/check-build.js   (exits non-zero on any failure)
 // The individual checks are exported for tests/check-build.test.js; vite.config.js
 // uses checkOutputFiles() to fail any build that would emit more than index.html.
@@ -35,12 +35,18 @@ export const HTML_RULES = [
   { id: 'dynamic-import', name: 'dynamic import()', re: /(?<![\w$.])import\s*\(/g },
 ];
 
+// Where a shader's `#include "/…"` starts: vite-plugin-glsl's `root` (vite.config.js).
+export const SHADER_ROOT = '/src/shaders';
+
+const SCRIPTS = /\.(js|mjs|cjs|jsx|ts|tsx|mts|cts)$/; // what Vite compiles
+const SHADERS = /\.(wgsl|glsl|vert|frag|vs|fs)$/; // what vite-plugin-glsl compiles
+
 // Sources of non-determinism that must go through clock.js / random.js instead,
-// and imports from outside src/.
+// and imports and shader includes from outside src/.
 export const SOURCE_RULES = [
-  { id: 'math-random', name: 'Math.random', re: /\bMath\.random\b/g },
-  { id: 'date', name: 'Date.now / new Date()', re: /\bDate\.now\b|\bnew\s+Date\b/g },
-  { id: 'performance-now', name: 'performance.now', re: /\bperformance\.now\b/g, except: ['core/clock.js'] },
+  { id: 'math-random', name: 'Math.random', files: SCRIPTS, re: /\bMath\.random\b/g },
+  { id: 'date', name: 'Date.now / new Date()', files: SCRIPTS, re: /\bDate\.now\b|\bnew\s+Date\b/g },
+  { id: 'performance-now', name: 'performance.now', files: SCRIPTS, re: /\bperformance\.now\b/g, except: ['core/clock.js'] },
   // The game has no runtime dependencies (CLAUDE.md §2). Every module a file
   // names is matched: whatever comes before `from '...'` (so no import or
   // export clause can hide one), `import '...'`, `import('...')`, and the
@@ -53,6 +59,7 @@ export const SOURCE_RULES = [
   {
     id: 'own-imports',
     name: 'an import from outside src/',
+    files: SCRIPTS,
     re: /(?<![.'"`\w$])from\s*(?<q1>['"])(?<from>(?:(?!\k<q1>)[^\n])*)\k<q1>|(?<![.'"`\w$])import\s*(?:\(\s*)?(?<q2>['"`])(?<bare>(?:(?!\k<q2>)[^\n])*)\k<q2>|(?<![.'"`\w$])import\.meta\.glob\s*(?:<(?:[^<>()]|<[^<>()]*>)*>)?\s*\(\s*(?<glob>\[(?:\s*(?:'[^'\n]*'|"[^"\n]*"|`[^`\n]*`)\s*,?)*\s*\]|(?<q3>['"`])(?:(?!\k<q3>)[^\n])*\k<q3>)/g,
     allow: ({ groups: { from, bare, glob } }, path) => {
       if (glob === undefined) return insideSrc(from ?? bare, path);
@@ -60,12 +67,37 @@ export const SOURCE_RULES = [
     },
     hint: 'import only src/ files, by relative path: the game has no dependencies',
   },
+  // vite-plugin-glsl inlines an included chunk without the bundler seeing it,
+  // so checkModules() can't: this is the only check. The plugin's pattern,
+  // and like the plugin it ignores an #include in a comment.
+  {
+    id: 'own-includes',
+    name: 'a shader #include from outside src/',
+    files: SHADERS,
+    re: /#include\s+(?<chunk>[^\s<>]+)/gi,
+    allow: ({ groups: { chunk } }, path) => includeInsideSrc(chunk, path),
+    hint: 'include only shaders in src/',
+  },
 ];
 
 // Whether `specifier`, imported by src/`path`, is a file in src/.
 function insideSrc(specifier, path) {
   if (!/^\.\.?\//.test(specifier) || specifier.includes('\\')) return false;
   return !posix.normalize(posix.join(posix.dirname(path), specifier)).startsWith('../');
+}
+
+// Whether the chunk a shader in src/`path` includes is a file in src/, found as
+// vite-plugin-glsl finds it (paths from the project, at /): from SHADER_ROOT if
+// it starts with a slash, else from the shader's folder. vite.config.js makes a
+// leading `chunks/` start with a slash in the shaders it compiles, not in the
+// chunks they include, so both readings must stay in src/. (src/ itself is
+// outside: the plugin adds .glsl to a name without an extension, src.glsl.)
+function includeInsideSrc(chunk, path) {
+  const name = chunk.replace(/^["']|["']?;?$/g, '');
+  if (/[\\:]/.test(name)) return false; // a backslash or a drive, which resolve() reads on Windows
+  const found = [name.startsWith('/') ? posix.join(SHADER_ROOT, name) : posix.resolve('/src', posix.dirname(path), name)];
+  if (name.startsWith('chunks/')) found.push(posix.join(SHADER_ROOT, name));
+  return found.every((file) => file.startsWith('/src/'));
 }
 
 // Content rules for the built HTML.
@@ -116,16 +148,17 @@ export function checkSize(bytes, budget) {
   return { level: 'ok', message: '' };
 }
 
-// Source lint (SOURCE_RULES) over every script under srcDir (.js, and the
-// other extensions Vite would compile). Comments are ignored.
+// Source lint (SOURCE_RULES) over every script and shader under srcDir (the
+// extensions Vite and vite-plugin-glsl would compile). Comments are ignored.
 export function checkSources(srcDir) {
   const failures = [];
   for (const name of readdirSync(srcDir, { recursive: true })) {
-    if (!/\.(js|mjs|cjs|jsx|ts|tsx|mts|cts)$/.test(name)) continue;
+    const rules = SOURCE_RULES.filter((rule) => rule.files.test(name));
+    if (!rules.length) continue;
     const path = relative(srcDir, join(srcDir, name)).replaceAll('\\', '/');
-    // Without comments, so docs may mention the forbidden APIs.
+    // Without comments, so docs may mention the forbidden APIs (WGSL's are JavaScript's).
     const code = blankComments(readFileSync(join(srcDir, name), 'utf8'));
-    for (const rule of SOURCE_RULES) {
+    for (const rule of rules) {
       if (rule.except?.includes(path)) continue;
       for (const match of code.matchAll(rule.re)) {
         if (rule.allow?.(match, path)) continue;
@@ -139,12 +172,14 @@ export function checkSources(srcDir) {
 // JS source with every comment blanked out, keeping line and column offsets.
 // Strings, template literals and regex literals are skipped, so a `/*` or `//`
 // inside one (a glob like './plants/*.js', say) doesn't hide the code after it.
+// The code in a template's `${…}` is read as code, templates in it too.
 // A `/` starts a regex where a value can't end before it, the usual heuristic.
 export function blankComments(code) {
   const out = code.split('');
   const blank = (from, to) => {
     for (let k = from; k < to; k++) if (out[k] !== '\n') out[k] = ' ';
   };
+  const braces = []; // per `${` still open, the braces opened in it and not yet closed
   let last = ''; // the last significant character of code, to tell a regex from a division
   for (let i = 0; i < code.length; ) {
     const c = code[i];
@@ -157,13 +192,21 @@ export function blankComments(code) {
       const end = code.indexOf('*/', i + 2);
       blank(i, end === -1 ? code.length : end + 2);
       i = end === -1 ? code.length : end + 2;
-    } else if (c === '"' || c === "'" || c === '`') {
+    } else if (c === '"' || c === "'") {
       i = skipQuoted(code, i, c);
       last = c;
+    } else if (c === '`' || (c === '}' && braces.at(-1) === 0)) {
+      // A template literal, or the rest of one after a `${…}`.
+      if (c === '}') braces.pop();
+      i = skipTemplate(code, i);
+      if (code.startsWith('${', i - 2)) braces.push(0);
+      last = code[i - 1]; // a regex may start a `${…}`, not follow a template
     } else if (c === '/' && (last === '' || /[(,=:[!&|?{};+\-*%<>~^]/.test(last) || /\b(return|typeof|case|in|of|delete|void|new)\s*$/.test(code.slice(Math.max(0, i - 8), i)))) {
       i = skipRegex(code, i);
       last = '/';
     } else {
+      if (c === '{' && braces.length) braces[braces.length - 1]++;
+      if (c === '}' && braces.length) braces[braces.length - 1]--;
       if (!/\s/.test(c)) last = c;
       i++;
     }
@@ -171,10 +214,24 @@ export function blankComments(code) {
   return out.join('');
 }
 
-// Index just past the string or template literal opened by `quote` at i.
+// Index just past the string opened by `quote` at i, which ends with its line
+// at the latest (as JavaScript's do): a quote misread can't swallow the file.
 function skipQuoted(code, i, quote) {
-  for (i++; i < code.length && code[i] !== quote; i++) if (code[i] === '\\') i++;
+  for (i++; i < code.length && code[i] !== quote && code[i] !== '\n'; i++) {
+    if (code[i] === '\\') i += code.startsWith('\r\n', i + 1) ? 2 : 1; // a line continuation is one escape, CRLF too
+  }
   return i + 1;
+}
+
+// Index just past the part of a template literal from i (its opening backtick,
+// or the `}` that closes a `${…}` in it) to its closing backtick or next `${`.
+function skipTemplate(code, i) {
+  for (i++; i < code.length; i++) {
+    if (code[i] === '\\') i++;
+    else if (code[i] === '`') return i + 1;
+    else if (code[i] === '$' && code[i + 1] === '{') return i + 2;
+  }
+  return i;
 }
 
 // Index just past the regex literal starting at i (its flags included).

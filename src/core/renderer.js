@@ -19,9 +19,10 @@ export async function createRenderer({ canvas, quality: preset, capture, onError
     size.width = Math.max(1, canvas.clientWidth || window.innerWidth);
     size.height = Math.max(1, canvas.clientHeight || window.innerHeight);
     size.pixelRatio = Math.min(window.devicePixelRatio || 1, quality.maxPixelRatio) * quality.renderScale;
-    // As three.js sized it: the drawing buffer rounds down.
-    canvas.width = Math.floor(size.width * size.pixelRatio);
-    canvas.height = Math.floor(size.height * size.pixelRatio);
+    // As three.js sized it: the drawing buffer rounds down, but not to 0 (a
+    // window 1 px high at a render scale under 1), which no texture can be.
+    canvas.width = Math.max(1, Math.floor(size.width * size.pixelRatio));
+    canvas.height = Math.max(1, Math.floor(size.height * size.pixelRatio));
     stats.setCanvas(canvas.width, canvas.height, gpu.canvasFormat);
     for (const fn of listeners) fn(size);
   }

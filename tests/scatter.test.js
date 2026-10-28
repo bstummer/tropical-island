@@ -66,6 +66,18 @@ test('the larger of two overlapping things wins, whichever cell comes first; a c
   }
 });
 
+test("a region's radius keeps things within it round the origin, where they stand as without it", () => {
+  const rule = { seed: 6, cell: 1, chance: 1, where: {} };
+  const box = { a: [-20, 20], o: [-20, 20] };
+  const make = (a, o) => ({ a, o, footprint: square(a, o, 0.01) });
+  const all = scatter(flat, null, rule, box, make, createClearance());
+  const round = scatter(flat, null, rule, { ...box, radius: 12 }, make, createClearance());
+  assert.ok(round.length > 0 && round.length < all.length);
+  for (const { a, o } of round) assert.ok(Math.hypot(a, o) <= 12, `a thing ${Math.hypot(a, o).toFixed(2)} m from the origin`);
+  const spot = ({ a, o }) => `${a},${o}`;
+  assert.deepEqual(round.map(spot), all.filter(({ a, o }) => Math.hypot(a, o) <= 12).map(spot));
+});
+
 test('things keep clear of what is already claimed, and join it', () => {
   const rule = { seed: 9, cell: 2, chance: 1, where: {} };
   const region = { a: [0, 10], o: [0, 10] };

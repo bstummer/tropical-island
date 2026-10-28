@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Bindings, layoutEntry } from '../src/gpu/bindings.js';
+import { Bindings, GROUPS, layoutEntry } from '../src/gpu/bindings.js';
 import { reflect } from '../src/gpu/reflect.js';
 
 globalThis.GPUShaderStage ??= { VERTEX: 1, FRAGMENT: 2, COMPUTE: 4 };
@@ -68,6 +68,26 @@ test('uniforms are written when they change, and bind groups made once per set o
   assert.equal(other.descriptor.entries[3].resource.buffer, uniforms.uCounts.value);
 });
 
+test('the bind groups kept are those used last', () => {
+  const gpu = fakeGpu();
+  const bindings = new Bindings(gpu, reflect(MATERIAL), 1, 'test');
+  const uniforms = { uTint: { value: [1, 1, 1] }, uGain: { value: 1 }, uMap: { value: null }, uCounts: { value: {} } };
+  const textures = Array.from({ length: GROUPS + 1 }, (_, i) => texture(`t${i}`));
+  const use = (t) => {
+    uniforms.uMap.value = t;
+    bindings.update(uniforms);
+    return gpu.log.groups;
+  };
+  for (const t of textures.slice(0, GROUPS)) use(t);
+  assert.equal(use(textures[0]), GROUPS); // kept, and now the last used
+  // One set more than are kept: the least recently used goes, t1 (not t0).
+  assert.equal(use(textures[GROUPS]), GROUPS + 1);
+  assert.equal(bindings.groups.size, GROUPS);
+  assert.equal(use(textures[0]), GROUPS + 1);
+  assert.equal(use(textures[1]), GROUPS + 2);
+  assert.equal(bindings.groups.size, GROUPS);
+});
+
 const SOURCE = `
 @group(1) @binding(0) var uTiles: texture_2d_array<f32>;
 @group(1) @binding(1) var uTilesSampler: sampler;
@@ -78,6 +98,27 @@ const SOURCE = `
 @group(1) @binding(6) var uShadowSampler: sampler_comparison;
 @group(1) @binding(7) var uAerial: texture_3d<f32>;
 `;
+
+test('a comparison sampler compares as reversed depth does, unless its texture says otherwise', () => {
+  const gpu = fakeGpu();
+  const bindings = new Bindings(gpu, reflect(SOURCE), 1, 'test');
+  const tiles = texture('tiles');
+  const shadow = { ...texture('shadow'), sampler: { mag: 'linear', min: 'linear' } };
+  const uniforms = { uTiles: { value: tiles }, uPlaces: { value: null }, uHeight: { value: null }, uShadow: { value: shadow }, uAerial: { value: null } };
+  const sampler = (group, name) => group.descriptor.entries[bindings.entries.findIndex((b) => b.name === name)].resource.sampler;
+  const first = bindings.update(uniforms);
+  assert.deepEqual(sampler(first, 'uShadowSampler'), { mag: 'linear', min: 'linear', compare: 'greater-equal' });
+  assert.equal(sampler(first, 'uTilesSampler'), tiles.sampler); // a filtering one, as its texture's
+  // The same descriptor every frame, so the same sampler and bind group.
+  uniforms.uShadow.value = { ...shadow, uid: uid++, view: { view: 'shadow 2' } };
+  assert.equal(sampler(bindings.update(uniforms), 'uShadowSampler'), sampler(first, 'uShadowSampler'));
+  assert.equal(gpu.log.groups, 2);
+  // A texture's own comparison, and none: the device's default sampler, comparing.
+  uniforms.uShadow.value = { ...shadow, sampler: { compare: 'less' } };
+  assert.equal(sampler(bindings.update(uniforms), 'uShadowSampler').compare, 'less');
+  uniforms.uShadow.value = null;
+  assert.deepEqual(sampler(bindings.update(uniforms), 'uShadowSampler'), { compare: 'greater-equal' });
+});
 
 test('layouts follow the sampler beside each texture', () => {
   const { bindings } = reflect(SOURCE);

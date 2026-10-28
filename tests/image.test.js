@@ -35,6 +35,15 @@ function greyImage(width, height, f) {
 
 const at = (image, x, y) => [...image.data.subarray(4 * (y * image.width + x), 4 * (y * image.width + x) + 3)];
 
+// An image whose three channels differ and vary apart, so mixing them up shows.
+function colourImage(width, height) {
+  const image = createImage(width, height);
+  for (let i = 0; i < width * height; i++) image.data.set([(37 * i) % 256, (101 * i + 50) % 256, (173 * i + 90) % 256], 4 * i);
+  return image;
+}
+
+const MAGENTA = [255, 40, 200];
+
 // ---------------------------------------------------------------- layout
 
 test('crop takes the region and clamps it to the image', () => {
@@ -45,6 +54,21 @@ test('crop takes the region and clamps it to the image', () => {
   assert.deepEqual(at(part, 3, 1), at(image, 5, 4));
   const edge = crop(image, 8, 7, 5, 5);
   assert.deepEqual([edge.width, edge.height], [2, 1]);
+});
+
+test('crop clamps a region off any side of the image into it, at whole pixels', () => {
+  const image = colourImage(10, 8);
+  // Every pixel of `part` is the image's, from (x0, y0) on, and nothing reaches past it.
+  const from = (part, x0, y0) => {
+    assert.ok(x0 + part.width <= image.width && y0 + part.height <= image.height, `${part.width} x ${part.height} at (${x0}, ${y0})`);
+    for (let y = 0; y < part.height; y++) for (let x = 0; x < part.width; x++) assert.deepEqual(at(part, x, y), at(image, x0 + x, y0 + y));
+  };
+  from(crop(image, -3, -2, 4, 3), 0, 0);
+  from(crop(image, 2.4, 3.6, 3, 2), 2, 4);
+  from(crop(image, 7, -5, 6, 2), 7, 0);
+  const past = crop(image, 15, 20, 3, 3);
+  assert.deepEqual([past.width, past.height], [1, 1]);
+  from(past, 9, 7);
 });
 
 test('brightestNear finds the brightest spot within the radius, and not beyond it', () => {
@@ -80,6 +104,30 @@ test('tile lays images out in rows with gaps', () => {
   assert.deepEqual(at(sheet, 0, 4), [150, 150, 150]);
   assert.deepEqual(at(sheet, 4, 0), [7, 7, 7]); // gap
   assert.deepEqual(at(sheet, 5, 4), [7, 7, 7]); // empty cell
+});
+
+test('tile leaves gaps between rows too, and puts smaller images at the top left of cells the size of the largest', () => {
+  const big = greyImage(4, 3, () => 200);
+  const small = greyImage(2, 1, () => 100);
+  const sheet = tile([big, small, small], { columns: 2, gap: 2, background: [7, 7, 7] });
+  assert.deepEqual([sheet.width, sheet.height], [10, 8]);
+  const background = [7, 7, 7];
+  for (let x = 0; x < 10; x++) for (const y of [3, 4]) assert.deepEqual(at(sheet, x, y), background, `gap row at (${x}, ${y})`);
+  for (let y = 0; y < 8; y++) for (const x of [4, 5]) assert.deepEqual(at(sheet, x, y), background, `gap column at (${x}, ${y})`);
+  assert.deepEqual(at(sheet, 3, 2), [200, 200, 200]);
+  assert.deepEqual([at(sheet, 6, 0), at(sheet, 7, 0), at(sheet, 8, 0), at(sheet, 6, 1)], [[100, 100, 100], [100, 100, 100], background, background]);
+  assert.deepEqual([at(sheet, 0, 5), at(sheet, 1, 5), at(sheet, 2, 5), at(sheet, 0, 6)], [[100, 100, 100], [100, 100, 100], background, background]);
+  const row = tile([big, small]);
+  assert.deepEqual([row.width, row.height], [8, 3], 'one row by default, without gaps');
+});
+
+test('crop, zoom, shrink and tile keep the colour channels apart', () => {
+  const image = colourImage(6, 4);
+  assert.deepEqual(at(crop(image, 1, 1, 3, 2), 2, 1), at(image, 3, 2));
+  assert.deepEqual(at(zoom(image, 3), 7, 10), at(image, 2, 3));
+  const block = [[2, 2], [3, 2], [2, 3], [3, 3]].map(([x, y]) => at(image, x, y));
+  assert.deepEqual(at(shrink(image, 2), 1, 1), [0, 1, 2].map((c) => Math.round(block.reduce((sum, p) => sum + p[c], 0) / 4)));
+  assert.deepEqual(at(tile([image, image], { gap: 1 }), 9, 2), at(image, 2, 2));
 });
 
 // ---------------------------------------------------------------- banding view
@@ -124,6 +172,12 @@ test('banded share: bands across the rows count too, as in a sky gradient', () =
   const slope = 1 / 32;
   assert.ok(bandedShare(greyImage(4, 320, (x, y) => 100 + Math.floor(y * slope))) > 90);
   assert.equal(bandedShare(greyImage(64, 320, (x, y) => 100 + y * slope + r.next() + r.next() - 1)), 0);
+});
+
+test('banded share: bands in one channel count', () => {
+  const blueSteps = createImage(320, 4);
+  for (let i = 0; i < 320 * 4; i++) blueSteps.data.set([30, 60, 150 + Math.floor((i % 320) / 32)], 4 * i);
+  assert.ok(bandedShare(blueSteps) > 90);
 });
 
 test('the banding view draws real edges in flat dark grey', () => {
@@ -251,6 +305,19 @@ test('the shimmer image marks flagged pixels in magenta, grown by a pixel', () =
   assert.deepEqual(at(out, 4, 0), [255, 40, 200]);
 });
 
+test('the heat map grows a flagged pixel to its four neighbours only, and tints heat under the threshold', () => {
+  const heat = new Float32Array(25);
+  heat[2 * 5 + 2] = 16; // at the threshold: flagged
+  heat[0] = 15.9; // just under it
+  const out = heatImage(greyImage(5, 5, () => 100), heat, 16);
+  for (const [x, y] of [[2, 2], [1, 2], [3, 2], [2, 1], [2, 3]]) assert.deepEqual(at(out, x, y), MAGENTA, `(${x}, ${y})`);
+  for (const [x, y] of [[1, 1], [3, 1], [1, 3], [3, 3], [0, 2], [4, 2], [2, 0], [2, 4], [1, 0], [0, 1]]) {
+    assert.deepEqual(at(out, x, y), [60, 60, 60], `(${x}, ${y}): neither flagged nor next to one`);
+  }
+  const [r, g, b] = at(out, 0, 0);
+  assert.ok(r > 60 && r < 255 && g < 60 && b > 60 && b < 200, `a faint tint, ${[r, g, b]}`);
+});
+
 // ---------------------------------------------------------------- overdraw
 
 test('overdraw stats and colours follow the fragment counts', () => {
@@ -261,6 +328,17 @@ test('overdraw stats and colours follow the fragment counts', () => {
   assert.deepEqual(at(image, 4, 0), [255, 255, 255]);
   assert.notDeepEqual(at(image, 3, 0), at(image, 4, 0), '10 to 15 differ from 16 and up');
   assert.notDeepEqual(at(image, 1, 0), at(image, 2, 0));
+});
+
+test('the overdraw colours change exactly where the legend says', () => {
+  const counts = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 16, 255];
+  const image = overdrawImage({ width: counts.length, height: 1, counts: Uint8Array.from(counts) });
+  const colour = (n) => at(image, counts.indexOf(n), 0);
+  assert.deepEqual(colour(0), [0, 0, 0]);
+  assert.equal(new Set([0, 1, 2, 3, 4, 5, 6, 7, 10, 16].map((n) => String(colour(n)))).size, 10, 'black, the six steps, magenta, pink and white all differ');
+  assert.deepEqual([colour(8), colour(9)], [colour(7), colour(7)], 'magenta from 7 to 9');
+  assert.deepEqual(colour(15), colour(10), 'pink from 10 to 15');
+  assert.deepEqual([colour(16), colour(255)], [[255, 255, 255], [255, 255, 255]], 'white from 16');
 });
 
 // ---------------------------------------------------------------- motion
@@ -278,4 +356,23 @@ test('motion measures the share of pixels that change across the frames', () => 
 test('a slow drift counts as motion even when no single step passes the threshold', () => {
   const frames = [0, 1, 2, 3, 4, 5].map((k) => greyImage(10, 10, () => 100 + 2 * k));
   assert.equal(motion(frames, { threshold: 4 }).percent, 100);
+});
+
+test('motion counts the pixels its map marks: those whose range reaches the threshold', () => {
+  const still = greyImage(7, 1, () => 100);
+  const moved = greyImage(7, 1, (x) => 100 + [0, 3, 0, 4, 0, 0, 5][x]);
+  const { percent, heat } = motion([still, moved], { threshold: 4 });
+  assert.equal(percent, (100 * 2) / 7);
+  const map = heatImage(still, heat, 4);
+  assert.deepEqual([at(map, 3, 0), at(map, 6, 0)], [MAGENTA, MAGENTA]);
+  assert.notDeepEqual(at(map, 1, 0), MAGENTA);
+});
+
+test('motion counts a change in any one channel', () => {
+  const still = createImage(4, 1, [10, 20, 30]);
+  const moved = createImage(4, 1, [10, 20, 30]);
+  moved.data.set([90, 20, 30], 0);
+  moved.data.set([10, 90, 30], 4);
+  moved.data.set([10, 20, 90], 8);
+  assert.equal(motion([still, moved]).percent, 75);
 });

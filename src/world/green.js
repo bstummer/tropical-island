@@ -3,8 +3,8 @@
 // and how lush it is) and bare ground over the rest, in patches a few metres
 // across that lie where they lie, whatever the camera does. chunks/green.wgsl
 // draws them, and this is its twin (greenCover, greenPatches), so placement
-// (Stage 9) knows which ground is green and which bare. Pure and
-// Node-importable.
+// (Stage 9) knows which ground is green and which bare; and of what its
+// detail tiles average to (greenLayers). Pure and Node-importable.
 import { smoothstep } from './island.js';
 import { seededNoise } from './noise.js';
 
@@ -28,9 +28,10 @@ export function greenCover(band, lush, { cover }) {
 
 // The patches for config.world.terrain.green and two whole-number seeds:
 // rank(x, z) is spread about evenly over 0 to 1 across the ground, and the
-// ground at world x, z is green where it falls below greenCover there. Near
-// the camera chunks/green.wgsl frays their edges by a blade or two, which
-// this leaves out.
+// ground at world x, z is green where it falls below greenCover there, from
+// wherever it is seen. chunks/green.wgsl blurs their edges by (1 - sharp) x
+// size / 20 m either side (10 cm at the defaults), or near the camera frays
+// them as much, which this leaves out.
 export function greenPatches({ patches }, seeds) {
   return {
     rank(x, z) {
@@ -40,4 +41,15 @@ export function greenPatches({ patches }, seeds) {
       return 1 / (1 + Math.exp(-K * v));
     },
   };
+}
+
+// What two reads of a detail tile laid one over the other (chunks/green.wgsl
+// greenTile) average to, from the tile's own averages: `cover`, how much of it
+// is covered, and `mean`, of what it holds (a colour, say: what covers it over
+// `ground` where nothing does). The top read hides the other as far as it
+// covers, so the two cover 1 - (1 - cover)². The reads lie at angles and
+// scales that never line up, so they are independent, and a tile's mipmaps
+// keep its averages: this holds at every distance.
+export function greenLayers(cover, mean = [], ground = 0) {
+  return { cover: 1 - (1 - cover) ** 2, mean: mean.map((m) => m + (1 - cover) * (m - ground)) };
 }

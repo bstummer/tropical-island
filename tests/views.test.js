@@ -120,10 +120,19 @@ test('the depth range covers a leaf at the lens and the horizon from a hilltop',
 });
 
 test('quality presets are complete and sane', () => {
+  // Every preset sets every knob the default does: a system reads its own, and
+  // one a preset left out would read undefined (no rocks at all, for rockPixels).
+  const knobs = config.quality.presets[config.quality.default];
   for (const [name, preset] of Object.entries(config.quality.presets)) {
+    assert.deepEqual(Object.keys(preset).sort(), Object.keys(knobs).sort(), `${name}: its knobs`);
+    for (const [knob, value] of Object.entries(preset)) assert.equal(typeof value, typeof knobs[knob], `${name}.${knob}`);
     assert.ok(preset.renderScale > 0 && preset.renderScale <= 1, `${name}.renderScale`);
     assert.ok(preset.maxPixelRatio >= 1, `${name}.maxPixelRatio`);
     assert.ok(preset.groundDetail > 0 && preset.groundDetail <= 1, `${name}.groundDetail`);
+    // Mipmapped and repeating: it halves exactly down to a texel.
+    assert.ok(Number.isInteger(Math.log2(preset.surfaceTexture)) && preset.surfaceTexture >= 64, `${name}.surfaceTexture`);
+    // A rock drawn thinner than about two pixels would crawl (CLAUDE.md §8).
+    assert.ok(preset.rockPixels >= 2, `${name}.rockPixels`);
   }
 });
 

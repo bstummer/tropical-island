@@ -12,11 +12,12 @@ The plan is loose on purpose. Each stage says what to achieve and how to tell wh
 build it. Any technique it names is only a suggestion: the AI picks the approach at each step. Keep it that
 way when editing the plan: write goals and checks, not techniques. When reality disagrees with the plan (a
 stage turns out bigger than expected, an approach looks bad, the order is wrong), change the plan and note
-why in the Log.
+why in the stage's notes. The plan keeps no session log: git has the history, and what is open lives in
+each stage's notes (known flaws, open questions).
 
 ## How to work a stage
 
-1. Read CLAUDE.md, then the Status table and the latest Log entries below.
+1. Read CLAUDE.md, then the Status table and the notes of the stage you are about to take.
 2. Take the stage the user names, or else the first stage that is `todo` or `in progress`. A stage in
    `review` doesn't block the next one, except the cove gate (Stage 11), but the user's feedback on a stage
    in review comes first. If a stage is too big for one session, split it into a checklist of sub-steps
@@ -35,8 +36,8 @@ why in the Log.
    cost and the list of known flaws. Make sure the user can open the images, even when the session ran in
    a cloud container. Name what needs the user's eyes or ears: motion in the running game, sound, feel,
    real hardware. The stage becomes `done` when the user says so.
-9. Update this file: status, ticked sub-steps and a Log entry with the flaws still open. Commit and push
-   only when the user asks. Pushing to `main` publishes the game.
+9. Update this file: status, ticked sub-steps and the stage's notes (the flaws still open). Commit and
+   push only when the user asks. Pushing to `main` publishes the game.
 
 Stop and ask the user when a new dependency looks necessary, when the performance budget can't be met, or
 when a choice is about taste or scope rather than engineering (see Open questions).
@@ -53,7 +54,7 @@ when a choice is about taste or scope rather than engineering (see Open question
 - **Always shippable.** Every stage ends with `main` deployable and `npm run verify` green. Replace the
   placeholder piece by piece, and delete each placeholder part in the stage that replaces it.
 - **Budget as you go.** From Stage 1 on, every capture reports each view's frame cost against limits in
-  `config.js`. Note each stage's cost in the Log and put its knobs in the quality presets. GPU time on the
+  `config.js`. Note each stage's cost in its notes and put its knobs in the quality presets. GPU time on the
   machine a session runs on says little about a mid-range laptop, so the counts and their limits are the
   guide, plus the benchmark results the user brings back from real machines. The limits are guesses until
   Stage 11 calibrates them, so ask the user to run the benchmark after each stage that adds a lot of cost
@@ -74,7 +75,7 @@ when a choice is about taste or scope rather than engineering (see Open question
 | 1 | HDR frame and measurement | The cove | done |
 | 2 | Sky, sun and atmosphere | The cove | done |
 | 3 | Island shape | The cove | done |
-| 4 | Ground surfaces and rocks | The cove | in progress |
+| 4 | Ground surfaces and rocks | The cove | done |
 | 4b | WebGPU port | The cove | done |
 | 4c | Maths of our own | The cove | done |
 | 5 | Shadows | The cove | todo |
@@ -96,9 +97,8 @@ when a choice is about taste or scope rather than engineering (see Open question
 Status values: `todo`, `in progress`, `review` (built and handed to the user), `done` (the user approved
 it). Only the user moves a stage to `done`. A stage the user sends back returns to `in progress`.
 
-Once an approved stage is committed, note the commit in the Log. Captures are deterministic, so checking
-that commit out (a git worktree works) and capturing with the same args and backend recreates the approved
-images. To compare them with a new capture, both sides need the same Chromium build (CLAUDE.md §4).
+Captures are deterministic, so checking out the commit that approved a stage (find it with `git log`; a
+git worktree works) and capturing with the same args and backend recreates the approved images. To compare them with a new capture, both sides need the same Chromium build (CLAUDE.md §4).
 
 ---
 
@@ -222,7 +222,7 @@ final place, and judged by the runtime check from the start.
   in a frame that doesn't use it. The sky draws after the opaque scene, so sky hidden behind land costs
   nothing (Stage 1 left it drawing first). A fixture proves the blending: translucent layers over
   backgrounds from dark to as bright as the sun come out as the same mix done in linear light. Check: the
-  island's pictures stay the same, teardown stays clean, and the Log records what the new passes cost.
+  island's pictures stay the same, teardown stays clean, and the stage's notes record what the new passes cost.
 - [x] **2.3 Sky.** A physically motivated sky with a sun disk replaces the placeholder sky, for every hour
   of daylight. Sunrise, midday, golden hour and sunset each look believable and distinct. The sun disk
   has a clean edge and a soft glow, and the sky shows no bands, also in the deep blue overhead and the
@@ -344,25 +344,53 @@ the user walks the cove before the views are framed on it: until then, changing 
   the camera, grass and leaf litter tiles (`textures/green.js`). It is painted flat: at standing height
   it reads as a dense, even lawn strewn with leaves, its tufts and leaves showing within about 15 m;
   the grass tile is stylised close up (every tuft a star) and the leaves are all of one outline. Seen at
-  a slant the green hides the bare ground between it (`green.stand`), standing in for plants' height:
-  Stage 9's plants hide it themselves. The jungle reads green from afar, as its canopy will. Bare
+  a slant the green hid the bare ground between it, standing in for plants' height, until 4.8 took
+  that out (it changed the ground as the camera moved). The jungle reads green from afar, as its canopy will. Bare
   patches 20–60 m off read as soft spots. A thin strip of green runs between the beach and the
   headland's foot in the `rocks` view, a sliver of ground between sand and steep rock (4.1's rules).
 - Known from 4.7 (after an outside review): the ground's wetness has one input (`chunks/wet.glsl`):
   wet sand keeps its sheen to the horizon (far pieces that reach down to it draw it, TERRAIN_WET), the
   seabed has no film, and rock gets wet where sand does. The green's patches stay put and JS knows
-  them (`world/green.js`); seen at a slant the bare ones take on the green rather than shrink, which
-  took most of the freckles off the far hills. The grass tile holds its colour factor, so mipmaps keep
+  them (`world/green.js`); seen at a slant the bare ones took on the green rather than shrink, which
+  took most of the freckles off the far hills (until 4.8). The grass tile holds its colour factor, so mipmaps keep
   the green's colour near the camera. Lichen keeps its share at any distance (now 3% of what faces up,
   as the user picked bare basalt), and sand or soil fills rock's hollows in the share the ground says,
   following the shading: the soot of specks off the `rocks` shelf is mostly gone, a fringe of crumbs
-  stays at its edges, and the soil in the steep cliff's hollows shows (4.8). Sand and sandy soil lie no
+  stays at its edges, and tan spots show on the steep cliff (4.8 found them lichen, not soil). Sand and sandy soil lie no
   steeper than sand holds anywhere (the coarse grids judged slopes too gently): far cliffs and the
   volcano's gullies gained rock. Rocks: about 700 in the cove (most of the old 2,000 lay on the reef),
   none with a gap under it or inside another, none out at sea, and none drawn under two pixels: they
   sink away first. The surfaces' five tiles share one texture array; the detail ranges and the rocks
   scale with the presets; the game compiles its shaders while the start screen shows. SwiftShader
   frames cost 5–25% more (0.8–2.7 s): `rocks` is 0.16 s over its 2.5 s budget.
+- Known from 4.8 (the user's picks from candidates side by side, Decisions): wet sand runs from a thin
+  film at the water through tan to a lobed swash line where the last waves reached, its width changing
+  along the beach, then a smooth face the high tide washed, then ripples; a low sun breaks into glitter
+  on the backwash's rumples, so in `into-the-sun` its path runs up the beach. Dry sand is whiter, its
+  drifts and ripple sorting stronger. The cliff's tan spots were lichen (a bug gave its orange kind
+  nearly all of it): now an even tint, a thin crust, on what faces up. Rock meets sand and soil along its
+  relief, stepping up as low ledges, not by its grain (the soot). The rocks are blockier, placed anew.
+  The green no longer changes as the camera moves (the user found it: bare ground took on the green at
+  a slant, and the edges frayed only near the camera); the patches fixture checks it from near and far.
+  The scrub is denser, the palm belt and jungle nearly closed, bare soil brown, and stands of 2.5, 9
+  and 40 m, lighter and drier or darker and deeper, last into the distance. The litter keeps its
+  albedo at every pixel size (within 0.5%, was 4–5% light), and its dead leaves stay put as the
+  camera comes near (the user found them appearing out of grey within a few metres): masks of which
+  leaves show at each share, mipmapped, so the same leaves shrink with distance until they fade into
+  the average 5–8 m out. The `green-tiles` fixture holds `greenTile` and the leaves on the GPU to
+  their twins. `overview` shimmer 0.55% → 0. New view `sand-edge`. SwiftShader, against the bug
+  fixes: `rocks` 4% dearer (2.9 s), `jungle-edge` 7% (3.1 s, the leaves' masks), the rest within 3%;
+  `sand-edge` takes 4.0 s, a quarter of it the leaves' masks; `rocks`, `overview`, `jungle-edge` and
+  `sand-edge` are over 2.5 s (Stage 5's notes: cheapen the green's near detail). Known flaws, after an outside review of the pictures: the shelf's rock reads
+  as smooth mats with rounded outlines; bare
+  soil as brick-red ovals in the middle distance, orange at golden hour; outcrops on the green slopes as
+  near-black blots; the scrub still ends in a carpet's edge with a soft rim (plants, Stages 8–9); the wet
+  band as a thin tan outline from afar; `into-the-sun`'s foreground lost its ripples to the smooth face;
+  the backwash's rumples have one scale; at golden hour the beach's sheen is a flat smear cut at the
+  wet/dry line; the stands' lighter side reads lime at 9.5 h; no grain shows at standing height; the
+  ripples keep one wavelength; the rock's crack net has one scale; a pale stripe of sand at the rocks'
+  feet. The near/far check's albedo limit is absolute, so it sees green or bare turning to sand but not
+  a small change between green and bare in the palm belt and jungle.
 - **Done when** a close-up of sand holds up, no tiling shows from any view, and nothing looks plastic.
 
 Sub-steps, in order. Each one ends with `npm run verify` green and `main` shippable, and fixes whatever it
@@ -422,16 +450,13 @@ their faces, rock on the ridges in blotches like camouflage, a flat green lawn a
   shader leaves texture units free for shadows, caustics and cloud shadows. Check: tests for each, each
   seen red once; the GPU checks reach the rocks' offsets and the light from below; captures within their
   budget on SwiftShader.
-- [ ] **4.8 The look, again.** Waits for Stage 4b: the port matches the build before 4.8, and the look
+- [x] **4.8 The look, again.** Waits for Stage 4b: the port matches the build before 4.8, and the look
   is tuned once, in WGSL. What the review saw first in the pictures: the wet band reads as a flat
   grey kerb, the edge from sand to green as a cut-out lying on the sand, the shelf in `rocks` as soot
-  sprayed on sand, the `sand` close-up as khaki without grain at midday, and the wet glint as lacquer.
-  Since 4.7 the rock's hollows hold their true share of soil, which shows on the `rocks` cliff as tan
-  pockets; the blocks taper upwards now (so their sides bury cleanly), and dry rock has no sheen. Each
-  is a matter of taste: show the user candidates side by side. Check: every view against the stage's
-  Done line, at its time and at golden hour. Known from 2026-10-25: from the `overview`, 1 km up, the
-  green's speckle of bare ground behind the beaches falls under a pixel and shimmers (0.54%, over the
-  0.5% limit).
+  sprayed on sand, the `sand` close-up as khaki without grain at midday, and the wet glint as lacquer;
+  tan spots on the `rocks` cliff, and blocks that show as pyramids and cards. Each is a matter of
+  taste: show the user candidates side by side. Check: every view against the stage's Done line, at
+  its time and at golden hour. Done 2026-10-28: see Known from 4.8.
 
 ### 4b. WebGPU port
 
@@ -673,7 +698,7 @@ baseline: on the branch nothing runs it any more, and `adee91b` keeps it for sid
     - §8: WGSL, uniformity, overrides, MSAA 4, reversed depth everywhere, no atomic-order dependence,
       Y origin;
     - §9: shader files.
-  - Update the README with browser requirements, and PLAN.md's Decisions and Log, and the later stages'
+  - Update the README with browser requirements, and PLAN.md's Decisions, and the later stages'
     notes that the port made untrue (three's shadow pitfalls in Stage 5, the Firefox depth fallback and
     WebGL context loss in Stage 18).
   - Hand over to the user:
@@ -1062,9 +1087,9 @@ GPU does the same work as before, so the user's review needs no benchmark or bro
   `lush`, `sandy`), which the green's look follows: dense jungle where lush, open grass where not,
   beach plants where sandy. Its patches of green and bare ground stay put and JS knows them
   (`world/green.js`, `ctx.terrain.greenAt`; the patches fixture checks the GPU against it), so grass
-  can stand on the green only; near the camera their edges fray by a blade or two, which JS leaves
-  out. Seen at a slant the bare patches take on the green, standing in for plants
-  (`config.world.terrain.green.stand`); lower it where real plants stand.
+  can stand on the green only; their edges blur over 10 cm, or near the camera fray as much, which JS
+  leaves out. Bare patches show as they are from any distance (since 4.8, checked from near and far),
+  so the plants that stand on the green have to hide them where the eye expects cover.
 - **Done when** the jungle-edge view is lush and layered, each species is recognisable by its shape and its
   motion, and the frame cost is within budget.
 
@@ -1206,6 +1231,11 @@ GPU does the same work as before, so the user's review needs no benchmark or bro
   by 38 m on seed 1). The coast's distance changes by up to about 1.7 m a metre near the shore (noise on
   it), so slopes set in it, like the hills' rise from a beach (`shore.steepest`), come out steeper in
   places.
+- Known from 2026-10-28: two seeds break a design rule, and `tests/island.test.js` names each as a known
+  exception: on seed 20 the hills' own slope and their rise from the shore add up, with nothing to cap
+  the sum, to 55° at one point 243 m behind a beach (seeds 1–30 reach 54° elsewhere); on seed 9 the hills'
+  warp moves a valley in behind the headland's sheer face, which rises only 26.6 m in 30 m. Fixing either
+  changes seed 1's island.
 - **Done when** (per area) the user agrees its views clear the bar and the frame cost stays within the
   limits.
 
@@ -1325,6 +1355,14 @@ Made with the user. Don't reopen them unless the user does.
   dark leafy understory in hollows and gullies, so the hills show dark gullies under lighter ridges. A
   lighter, yellower sunny meadow, a sun-dried ground of olive and straw with more soil and litter, and a
   darker deep jungle were the alternatives. (2026-10-24)
+- **The ground's look (4.8)**: wet sand warm, with a lobed swash line where the waves reached (a dark
+  glassy band and a soft drying without a line were the alternatives); glitter on wet sand (a gently
+  rumpled surface); whiter dry sand with more contrast (grain that shows at standing height, and
+  lumps and pocks); denser scrub (clumps, a darker scrub floor); stands that last into the distance
+  with a lush floor of brown soil (the green as before 2026-10-28's fix); lichen as an even tint
+  (grey crust with orange rosettes, first picked, was too much spread over all the rock); rock
+  stepping out of the sand as ledges (sand drifted against it);
+  blockier rocks (a sheen on dry rock). (2026-10-28)
 - **The air stays as clear as it is**: the light from below lifts shade on the beach, and more aerosol
   barely changes midday (the sky's share of the light on level ground goes from 9% to 13% at ten times
   as much) while it spreads a large halo round the low sun. Four and ten times as much were the
@@ -1348,93 +1386,3 @@ scope.
 
 Not part of the plan. Build one only if the user asks for it: a passing rain shower, tides, traces of people
 (a hammock, an outrigger canoe).
-
-## Log
-
-Newest first. One short entry per session, only a few lines: date, stage, what changed, what is still
-open, next step. Details belong in code comments.
-
-- **2026-10-25, a bug review of the terrain generation, all fixed at the user's request** (with two
-  helper agents): no jumps at the lobes' centres; no 7.5 m bulges where a ridge's segments meet (the
-  summit 288 m, not 292); gullies fan round ridge ends; far mipmaps line up (grids a multiple of 256,
-  checked on the GPU); flats less rough; beach ridges parallel; no cliffs behind beaches (`shore.steepest`)
-  and the capes' `hillReach` has its say; robustness fixes in the worker pool and grids. `jungle-edge`,
-  `coastal-flat` and `summit` lowered to their eye heights. Open: the capes moved on 5 of 20 seeds (Stage 17).
-
-- **2026-10-25, the coast and the land's relief, at the user's request** (Decisions): beach all round but
-  for the headland and one cape with a cliff, coastal flats with old beach ridges, zone bands that vary
-  with the land; then one 2 m grid over all the land and the shallows (boot 2.6 → 5 s on one core), the
-  ground rough as land is (steep slopes rough, flats and valley floors gentler, in patches), drawn
-  without edges, rock where the land under it is steep; each with a test. New views `headland`, `cape`,
-  `coastal-flat`, `summit`, disabled for now; `overview` from 1 km up. Capture `even-verify`. Open: one
-  cape or two; relief under 8 m (plants, Stages 8–9); the scrub's sand blobs (4.8). Next: 4.8 or Stage 5.
-
-- **2026-10-25, an optimization review of the port, checked and acted on** (with two helper agents). CI
-  was red on `74dbabc` (player mode's canvas shot timed out under SwiftShader load): fixed, proven on two
-  CPUs. Uniforms packed by writers made once, shared by the terrain's variants (frame JS about halved);
-  terrain under the placeholder water culled, variants picked per 8 m tile; a frame stores nothing no
-  later pass reads; boot overlaps compiles and placement with the tiles. SwiftShader: frames 9–33% and
-  boots ~1 s faster, `verify`'s capture 664 → 346 s, every view byte-identical. Deferred to Stage 5's
-  notes: one encoder a frame, group 0's split, the aerial table in compute. Next: 4.8 or Stage 5.
-
-- **2026-10-24, Stage 4c planned and built: no runtime dependencies.** The user decided three goes
-  (Decisions). Its maths is now `src/maths/`, ported in three's order of operations and held to three's
-  answers to the last bit. Every capture and measurement is byte-identical to `maths-before` on SwiftShader
-  and on the GPU, it runs as fast, and the build is 83 KB smaller. Player mode no longer races a slow boot.
-  Open: the user's review, CI on a push. Next: 4.8, or Stage 5.
-- **2026-10-24, Stage 4b planned in detail and built (W.1–W.5), on branch `webgpu`:** raw WebGPU with
-  a renderer of the project's own (`src/gpu/`), every shader in WGSL, three for maths only (linted).
-  Views and named times match `webgl-final` within float noise, every check passes and catches its bad
-  case. On SwiftShader frames take as long as WebGL's; on the user's GTX 1660 Ti, about a fifth less
-  GPU time, once the GPU timer stopped counting waits between passes. Two rounds of outside reviews
-  found no shader port error; their findings are fixed or listed as known flaws. Open: the user's
-  hand-over (the four browsers, merge). Next: 4.8.
-- **2026-10-24, Stage 4b planned: the WebGPU port.** The user moved the game to raw WebGPU and WGSL
-  (Decisions); the port runs on a branch before 4.8. W.0 done: CI green on `adee91b`, baseline
-  `webgl-final` captured there. Probed headless Chromium 156: on Windows WebGPU gets the real GPU only
-  without DXC, and has no SwiftShader adapter; in a Linux container it does. Next: W.1 on a branch.
-
-- **2026-10-23–24, Stage 4 planned, built (4.1–4.6), reviewed and hardened (4.7):** one ground
-  (`island.groundOf`) shared by the GPU and placement; measured albedos and light from below; the user
-  picked bright white sand, the clear air, dark basalt and a lush tropical green (Decisions). Sand,
-  rock, rocks and the green inland, each near and far; SwiftShader runs untaken branches, so the
-  terrain draws nodes with only the surfaces they hold. An outside review sent the stage back: `verify`
-  timed out in CI (the benchmark waited a fixed minute; it now fails only when a page stops drawing),
-  and it found bugs that moved with the camera and traps for Stages 5–9, fixed in 4.7 (with two helper
-  agents: rocks; slopes and the albedo checks). Capture `h47-verify`; SwiftShader 0.8–2.7 s a frame
-  (`rocks` over its 2.5 s), 5–25% more than before. Next: 4.8, the look again, the user's picks.
-- **2026-10-23, Stage 3: an outside review.** Fixed steps in the seabed (the channel's bends, the reef's
-  crest) and a 1.2 cm one at every sandy waterline, now caught by a test for steps; far terrain finer
-  (each level reaches 2.5 times as far as the last: the far cliffs lose their sawtooth); quarters culled;
-  a 0.7 s stall at boot; a benchmark that measured before the island was in. Cost on `high`: 120–455k
-  triangles, SwiftShader 0.5–1.04 s a frame. The user had the reef roughened a bit and asked for more
-  beaches beyond the cove: they lie in its bays now (Decisions; building the grids costs 18% more).
-  Open: the far mesh's own height (Stages 5, 8). Next: Stage 4.
-- **2026-10-22, Stage 3 done** (commit `70cc348`, the maths check in `fb92551`). The island's shape
-  (`world/island.js`, `npm run map`), terrain from nested grids with a morphing level-of-detail mesh,
-  sunlight by height, and the final views with agreed briefs (new: `into-the-sun`, `sand`). The user
-  walked the cove and made the taste calls (Decisions). A five-part review fixed cracks between detail levels on `low` and `medium` and stale
-  culling, and tightened the checks. Open items went to Stages 4–9, 11, 12, 14, 17 and 18. A check of the
-  maths after it replaced the coral heads' weak hash (now tested with the noise, `tests/noise.test.js`).
-- **2026-10-22, Stage 2: a third review.** Light from below comes from the ground's albedo (the far sea's
-  until Stage 4); the SH read is unrolled (17% off a SwiftShader frame). The user picked the named sunrise
-  and sunset 1° up and an exposure compensation of 0.3 (Decisions). Open: the air's clarity and the
-  low-sun sky (Open questions).
-- **2026-10-22, Stage 2 hardened again** after a second outside review, checked against a double-precision
-  port of the sky: the haze, its colour and the marches fixed; new checks: the `haze` fixture, the time
-  check on every view, views that face the sunset. Notes went to Stages 3, 5, 6, 8, 11 and 12.
-- **2026-10-21, Stage 2 hardened** after an outside code review: blending, the sunset horizon's seam and
-  smaller fixes; new checks for the after-opaque pass, translucent depth, the GPU's sky maths and the
-  light's colour. Time keys are now `,` and `.`.
-- **2026-10-21, Stage 2 done** (commit `b43cc9c`; hardened in `aa920bf`). The user approved it and kept the
-  defaults: haze, its level, and a 63° noon sun (Decisions). Next: Stage 3.
-- **2026-10-21, Stage 2 built.** `sky/` owns the time (named times, no night) and a sky after Hillaire 2020
-  with a marine haze; one lighting model and an exposure that follows the light; frame passes for
-  after-opaque, linear translucent layers and a post chain. Open items went to Stages 6 and 11.
-- **2026-10-21, Stage 2 planned:** sub-steps 2.1–2.4 (time of day, frame structure, sky, light and haze).
-- **2026-10-21, Stage 1 hardened** after an outside review: captures about twice as fast, and they fail on
-  hidden shader errors, WebGL errors and a lost context. Open items went to Stages 2, 5, 7, 8, 11, 15 and 18.
-- **2026-10-20, Stage 1 done.** HDR frame in `post/`, capture measurements and tool checks, F3 readout,
-  `?bench=1`; first benchmark 2.8–4.7 ms GPU per frame on one discrete GPU. Open items went to Stages 2, 8,
-  11 and 18.
-- **2026-10-20, plan.** Wrote this plan. Next: Stage 1.

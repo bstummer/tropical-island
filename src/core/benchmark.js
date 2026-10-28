@@ -97,6 +97,7 @@ export function create(ctx, ready) {
       if (interval > 0) current.frameMs.push(interval * 1000);
       if (elapsed < seconds) return;
       current.counts = stats.lastFrame();
+      current.camera = camera.position.toArray(); // where it measured, which tools/screenshot.js checks
       results.push(current);
       next();
     },

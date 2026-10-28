@@ -4,7 +4,9 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSyn
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { build } from 'vite';
 import { blankComments, checkBuild, checkHtml, checkModules, checkOutputFiles, checkSize, checkSources, HTML_RULES } from '../tools/check-build.js';
+import viteConfig from '../vite.config.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const fixtures = join(here, 'fixtures', 'check-build');
@@ -89,6 +91,23 @@ test('a bundle made of index.html and src/ alone passes, and of anything else fa
   }
 });
 
+test('the build fails on a module from outside src/, in the inline worker too', async (t) => {
+  const project = (main, worker) =>
+    tempDir(t, {
+      'index.html': '<!doctype html><script type="module" src="./src/main.js"></script>\n',
+      'src/main.js': `import Worker from './worker.js?worker&inline';\n${main}\nnew Worker().postMessage(x);\n`,
+      'src/worker.js': `${worker}\nself.postMessage(x);\n`,
+      'src/inside.js': 'export const x = 1;\n',
+      'outside.js': 'export const x = 2;\n',
+    });
+  // The game's config, on a project of a few lines (vite.config.js's checks run on the bundle).
+  const bundle = (root) => build({ configFile: false, root, logLevel: 'silent', plugins: viteConfig.plugins, worker: viteConfig.worker, build: { ...viteConfig.build, write: false } });
+  const [inside, outside] = ["import { x } from './inside.js';", "import { x } from '../outside.js';"];
+  await bundle(project(inside, inside));
+  await assert.rejects(bundle(project(outside, inside)), /bundles modules from outside src\/: .*outside\.js/);
+  await assert.rejects(bundle(project(inside, outside)), /bundles modules from outside src\/: .*outside\.js/);
+});
+
 test('the unbuilt source template fails the HTML checks', () => {
   const template = readFileSync(join(here, '..', 'index.html'), 'utf8');
   assert.deepEqual(ids(checkHtml(template).failures), ['script-src']);
@@ -140,8 +159,11 @@ test('source lint sees code after comment markers inside strings and regexes', (
     'url.js': 'const link = "see //example"; export const b = Date.now();\n',
     'regex.js': 'const slashes = /a\\/*b/;\nexport const c = performance.now(); // */\n',
     'template.js': "const path = `src/*`;\nimport { Vector3 } from 'three';\n/* the end */\n",
+    // A template in a template's ${…}, with an apostrophe: the palm's (bug #7).
+    'nested.js': "const label = (kind) => `${kind ? `the palm's ${kind}` : ''} frond`;\nconst plants = import.meta.glob('./plants/*.js');\nexport const d = Math.random();\n",
   });
   assert.deepEqual(ids(checkSources(dir)), ['date', 'math-random', 'own-imports', 'performance-now']);
+  assert.deepEqual(checkSources(dir).filter((f) => f.rule === 'math-random').map((f) => f.message.match(/src\/(\S+)/)[1]).sort(), ['glob.js', 'nested.js']);
 });
 
 test('source lint lets src/ import only its own files', (t) => {
@@ -202,11 +224,90 @@ test('source lint lets src/ import only its own files', (t) => {
   );
 });
 
+test('source lint lets shaders in src/ include only shaders in src/', (t) => {
+  const dir = tempDir(t, {
+    'fixtures/ok.wgsl': [
+      '#include "chunks/noise.wgsl"',
+      "#include 'card.wgsl'",
+      '#include "../sky/atmosphere.wgsl"',
+      '#include "/chunks/frame.wgsl";',
+      '#include ./card',
+      '// #include "../../tools/x.wgsl"',
+      '/* #include "../../x.wgsl" */',
+      'fn f() -> f32 { return 1.0 / 2.0; } // the shader\'s',
+    ].join('\n'),
+    'shaders/chunks/ok.wgsl': '#include "noise.wgsl"\n#include "../../world/terrain.wgsl"\n#include "/chunks/sky.wgsl"\n',
+    'world/ok.js': 'export const s = \'#include "../../x.wgsl"\';\n', // not a shader
+    'fixtures/up.wgsl': '#include "../../tools/x.wgsl"\n',
+    'fixtures/bare.wgsl': '#include ../../x.wgsl\n',
+    'fixtures/upper.wgsl': '#INCLUDE "../../x.wgsl"\n',
+    'root.wgsl': '#include "/../../x.wgsl"\n',
+    'chunks.wgsl': '#include "chunks/../../../x.wgsl"\n',
+    'deep/er/twice.wgsl': '#include "chunks/../../../x.wgsl"\n', // in src/ as a chunk's include, outside as a shader's
+    'windows.wgsl': '#include "..\\..\\x.wgsl"\n#include "C:/x.wgsl"\n',
+    'other.glsl': '#include "../x"\n',
+    'fixtures/folder.wgsl': '#include "../"\n', // src.glsl, next to src/
+  });
+  const failures = checkSources(dir);
+  assert.deepEqual(ids(failures), ['own-includes']);
+  assert.deepEqual(
+    failures.map((f) => f.message.match(/src\/(\S+)/)[1]).sort(),
+    [
+      ...['chunks.wgsl', 'deep/er/twice.wgsl', 'fixtures/bare.wgsl', 'fixtures/folder.wgsl', 'fixtures/up.wgsl', 'fixtures/upper.wgsl'],
+      ...['other.glsl', 'root.wgsl', 'windows.wgsl', 'windows.wgsl'],
+    ],
+  );
+  assert.match(failures.find((f) => f.message.includes('up.wgsl')).message, /line 1, col 1/);
+});
+
 test('blankComments keeps offsets and leaves divisions alone', () => {
   const code = 'const a = b / 2; // half\nconst c = (d) / e /* ratio */ + 1;\n';
   const blanked = blankComments(code);
   assert.equal(blanked.length, code.length);
   assert.equal(blanked, 'const a = b / 2;        \nconst c = (d) / e             + 1;\n');
+});
+
+// Each case is code and the comments in it, which blankComments must blank, and
+// nothing else. Most end on a trap: read one token wrong, and a quote pairs up
+// with the next, and the `/*` of a glob after it starts a "comment" that hides
+// the rest of the file.
+test('blankComments reads strings, templates, regexes and comments as JavaScript does', () => {
+  const glob = "p = g('./p/*.js');";
+  const cases = [
+    // Templates: in a ${…} (bug #7), braces, strings, comments and regexes are code's.
+    [`a = \`\${k ? \`it's \${k}\` : ''} frond\`; ${glob} // c`, '// c'],
+    [`a = \`\${ {b: 1}.b + \`it's\` }\`; ${glob} // c`, '// c'],
+    [`a = \`\${'}'}\${"\`"}\`; ${glob} // c`, '// c'],
+    ['a = `${x /* } */ + y} it\'s`; // c', '/* } */', '// c'],
+    [`a = \`\${/'/.test(s)}\`; ${glob} // c`, '// c'],
+    [`function f() { a = \`\${x}\`; } ${glob} // c`, '// c'],
+    ['a = `\\`/* ${x}`; // c', '// c'],
+    ['a = `\\${`; // c', '// c'],
+    [`a = \`$5 {it's}\`; ${glob} // c`, '// c'],
+    // Strings: escapes, the other quote, and a line continuation (CRLF too).
+    [`a = 'it\\'s /*'; ${glob} // c`, '// c'],
+    [`a = "it's"; ${glob} // c`, '// c'],
+    [`a = 'x\\\r\ny'; ${glob} // c`, '// c'],
+    // A stray quote ends with its line: this regex reads as a division (the heuristic's miss).
+    [`if (ok) /'/.test(s);\n${glob} // c`, '// c'],
+    // Comments: comment markers and quotes in them, and one that starts `/*/`.
+    [`// see /*\n${glob} // c`, '// see /*', '// c'],
+    [`/* don't */ ${glob} // c`, "/* don't */", '// c'],
+    [`/*/ it's */ ${glob} // c`, "/*/ it's */", '// c'],
+    // Regexes: a slash in a class, an escaped slash, and one at the very start.
+    [`a = /[/'"]/, ${glob} // c`, '// c'],
+    [`a = /\\/'/, ${glob} // c`, '// c'],
+    [`/'/.test(s) && ${glob} // c`, '// c'],
+    // A regex wherever a value can't end before the slash ...
+    ...['(', ',', '=', ':', '[', '!', '&', '|', '?', '{', '}', ';', '+', '-', '*', '%', '<', '>', '~', '^'].map((op) => [`x ${op} /'/; ${glob} // c`, '// c']),
+    ...['return', 'typeof', 'case', 'in', 'of', 'delete', 'void', 'new'].map((word) => [`x ${word} /'/; ${glob} // c`, '// c']),
+    // ... and a division wherever one can.
+    ...['b', '2', ')', ']', '`b`'].map((value) => [`x = ${value} / 2, ${glob} // c`, '// c']),
+  ];
+  for (const [code, ...comments] of cases) {
+    const want = comments.reduce((text, comment) => text.replace(comment, comment.replace(/[^\n]/g, ' ')), code);
+    assert.equal(blankComments(code), want, JSON.stringify(code));
+  }
 });
 
 test('the real src/ passes the source lint', () => {

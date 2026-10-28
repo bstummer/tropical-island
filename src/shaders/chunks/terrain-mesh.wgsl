@@ -75,8 +75,9 @@ fn terrainBarycentric(p: vec2f, a: vec2f, b: vec2f, c: vec2f) -> vec3f {
 }
 
 // The 2 x 2 quads round a point as triangles of their 3 x 3 vertices (3 y + x),
-// split as world/terrain.js splits each quad (i, j): (i, j), (i, j + 1),
-// (i + 1, j) and (i + 1, j), (i, j + 1), (i + 1, j + 1).
+// split as the mesh splits each quad (i, j): (i, j), (i, j + 1), (i + 1, j)
+// and (i + 1, j), (i, j + 1), (i + 1, j + 1). world/lod.js gridIndex makes
+// the split; tests/lod.test.js holds this to its gridIndex(2).
 const TERRAIN_BLOCK = array<i32, 24>(0, 3, 1, 1, 3, 4, 1, 4, 2, 2, 4, 5, 3, 6, 4, 4, 6, 7, 4, 7, 5, 5, 7, 8);
 
 // The mesh's height at ao for a camera at `camera` (both in the cove's

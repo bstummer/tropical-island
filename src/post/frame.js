@@ -62,6 +62,7 @@ import compositeShader from './composite.wgsl';
 import depthShader from './depth-resolve.wgsl';
 import { Material, TRANSLUCENT_BLEND } from '../gpu/material.js';
 import { createTarget } from '../gpu/texture.js';
+import { lookup } from '../core/params.js';
 
 const PASSES = ['opaque', 'afterOpaque', 'translucent'];
 const SAMPLES = 4; // WebGPU has 1 or 4; the after-opaque pass needs the samples kept apart from what it reads
@@ -70,9 +71,7 @@ export function createFrame(ctx, display) {
   const { renderer, scene, camera, config, params } = ctx;
   const { gpu } = renderer;
   const tonemap = params.tonemap ?? config.post.tonemap;
-  if (!config.post.tonemaps[tonemap]) {
-    throw new Error(`Unknown tonemap "${tonemap}". Tonemaps: ${Object.keys(config.post.tonemaps).join(', ')}`);
-  }
+  const tonemapCurve = lookup(config.post.tonemaps, tonemap, 'tonemap', 'Tonemaps');
 
   const sceneTarget = createTarget(gpu, { name: 'scene', width: 1, height: 1, format: 'rgba16float', samples: SAMPLES, depth: true });
   // The translucent pass's target: linear premultiplied colour, transmittance
@@ -99,7 +98,7 @@ export function createFrame(ctx, display) {
       name: 'post-output',
       shader: outputShader,
       uniforms: { uScene: { value: sceneTarget.color }, uCompressed: { value: true }, uHeight: { value: 1 } },
-      overrides: { TONEMAP: config.post.tonemaps[tonemap] },
+      overrides: { TONEMAP: tonemapCurve },
     }),
   );
   const composite = renderer.fullscreen(

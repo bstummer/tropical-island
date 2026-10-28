@@ -24,8 +24,9 @@ struct SandUniforms {
   uSandGrainMean: vec3f, // the grain's average factor, which the albedo keeps
   uSandTiles: vec3f, // the grain's and the ripples' tiles, m; how strong the ripples stand
   uSandWind: vec2f, // which way the wind blows the sand: world xz, unit
-  uSandRoughness: vec3f, // dry, wet, and a film of water's
+  uSandRoughness: vec4f, // dry, wet, soaked, and a film of water's
   uSandRange: f32, // m from the camera: beyond it sand is its albedo alone (sandAlbedo)
+  uSandRumples: vec2f, // the backwash's rumples: their largest wavelength (m) and slope
 }
 
 @group(1) @binding(18) var<uniform> sandParams: SandUniforms;
@@ -33,9 +34,11 @@ struct SandUniforms {
 struct Sand {
   albedo: vec3f,
   normal: vec3f,
-  roughness: f32, // the sand's; where a film covers it, the film's (uSandRoughness.z)
+  roughness: f32, // the sand's; where a film covers it, the film's (uSandRoughness.w)
   f0: f32,
   film: f32, // how much of it a film of water covers, 0 to 1
+  spread: f32, // what rumples too small for the pixel add to its roughness (as GGX's alpha squared)
+  rumple: vec2f, // the slope of the rumples the pixel holds, which tilt what the sand mirrors
 }
 
 // Sand's diffuse albedo once a film of water has mirrored its share.
@@ -46,21 +49,45 @@ fn sandDiffuse(s: Sand, n: vec3f, view: vec3f) -> vec3f {
 // The light sand mirrors towards the eye, beyond its diffuse share: a little
 // from wet sand, a mirror's worth from a film of water; dry sand is too rough
 // to show any. kernel: specularKernel() of n.
-fn sandShine(s: Sand, position: vec3f, n: vec3f, view: vec3f, kernel: f32) -> vec3f {
+fn sandShine(s: Sand, position: vec3f, normal: vec3f, view: vec3f, kernel: f32) -> vec3f {
   let glossy = 1.0 - smoothstep(0.7, 0.85, s.roughness);
   var shine = vec3f(0.0);
   if (glossy + s.film > 0.0) {
-    shine = glossy * specularLight(position, n, view, filteredRoughness(s.roughness, kernel), s.f0);
+    let n = normalize(normal - vec3f(s.rumple.x, 0.0, s.rumple.y));
+    shine = glossy * specularLight(position, n, view, filteredRoughness(s.roughness, kernel + s.spread), s.f0);
     if (s.film > 0.0) {
-      shine = mix(shine, specularLight(position, n, view, filteredRoughness(sandParams.uSandRoughness.z, kernel), s.f0), s.film);
+      shine = mix(shine, specularLight(position, n, view, filteredRoughness(sandParams.uSandRoughness.w, kernel + s.spread), s.f0), s.film);
     }
   }
   return shine;
 }
 
-// Sand's albedo at this wetness, before its detail: wet sand darkens fast.
+// How far wet sand has darkened, 0 dry to 1 as dark as wet sand: a little
+// where damp, most of the way where wet (world/albedo.js sandDark).
+fn sandDark(wetness: f32) -> f32 {
+  return smoothstep(0.05, 0.6, wetness);
+}
+
+// Sand's albedo at this wetness, before its detail.
 fn sandAlbedo(wetness: f32, dry: vec3f, wet: vec3f) -> vec3f {
-  return mix(dry, wet, smoothstep(0.2, 0.5, wetness));
+  return mix(dry, wet, sandDark(wetness));
+}
+
+// How much of the sand the backwash has rumpled, by how wet it is.
+fn sandRumpled(wetness: f32) -> f32 {
+  return smoothstep(0.35, 0.7, wetness);
+}
+
+// The rumples' slope at scale k of 3, largest first: the smaller, the steeper.
+fn sandRumpleSlope(k: i32) -> f32 {
+  return sandParams.uSandRumples.y * (0.3 + 0.5 * f32(k));
+}
+
+// What all the rumples add to the roughness where a pixel holds none of them:
+// their slopes' variance, as GGX's alpha squared.
+fn sandRumpleSpread() -> f32 {
+  let s = sandParams.uSandRumples.y;
+  return 2.0 * s * s * (0.09 + 0.64 + 1.69);
 }
 
 fn sandRotate(v: vec2f, c: f32, s: f32) -> vec2f {
@@ -68,18 +95,18 @@ fn sandRotate(v: vec2f, c: f32, s: f32) -> vec2f {
 }
 
 // Sand without its detail, as far away: its albedo at this wetness, and its
-// gloss, from all but matte when damp to a sheen where water fills it to the
-// surface, and a mirror under a film. n: the ground's normal; dry, wet: the
-// albedos (config.world.terrain.albedo).
+// gloss, from matte when damp to a soft sheen where wet and a glossy one where
+// water fills it to the surface, and a mirror under a film. n: the ground's
+// normal; dry, wet: the albedos (config.world.terrain.albedo).
 fn sandPlain(w: Wet, n: vec3f, dry: vec3f, wet: vec3f) -> Sand {
-  let dark = smoothstep(0.2, 0.5, w.wetness);
-  let soaked = smoothstep(0.45, 0.7, w.wetness);
+  let r = sandParams.uSandRoughness;
   var s: Sand;
   s.albedo = sandAlbedo(w.wetness, dry, wet);
   s.normal = n;
-  s.roughness = mix(mix(sandParams.uSandRoughness.x, sandParams.uSandRoughness.y, dark), 0.4, soaked);
+  s.roughness = mix(mix(r.x, r.y, smoothstep(0.15, 0.45, w.wetness)), r.z, smoothstep(0.45, 0.8, w.wetness));
   s.f0 = 0.02; // water's, and near enough dry sand's, which is too rough to show it
   s.film = w.film;
+  s.spread = sandRumpled(w.wetness) * sandRumpleSpread();
   return s;
 }
 
@@ -89,7 +116,7 @@ fn sand(position: vec3f, aboveSea: f32, n: vec3f, w: Wet, dry: vec3f, wet: vec3f
   let footprint = max(length(dpdx), length(dpdy)); // metres a pixel spans on the ground
   let near = 1.0 - smoothstep(0.75 * sandParams.uSandRange, sandParams.uSandRange, length(position - frame.cameraPosition));
   let soaked = smoothstep(0.45, 0.7, w.wetness);
-  let dryness = 1.0 - smoothstep(0.4, 0.7, w.washed); // ripples stand where the waves don't reach
+  let dryness = 1.0 - smoothstep(0.15, 0.45, w.washed); // ripples stand where the waves don't reach
 
   var s = sandPlain(w, n, dry, wet);
 
@@ -99,7 +126,7 @@ fn sand(position: vec3f, aboveSea: f32, n: vec3f, w: Wet, dry: vec3f, wet: vec3f
   let broad = gradientNoise(xz * 0.13);
   let drift = 0.6 * broad + 0.4 * gradientNoise(xz * 0.47 + 7.1);
   let streak = gradientNoise(vec2f(dot(xz, sandParams.uSandWind) * 0.08, dot(xz, across) * 1.2) + 9.0);
-  s.albedo *= 1.0 + (0.1 * drift + 0.05 * streak * (1.0 - smoothstep(0.15, 0.5, footprint))) * near;
+  s.albedo *= 1.0 + (0.16 * drift + 0.07 * streak * (1.0 - smoothstep(0.15, 0.5, footprint))) * near;
 
   // Grain, near the camera: two reads of the tile, one turned and smaller.
   if (footprint < 0.02) {
@@ -119,6 +146,8 @@ fn sand(position: vec3f, aboveSea: f32, n: vec3f, w: Wet, dry: vec3f, wet: vec3f
   // Bits of bleached shell, the odd one pink or a dark pebble: one or none in
   // each cell of a grid, kept inside its cell so a pixel looks at one only.
   // Most are small, all angular and half buried, and they gather in patches.
+  // Each shows only while it spans a few pixels: smaller, it would be a
+  // speck of a pixel or two, and on wet sand its tilt a glint as small.
   if (footprint < 0.01) {
     const CELL: f32 = 0.17;
     let cell = floor(xz / CELL);
@@ -133,7 +162,7 @@ fn sand(position: vec3f, aboveSea: f32, n: vec3f, w: Wet, dry: vec3f, wet: vec3f
       let edge = 1.0 + 0.25 * sin(5.0 * angle + 9.0 * k.y) + 0.15 * sin(3.0 * angle + 4.0 * h.y);
       let r = length(d) / (radius * edge);
       let soft = footprint / radius;
-      let inside = (1.0 - smoothstep(1.0 - soft, 1.0 + soft, r)) * (1.0 - smoothstep(0.004, 0.01, footprint));
+      let inside = (1.0 - smoothstep(1.0 - soft, 1.0 + soft, r)) * (1.0 - smoothstep(0.004, 0.01, footprint)) * smoothstep(1.5, 3.0, radius / footprint);
       let tint = select(select(vec3f(0.55, 0.52, 0.5), vec3f(1.18, 1.07, 1.03), k.y < 0.93), vec3f(1.22, 1.2, 1.14), k.y < 0.82);
       s.albedo *= mix(vec3f(1.0), tint, inside);
       let tilt = sandRotate(d / radius, cos(turn), -sin(turn));
@@ -155,36 +184,50 @@ fn sand(position: vec3f, aboveSea: f32, n: vec3f, w: Wet, dry: vec3f, wet: vec3f
     let patchy = 0.3 + 0.7 * smoothstep(-0.3, 0.4, broad);
     let slope = -t.xy / max(t.z, 0.25) * sandParams.uSandTiles.z * rippled * patchy;
     let g = slope.x * sandParams.uSandWind + slope.y * across; // dh/dx, dh/dz
-    s.normal = normalize(n - vec3f(g.x, 0.0, g.y));
+    s.normal = normalize(s.normal - vec3f(g.x, 0.0, g.y));
     // The wind sorts the grains: dark heavy ones from the volcano settle in the
     // troughs, pale shell gathers on the crests; it shows when the sun is too
     // high for the ripples' shading to.
     // The tile's height averages out, so this keeps the sand's albedo.
     let sorted = rippled * patchy * (4.0 * r.a - 2.0); // -1 in the deepest trough, 1 on the highest crest
-    s.albedo *= 1.0 + sorted * vec3f(0.13, 0.13, 0.12);
+    s.albedo *= 1.0 + sorted * vec3f(0.2, 0.2, 0.19);
   }
 
-  // Swash marks: thin lines of fine grit where waves ran out, short arcs that
-  // bulge up the beach and overlap, a few across the band they wash.
-  let marks = smoothstep(0.35, 0.6, w.washed) * near * (1.0 - smoothstep(0.02, 0.08, footprint));
+  // Swash marks: a thin line of fine grit where the last waves ran out, along
+  // the tongues of their reach, and a fainter, broken one above it where an
+  // earlier wave reached.
+  let marks = smoothstep(0.05, 0.3, w.washed) * near * (1.0 - smoothstep(0.02, 0.08, footprint));
   if (marks > 0.0) {
-    // A line every 7 cm of height, about 0.7 m up the beach, each a couple of
-    // centimetres wide, wider as the pixel grows so it never aliases.
-    let lobes = 1.0 - abs(gradientNoise(xz * 0.35 - 6.0));
-    let reach = (aboveSea - wetParams.uWet.x) * 14.0 - 0.6 * lobes;
-    let line = 1.0 - smoothstep(0.012, 0.03 + 1.4 * footprint, abs(fract(reach) - 0.5));
-    let broken = smoothstep(0.0, 0.4, gradientNoise(xz * 0.9 + 4.0));
-    s.albedo *= 1.0 - 0.08 * line * broken * marks;
+    let rise = max(length(n.xz) / max(n.y, 0.1), 0.02); // m up per m across the ground
+    let last = aboveSea - w.reach - wetParams.uWet.y; // m above the last waves' reach, on the wet edge's
+    let earlier = last - 0.03 - 0.02 * gradientNoise(xz * 0.25 + 9.1);
+    let width = 0.024 + footprint;
+    let line = 1.0 - smoothstep(0.012, width, abs(last / rise + 0.012));
+    let older = (1.0 - smoothstep(0.01, width, abs(earlier / rise))) * smoothstep(0.0, 0.4, gradientNoise(xz * 0.8 + 4.0));
+    s.albedo *= 1.0 - 0.12 * max(line, 0.45 * older) * marks;
   }
 
-  // Wet sand isn't quite flat: the backwash leaves it gently rumpled, which
-  // breaks a mirrored sun into a streak of glints; under a film, less so.
-  let rumpled = smoothstep(0.45, 0.75, w.wetness) * (1.0 - 0.6 * w.film) * near * (1.0 - smoothstep(0.05, 0.3, footprint));
-  if (rumpled > 0.0) {
-    let q = xz * 1.7;
-    let slope = gradientNoiseD(q).yz + 0.5f * 2.7f * gradientNoiseD(q * 2.7 + 5.0).yz; // literals folded in f32, as GLSL did
-    let g = 0.0007f * 1.7f * slope * rumpled; // under a millimetre over decimetres: half a degree or so
-    s.normal = normalize(s.normal - vec3f(g.x, 0.0, g.y));
+  // Wet sand isn't flat: the backwash leaves it rumpled, from swells half a
+  // metre across to pits and crumbs of a few centimetres, too shallow to
+  // shade but enough to tilt the water in and on it. A low sun mirrored in it
+  // breaks into a streak of glints. Each scale drops out once a pixel can't
+  // hold it, its slopes going to the roughness, so further away the glints
+  // merge into a broad path of glitter rather than sparkle.
+  let rumpled = sandRumpled(w.wetness);
+  if (rumpled * near > 0.0) {
+    var g = vec2f(0.0);
+    var lost = 0.0; // the slopes' variance the pixel can't hold
+    var wavelength = sandParams.uSandRumples.x;
+    for (var k = 0; k < 3; k++) {
+      let slope = sandRumpleSlope(k);
+      let held = smoothstep(4.0, 10.0, wavelength / footprint);
+      // The noise's slope is about 1.4 across a unit of it on average.
+      g += held * slope / 1.4 * gradientNoiseD(xz / wavelength + 7.3 * f32(k)).yz;
+      lost += (1.0 - held * held) * slope * slope;
+      wavelength *= 0.3;
+    }
+    s.rumple = rumpled * near * g;
+    s.spread = rumpled * mix(sandRumpleSpread(), 2.0 * lost, near);
   }
   return s;
 }

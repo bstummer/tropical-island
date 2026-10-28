@@ -25,6 +25,7 @@
 // createMeshHeight gives the height of the mesh so drawn, morph and all, at any
 // point for a camera: far from it the mesh strays from the finest height, and
 // what stands on the ground (rocks, plants) must stand on what is drawn.
+// gridIndex splits a node's quads into triangles, for the mesh and its height.
 //
 // Positions are in the cove's frame (world/island.js): a, o across, y up.
 
@@ -122,10 +123,24 @@ function distance2(cam, a0, o0, size) {
   return da * da + doo * doo;
 }
 
+// The triangles of a grid of `quads` x `quads` quads, its vertices numbered
+// row by row (j (quads + 1) + i), each quad (i, j) split into (i, j), (i, j + 1),
+// (i + 1, j) and (i + 1, j), (i, j + 1), (i + 1, j + 1). The one place the
+// split is made: the mesh drawn (world/terrain-nodes.js gridGeometry) and its
+// height here both use it, and tests/lod.test.js holds
+// chunks/terrain-mesh.wgsl's TERRAIN_BLOCK to it.
+export function gridIndex(quads) {
+  const index = [];
+  const at = (i, j) => j * (quads + 1) + i;
+  for (let j = 0; j < quads; j++) {
+    for (let i = 0; i < quads; i++) index.push(at(i, j), at(i, j + 1), at(i + 1, j), at(i + 1, j), at(i, j + 1), at(i + 1, j + 1));
+  }
+  return index;
+}
+
 // The 2 x 2 quads around a point as triangles of their 3 x 3 vertices (3 y + x),
-// split as terrain.js's gridGeometry splits each quad (i, j): (i, j), (i, j + 1),
-// (i + 1, j) and (i + 1, j), (i, j + 1), (i + 1, j + 1).
-const BLOCK = [0, 3, 1, 1, 3, 4, 1, 4, 2, 2, 4, 5, 3, 6, 4, 4, 6, 7, 4, 7, 5, 5, 7, 8];
+// split as the grid splits them.
+const BLOCK = gridIndex(2);
 
 // The mesh's own height for a camera, as world/terrain.wgsl draws it: far out its
 // coarser levels stray from the finest height by centimetres to metres, and

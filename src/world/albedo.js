@@ -10,12 +10,24 @@ import { GROUND } from './heightmap.js';
 import { greenByBand, greenCover } from './green.js';
 
 // How wet sand is at this height above the sea, 1 under a film of water and 0
-// dry: the twin of chunks/wet.wgsl's groundWet, with `film` and `dry` from
-// config.world.terrain.sand.wetness and `wetHeight` the wet sand's zone.
-export function sandWetness(height, { film, dry }, wetHeight) {
-  if (height <= film) return 1;
-  if (height <= wetHeight) return 1 + ((0.35 - 1) * (height - film)) / (wetHeight - film);
-  return 0.35 * (1 - smoothstep(wetHeight, dry, height));
+// dry: the twin of chunks/wet.wgsl's groundWet (the terrain fixture compares
+// them), with `film`, `dry` and `step` from config.world.terrain.sand.wetness
+// and `wetHeight` the wet sand's zone, as far as the waves reach. It leaves
+// out how raggedly they reach.
+export function sandWetness(height, { film, dry, step }, wetHeight) {
+  const mid = film + 0.6 * (wetHeight - film);
+  const linear = Math.min(Math.max((height - film) / (mid - film), 0), 1);
+  const stepped = smoothstep(wetHeight - SHARP, wetHeight + SHARP, height);
+  return Math.max(1 - 0.55 * linear - (0.3 - step) * smoothstep(mid, wetHeight, height) - step * stepped - 0.15 * smoothstep(wetHeight, dry, height), 0);
+}
+
+// m: how soft the step at the waves' reach is, at its sharpest (chunks/wet.wgsl wetProfile).
+const SHARP = 0.004;
+
+// How much darker wet sand is, 0 dry to 1 as dark as wet sand, at this
+// wetness (chunks/sand.wgsl sandDark).
+export function sandDark(wetness) {
+  return smoothstep(0.05, 0.6, wetness);
 }
 
 // The green's albedo on average at this band, how lush and how sandy
@@ -45,7 +57,7 @@ export function albedoOf(sand, rock, band, height, lush, sandy, surfaces, out = 
     out[2] = sea[2];
     return out;
   }
-  const dry = 1 - smoothstep(0.2, 0.5, sandWetness(height, wetness, wetHeight));
+  const dry = 1 - sandDark(sandWetness(height, wetness, wetHeight));
   const green = Math.max(1 - sand - rock, 0);
   greenAlbedo(band, lush, sandy, surfaces, out);
   for (let c = 0; c < 3; c++) {

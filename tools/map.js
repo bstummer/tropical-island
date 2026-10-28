@@ -3,10 +3,11 @@
 //
 //   node tools/map.js [--seed 1] [--label name] [--set path=value ...]
 //
-// Writes screenshots/map/<label>.png: the whole island, the cove and its bay, drawn
-// as someone on the cove's beach facing the sea sees them, the setting sun at
-// the top. --set overrides a setting under config.world.island for candidates,
-// with a JSON value: --set size=3000 --set cove.headlandSide=1.
+// Writes screenshots/map/<label>.png (seed-<seed> by default; the label made a
+// file name by the screenshot tool's rule, tools/labels.js): the whole island,
+// the cove and its bay, drawn as someone on the cove's beach facing the sea sees
+// them, the setting sun at the top. --set overrides a setting under
+// config.world.island for candidates, with a JSON value: --set size=3000 --set cove.headlandSide=1.
 // Land is coloured by zone, the green darker the lusher it is (island.js
 // lushOf), and shaded from the upper left; contours every 20 m (100 m bold). Water is coloured by depth, with contours at 1, 2, 5, 10, 20 and 50 m.
 // Heights and zones are the ground as the game draws it (world/heightmap.js's
@@ -15,7 +16,7 @@
 // The pure helpers are exported for tests/map.test.js.
 import { chromium } from 'playwright';
 import { existsSync, mkdirSync, realpathSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { config } from '../src/config.js';
 import { views } from '../src/views.js';
@@ -23,6 +24,7 @@ import { createRandom } from '../src/core/random.js';
 import { createIsland } from '../src/world/island.js';
 import { buildHeightmap } from '../src/world/heightmap.js';
 import { encodePng } from './png.js';
+import { labelName } from './labels.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = join(ROOT, 'screenshots', 'map');
@@ -55,7 +57,8 @@ async function main(argv) {
   const args = parseArgs(argv);
   const seed = args.seed ?? config.defaults.seed;
   const settings = withOverrides(config.world.island, args.set);
-  const label = args.label ?? `seed-${seed}`;
+  const file = mapFile(args.label ?? `seed-${seed}`);
+  const label = basename(file, '.png');
 
   const started = performance.now();
   const island = createIsland(createRandom(seed), settings);
@@ -74,7 +77,6 @@ async function main(argv) {
   const facts = describe(island);
   const html = page({ seed, label, settings, panels, island, facts, timing: `${samples.toLocaleString('en')} samples, ${((ms * 1000) / samples).toFixed(2)} µs each` });
   mkdirSync(OUT, { recursive: true });
-  const file = join(OUT, `${label}.png`);
   const browser = await chromium.launch();
   try {
     const tab = await browser.newPage({ viewport: { width: 1900, height: 1100 }, deviceScaleFactor: 1 });
@@ -98,6 +100,11 @@ export function parseArgs(argv) {
     else throw new Error(`unknown option --${key}`);
   }
   return args;
+}
+
+// The map a label names: its own file in `out`, whatever the label (labelName).
+export function mapFile(label, out = OUT) {
+  return join(out, `${labelName(label)}.png`);
 }
 
 // A deep copy of settings with path=value overrides (JSON values).

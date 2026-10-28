@@ -56,7 +56,7 @@ export async function runCapture(ctx, display, app, frame) {
       ctx.clock.seek(t);
       ctx.timeOfDay = time;
       applyView(camera, ctx.view, { turn });
-      await renderSettled(app, frame, config.capture.warmupFrames);
+      await renderSettled(app, frame, config.capture.warmupFrames, config.capture.timeouts.settleSeconds);
     },
     async image() {
       const { output } = ctx.frame;
@@ -116,10 +116,19 @@ function checkShaders({ scene, frame }, compiled) {
 // Renders `count` frames once the work the systems' updates start has landed
 // (the sky's light after a time change: `settled()` returns its promise until
 // it did), so the frames are the ones a fresh load at the same time and t
-// gives, and none is drawn with the light it replaces.
-async function renderSettled(app, frame, count) {
+// gives, and none is drawn with the light it replaces. Work that hasn't landed
+// after `seconds` fails the frame, which would otherwise never come.
+async function renderSettled(app, frame, count, seconds) {
   const pending = () => app.systems.map((s) => s.settled?.()).filter(Boolean);
-  for (app.update(); pending().length; app.update()) await Promise.all(pending());
+  let timer;
+  const late = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`what the frame waits on (a system's settled()) has not landed after ${seconds} s`)), seconds * 1000);
+  });
+  try {
+    for (app.update(); pending().length; app.update()) await Promise.race([Promise.all(pending()), late]);
+  } finally {
+    clearTimeout(timer);
+  }
   for (let i = 0; i < count; i++) frame();
 }
 

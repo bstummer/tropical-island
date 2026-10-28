@@ -96,6 +96,16 @@ const all = [
     crops: { face: [0.35, 0.35], shelf: [0.6, 0.65] },
   },
   {
+    name: 'sand-edge',
+    position: [-45, 4.53, -38.95],
+    yaw: -93.4,
+    pitch: -6,
+    fov: 60,
+    timeOfDay: 15.5,
+    brief: "Mid-afternoon standing on the sand at the back of the bay, looking along the line where the beach gives way to the scrub's green on the left: the edge from your feet into the distance, the hills above it, the sun low behind on the right.",
+    crops: { near: [0.3, 0.75], far: [0.5, 0.52] },
+  },
+  {
     name: 'headland',
     disabled: true,
     position: [483.98, 190, 357.44],

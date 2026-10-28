@@ -127,10 +127,14 @@ function analyse(task, job) {
     });
   }
   const id = nextJob++;
-  return new Promise((resolve, reject) => {
+  const result = new Promise((resolve, reject) => {
     jobs.set(id, { resolve, reject });
     worker.postMessage({ id, task, job });
   });
+  // A view's analysis is awaited only once the views before it are reported: a
+  // failure before that, unhandled meanwhile, would end the process.
+  result.catch(() => {});
+  return result;
 }
 
 // Ends the worker, so the process can exit. Call it once every analysis has settled.

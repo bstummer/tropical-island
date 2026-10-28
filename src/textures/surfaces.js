@@ -5,13 +5,15 @@
 // takes eight. Its layers (chunks/tiles.wgsl has the same):
 //   0 grain, 1 ripples   textures/sand.js
 //   2 rock               textures/rock.js
-//   3 grass, 4 litter    textures/green.js
+//   3 grass, 4 litter,   textures/green.js
+//   5 leaves
 // Each tile is `size` texels across (quality.surfaceTexture), mipmapped and
 // repeating; `shift`: tiles to shift them by, which leaves them as they are if
 // they truly repeat (fixtures/surfaces.js checks). Each module's own numbers
 // (the averages the shaders divide by) are read back from the GPU, so they
 // come later: { tiles, ready, pixels(name), dispose() }; tiles: the array
-// (drawn when this returns); ready: a promise of { sand, rock, green };
+// (drawn when this returns, but for the litter's and its leaves', which land
+// with `ready`: textures/green.js); ready: a promise of { sand, rock, green };
 // pixels(name): a promise of a layer's texels (RGBA bytes, rows from the
 // first). The owner disposes them.
 import { createTarget } from '../gpu/texture.js';
@@ -19,7 +21,7 @@ import { makeSandTiles } from './sand.js';
 import { makeRockTile } from './rock.js';
 import { makeGreenTiles } from './green.js';
 
-export const LAYERS = { grain: 0, ripples: 1, rock: 2, grass: 3, litter: 4 };
+export const LAYERS = { grain: 0, ripples: 1, rock: 2, grass: 3, litter: 4, leaves: 5 };
 
 // renderer: ctx.renderer; settings: config.world.terrain; rng(name): a stream
 // per module, as ctx.rng, under `prefix`.
@@ -40,7 +42,8 @@ export function createSurfaceTiles(renderer, rng, prefix, settings, size, shift 
   const rock = makeRockTile(into, rng(`${prefix}/rock`), settings.rock);
   const green = makeGreenTiles(into, rng(`${prefix}/green`), settings.green);
   // The mip chain, once every layer is drawn (the read-backs above are of
-  // level 0 and already queued).
+  // level 0 and already queued). The litter's layers are still blank here:
+  // textures/green.js writes them with their own mip levels once read back.
   target.color.generateMipmaps();
   return {
     tiles: target.color,

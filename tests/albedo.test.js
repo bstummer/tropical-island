@@ -60,10 +60,16 @@ test("the green's shares blend between bands as the zones do: the scrub's to a b
   }
 });
 
-test("sand's albedo is halfway between wet and dry sand's where the wet sand's zone ends, wet sand's under a film of water, dry sand's from `dry`, as chunks/sand.wgsl darkens it", () => {
+test("sand's albedo is wet sand's under a film of water, most of the way to it where wet, a third to half way where damp below the waves' reach (the wet sand's zone), a little darker than dry sand's just above it, dry sand's from `dry`, as chunks/sand.wgsl darkens it", () => {
   const { film, dry } = surfaces.wetness;
+  const reach = surfaces.wetHeight;
   const near = (a, b) => a.every((v, c) => Math.abs(v - b[c]) < 1e-12);
-  assert.ok(near(albedoOf(1, 0, 0, surfaces.wetHeight, 0, 0, surfaces), albedo.wetSand.map((v, c) => (v + albedo.drySand[c]) / 2)), 'at the zone');
+  // How far towards wet sand's albedo, by its green channel.
+  const dark = (h) => (albedo.drySand[1] - albedoOf(1, 0, 0, h, 0, 0, surfaces)[1]) / (albedo.drySand[1] - albedo.wetSand[1]);
+  const wet = film + 0.6 * (reach - film);
+  assert.ok(dark(wet) > 0.7 && dark(wet) < 0.9, `wet: ${dark(wet)}`);
+  assert.ok(dark(reach - 0.01) > 0.3 && dark(reach - 0.01) < 0.6, `just below the reach: ${dark(reach - 0.01)}`);
+  assert.ok(dark(reach + 0.02) > 0 && dark(reach + 0.02) < 0.1, `just above the reach: ${dark(reach + 0.02)}`);
   assert.ok(near(albedoOf(1, 0, 0, film, 0, 0, surfaces), albedo.wetSand), 'under a film');
   assert.ok(near(albedoOf(1, 0, 0, dry, 0, 0, surfaces), albedo.drySand), 'dry');
   // In between, never darker higher up.
@@ -144,13 +150,15 @@ test("the map over a grid: the sea's albedo under water, sand on the cove's beac
   assert.ok(behind.rgb[1] > behind.rgb[0] && behind.rgb[1] > behind.rgb[2], `120 m behind the beach: ${behind.rgb}`);
 });
 
-test("sand is wettest at the water, half wet at the wet sand zone's edge, dry above, and never wetter higher up", () => {
+test("sand is wettest at the water, wet and then damp up to the waves' reach (the wet sand's zone), where it steps down by `step`, dry above, and never wetter higher up", () => {
   const { wetness } = surfaces;
   assert.equal(sandWetness(0, wetness, surfaces.wetHeight), 1);
   assert.equal(sandWetness(wetness.film, wetness, surfaces.wetHeight), 1);
   assert.equal(sandWetness(wetness.dry, wetness, surfaces.wetHeight), 0);
-  // chunks/sand.wgsl darkens sand by smoothstep(0.2, 0.5, wetness): half dark where the wet sand's zone ends.
-  assert.ok(Math.abs(sandWetness(surfaces.wetHeight, wetness, surfaces.wetHeight) - 0.35) < 1e-12);
+  const below = sandWetness(surfaces.wetHeight - 0.01, wetness, surfaces.wetHeight);
+  const above = sandWetness(surfaces.wetHeight + 0.01, wetness, surfaces.wetHeight);
+  assert.ok(Math.abs(below - above - wetness.step) < 0.02, `${below} below the reach, ${above} above it`);
+  assert.ok(above > 0.1 && above <= 0.15, `${above} above the reach`);
   let last = Infinity;
   for (let h = 0; h <= 2; h += 0.01) {
     const w = sandWetness(h, wetness, surfaces.wetHeight);

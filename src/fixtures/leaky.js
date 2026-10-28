@@ -1,6 +1,8 @@
 // Tool fixture (?fixture=leaky): a system whose dispose() forgets things on
 // purpose: its texture and render target stay on the GPU, and one mesh stays
-// in the scene. tools/screenshot.js must catch all three. Not part of the island.
+// in the scene, with its material's shader module: every build shares that one
+// (gpu/device.js keeps a module per source), so only the final teardown shows
+// it. tools/screenshot.js must catch all four. Not part of the island.
 import { basicMaterial } from './basic.js';
 import { plane } from '../gpu/geometry.js';
 import { Mesh } from '../gpu/scene.js';

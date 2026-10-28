@@ -9,8 +9,10 @@
 //   1  the material's own, filled from `uniforms` by name: each field of a
 //      var<uniform> struct from uniforms[field].value, each texture from
 //      uniforms[name].value (a Texture, or null for zeros), and a sampler
-//      `<texture>Sampler` from that texture's sampler, or `<texture>Texels`, an
-//      unfiltered one for textureGather (bindings.js)
+//      `<texture>Sampler` from that texture's sampler (a sampler_comparison
+//      compares with 'greater-equal', for reversed depth, unless that sampler
+//      has a `compare`), or `<texture>Texels`, an unfiltered one for
+//      textureGather (bindings.js)
 //   2  the object's: chunks/object.wgsl, the mesh's matrices
 // Overrides (WGSL `override`) take what `defines` did: booleans and numbers.
 

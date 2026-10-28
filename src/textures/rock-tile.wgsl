@@ -2,7 +2,9 @@
 // across of rock broken into blocks by cracks, each block standing a little
 // proud or sunk and tilted, its edges bevelled or rounded; the faces rough,
 // pitted, and speckled with the rock's two minerals. r: the height (m); g:
-// the albedo's factor; b: how much of it is the second mineral.
+// the albedo's factor, but for the second mineral's brightness, which its
+// tint carries (textures/rock.js): so it stays under 2, and follows the
+// weathering alone; b: how much of it is the second mineral.
 
 #include "chunks/fullscreen.wgsl"
 #include "tileable.wgsl"
@@ -14,7 +16,7 @@ struct RockTile {
   uBlocks: vec4f, // size (m); how regular, 0 to 1; crack width (m); bevel (m)
   uShape: vec4f, // rounding of the edges, 0 (a chamfer) to 1; tilt of the faces; how much they stand proud or sunk, of the bevel; the share of joints that gape
   uFace: vec4f, // roughness (m); pit size (m); share of cells with a pit; pit depth (m)
-  uMinerals: vec4f, // crystal size (m); share of the second mineral; its brightness; the speckle's contrast
+  uMinerals: vec3f, // crystal size (m); share of the second mineral; the speckle's contrast
 }
 
 @group(1) @binding(0) var<uniform> rockTile: RockTile;
@@ -111,8 +113,9 @@ fn fragmentMain(in: Fullscreen) -> @location(0) vec4f {
       if (h.x > rockTile.uFace.z) {
         continue;
       }
-      let at = c + 0.3 + 0.4 * (tileHash(c, np, rockTile.uSeed + 17.0) * 0.5 + 0.5);
-      let d = length(pp - at) / (0.25 + 0.25 * h.y);
+      // Anywhere in its cell, of any size, most small: no grid shows.
+      let at = c + 0.15 + 0.7 * (tileHash(c, np, rockTile.uSeed + 17.0) * 0.5 + 0.5);
+      let d = length(pp - at) / (0.12 + 0.4 * h.y * h.y);
       if (d < 1.0) {
         pit = max(pit, 1.0 - d * d);
       }
@@ -125,7 +128,7 @@ fn fragmentMain(in: Fullscreen) -> @location(0) vec4f {
   let m = nearestBlock(uv * nm, nm, rockTile.uSeed + 21.0, 0.45);
   let mh = tileHash(m.cell, nm, rockTile.uSeed + 25.0) * 0.5 + 0.5;
   let second = step(mh.x, rockTile.uMinerals.y);
-  var factor = mix(1.0, rockTile.uMinerals.z, second) * (1.0 + rockTile.uMinerals.w * (2.0 * mh.y - 1.0));
+  var factor = 1.0 + rockTile.uMinerals.z * (2.0 * mh.y - 1.0);
 
   // Weathering: each block its own shade, crests worn lighter, hollows,
   // cracks and pits holding dirt and shade.

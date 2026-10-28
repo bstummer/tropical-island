@@ -276,8 +276,8 @@ export function heatImage(base, heat, threshold) {
 
 // How much of the frame moves over a series of frames: `heat` holds each
 // pixel's largest channel range (max - min across the frames, in 8-bit
-// levels), and `percent` is the share of pixels whose range exceeds
-// `threshold`. Slow drifts count as much as fast changes.
+// levels), and `percent` is the share of pixels whose range reaches
+// `threshold`, as heatImage() marks them. Slow drifts count as much as fast changes.
 export function motion(frames, { threshold = 4 } = {}) {
   const n = frames[0].width * frames[0].height;
   const heat = new Float32Array(n);
@@ -293,7 +293,7 @@ export function motion(frames, { threshold = 4 } = {}) {
       }
       if (max - min > heat[i]) heat[i] = max - min;
     }
-    if (heat[i] > threshold) moving++;
+    if (heat[i] >= threshold) moving++;
   }
   return { percent: (100 * moving) / n, heat };
 }

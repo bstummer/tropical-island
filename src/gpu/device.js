@@ -56,8 +56,8 @@ export async function createDevice(canvas, { capture, onError, instrument }) {
   const modules = new Map();
   const placeholders = new Map();
   const samplersOf = new WeakMap(); // descriptor object -> sampler
-  function samplerFor({ mag = 'linear', min = 'linear', mipmap = 'nearest', wrap = 'clamp-to-edge', anisotropy = 1 }) {
-    const key = `${mag}/${min}/${mipmap}/${wrap}/${anisotropy}`;
+  function samplerFor({ mag = 'linear', min = 'linear', mipmap = 'nearest', wrap = 'clamp-to-edge', anisotropy = 1, compare }) {
+    const key = `${mag}/${min}/${mipmap}/${wrap}/${anisotropy}${compare ? `/${compare}` : ''}`;
     if (!samplers.has(key)) {
       samplers.set(
         key,
@@ -70,6 +70,7 @@ export async function createDevice(canvas, { capture, onError, instrument }) {
           addressModeV: wrap,
           addressModeW: wrap,
           maxAnisotropy: anisotropy,
+          ...(compare && { compare }),
         }),
       );
     }
@@ -97,7 +98,8 @@ export async function createDevice(canvas, { capture, onError, instrument }) {
     get software() {
       return /swiftshader|llvmpipe|software|basic render|warp/i.test(gpu.describe()) || Boolean(adapter.info?.isFallbackAdapter);
     },
-    // A sampler per descriptor: { mag, min, mipmap: 'linear'|'nearest', wrap: 'clamp-to-edge'|'repeat'|'mirror-repeat', anisotropy }.
+    // A sampler per descriptor: { mag, min, mipmap: 'linear'|'nearest', wrap: 'clamp-to-edge'|'repeat'|'mirror-repeat', anisotropy,
+    // compare }, where compare (a depth comparison, 'greater-equal' for reversed depth) makes a sampler_comparison's.
     // A descriptor object asked for again (a texture's, every frame) is found by its identity.
     sampler(descriptor = DEFAULT_SAMPLER) {
       let sampler = samplersOf.get(descriptor);

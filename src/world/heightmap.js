@@ -70,11 +70,17 @@ export function layoutLevel(island, settings, k, coarser = null) {
   }
   if (i1 < 0) throw new Error(`terrain: no ground on the ${step} m grid higher than ${level.depth} m under the sea`);
   const grow = step + (settings.blend + 1) * texel;
-  const fitted = square([origin[0] + i0 * step - grow, origin[0] + i1 * step + grow, origin[1] + j0 * step - grow, origin[1] + j1 * step + grow], texel, step, origin, align);
-  // Inside the coarser one, which has its full say but at its last sample.
+  const reach = [origin[0] + i1 * step + grow, origin[1] + j1 * step + grow];
+  const fitted = square([origin[0] + i0 * step - grow, reach[0], origin[1] + j0 * step - grow, reach[1]], texel, step, origin, align);
+  // Inside the coarser one, which has its full say but at its last sample. The
+  // square reaches past the box on the box's shorter side, maybe past the
+  // coarser one too: there it slides back along the coarser one's lines, as
+  // far as it must, if it still holds the box.
   const end = (fitted.samples - 1) * texel;
   for (const c of [0, 1]) {
-    if (fitted.origin[c] < origin[c] + step || fitted.origin[c] + end > origin[c] + (n - 2) * step) {
+    const over = fitted.origin[c] + end - (origin[c] + (n - 2) * step);
+    if (over > 0) fitted.origin[c] -= Math.ceil(over / step) * step;
+    if (fitted.origin[c] < origin[c] + step || fitted.origin[c] + end < reach[c]) {
       throw new Error(`terrain: the ${texel} m grid reaches past the ${step} m grid round it`);
     }
   }

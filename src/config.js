@@ -397,9 +397,10 @@ export const world = {
     // leaf litter 0.1–0.2.
     albedo: {
       // The user's pick (PLAN.md, Decisions): bright white sand, at the top of
-      // what coral sand measures; at 0.55 it read grey, golden sand tan.
-      drySand: [0.72, 0.64, 0.5],
-      wetSand: [0.36, 0.28, 0.17], // darker, warmer and more saturated
+      // what coral sand measures; at 0.55 it read grey, golden sand tan. White
+      // rather than cream: yellower, it read khaki in shade and wet.
+      drySand: [0.7, 0.65, 0.55],
+      wetSand: [0.42, 0.34, 0.23], // darker, a little warmer and more saturated
       rock: [0.055, 0.052, 0.05], // the user's pick (PLAN.md, Decisions): dark basalt
       // Inland (chunks/green.wgsl): the living green, grasses and herbs on open
       // ground and the leafy understory on lush; the bare ground, sand behind
@@ -407,7 +408,7 @@ export const world = {
       // `green`, the user's pick (PLAN.md, Decisions): lush tropical.
       grass: [0.085, 0.19, 0.038],
       leafy: [0.02, 0.078, 0.017],
-      soil: [0.3, 0.24, 0.16],
+      soil: [0.3, 0.19, 0.11], // warm brown volcanic earth
       litter: [0.09, 0.06, 0.035],
     },
     // Metres: the light from below comes from the ground's albedo averaged over
@@ -422,14 +423,20 @@ export const world = {
       // straight out to sea: the trades, from behind the island.
       wind: 25,
       // How wet the ground is by the height above the sea (chunks/wet.wgsl,
-      // rock's too): under a film below `film`, half wet at zones.wetSand
-      // (the wet sand's zone), dry above `dry`.
-      wetness: { film: 0.2, dry: 0.7 },
-      // Damp sand is all but matte; only a film of water mirrors.
-      roughness: { dry: 0.9, wet: 0.75, film: 0.07 },
+      // rock's too): under a film below `film`, wet and then damp up to
+      // zones.wetSand (the wet sand's zone, as far as the waves reach), where it
+      // steps down by `step` (of 1, soaked) to a faint damp, dry above `dry`.
+      wetness: { film: 0.05, dry: 0.6, step: 0.18 },
+      // Damp sand is matte, wet sand has a soft sheen and soaked sand a glossy
+      // one; a film of water mirrors.
+      roughness: { dry: 0.9, wet: 0.65, soaked: 0.4, film: 0.07 },
       // Metres from the camera within which sand shows its detail; beyond, its
       // albedo alone, drawn by a cheaper shader (world/terrain.js).
       range: 120,
+      // The backwash's rumples on wet sand: the largest about this wavelength,
+      // with this slope (radians, about), and two finer scales, each 0.3 the
+      // last and steeper (chunks/sand.wgsl).
+      rumples: { wavelength: 0.35, slope: 0.08 },
     },
     // Rock (chunks/rock.wgsl, textures/rock.js). Lengths in metres.
     rock: {
@@ -445,7 +452,7 @@ export const world = {
       shape: { rounding: 0.15, tilt: 0.15, proud: 0.6, gapes: 0.5 },
       // The faces: their roughness, pits (size, share of cells with one,
       // depth): the gas bubbles frozen in lava.
-      face: { roughness: 0.04, pitSize: 0.012, pits: 0.45, pitDepth: 0.008 },
+      face: { roughness: 0.04, pitSize: 0.012, pits: 0.3, pitDepth: 0.008 },
       // Two minerals: crystal size, the second's share and brightness, the
       // speckle's contrast; each one's colour factor. Pale feldspar in the
       // dark groundmass.
@@ -454,6 +461,13 @@ export const world = {
       // sharp its crests (0 to 1), stretched along the vertical (below 1).
       relief: { scale: 12, height: 0.22, sharp: 0.8, stretch: 0.5 },
       tone: 0.2, // how much the albedo follows the relief
+      // Where rock meets sand or soil (chunks/rock.wgsl rockEdge): it rounds
+      // down under them over `rim` m, sloping `rimSlope` at the edge, and they
+      // drift up against it over `drift` m, sloping `driftSlope`. The user's
+      // pick (4.8): ledges standing proud of flat sand, so no drift, and
+      // `drift` does nothing; sand drifted against the rock was the
+      // alternative (rim 0.1, rimSlope 1, driftSlope 0.3).
+      edge: { rim: 0.15, rimSlope: 2, drift: 0.25, driftSlope: 0 },
       // Colour factors: streaks of salt and rust down steep faces, layers of
       // lava flows across them. Lichen (albedos) covers `cover` of what faces
       // up, `share` of it the second kind: a little, as the user picked bare
@@ -479,18 +493,18 @@ export const world = {
     // rather than soil, or sand behind a beach (island.js groundOf's sandy).
     // Lengths in metres.
     green: {
-      cover: { open: [0.45, 0.85, 0.92], lush: [0.55, 0.85, 0.95] },
-      litter: [0.1, 0.6, 0.9],
+      // The scrub mostly green, its sand in blobs where it meets the beach.
+      cover: { open: [0.75, 0.92, 0.96], lush: [0.85, 0.94, 0.98] },
+      litter: [0.1, 0.75, 0.9],
       // Over about `wavelength` m the green turns drier (+) or deeper (-), its
       // colour's factor changing by `change` per unit.
       tone: { change: [0.1, 0.03, -0.12], wavelength: 160 },
-      // Patches of green and bare about `size` across, their edges from soft (0) to sharp (1).
+      // Patches of green and bare about `size` across, their edges from soft (0:
+      // blurred a twentieth of that either side, which near the camera the
+      // tufts fray instead) to sharp (1: as a pixel allows), the same near and far.
       patches: { size: 4, sharp: 0.5 },
       // Clumps about `size` across, lighter or darker by `strength` (a deviation).
       clumps: { size: 0.5, strength: 0.07 },
-      // How much the green hides the bare ground between it when seen at a
-      // slant: 0 not at all (flat), 1 as a layer of leaves would.
-      stand: 0.4,
       // The detail tiles (textures/green.js): the grass's and the litter's,
       // and how much larger the soil's crumbs are than the sand's grains.
       tiles: { grass: 0.6, litter: 1.5, crumbs: 2.5 },
@@ -539,7 +553,7 @@ export const world = {
       // `topTilt`. Then `fractures` across its upper edges, their faces
       // looking `fractureElevation` degrees above level, each taking
       // `fractureDepth` of its extent that way.
-      blocks: { count: 8, width: [0.5, 0.9], height: [0.25, 0.65], sides: [5, 6], jitter: 0.4, offset: 0.15, lean: [-6, 22], topTilt: 25, fractures: [2, 3], fractureElevation: [15, 65], fractureDepth: [0.15, 0.4] },
+      blocks: { count: 8, width: [0.55, 0.9], height: [0.35, 0.7], sides: [4, 6], jitter: 0.3, offset: 0.15, lean: [-3, 8], topTilt: 12, fractures: [1, 2], fractureElevation: [35, 75], fractureDepth: [0.08, 0.22] },
       // Fallen columns: five or six uneven sides, `length` over width, ends
       // slanting `endTilt` degrees from square; `breaks` more cuts step an
       // end, `breakTilt` degrees off the axis, `breakDepth` of the width deep.
@@ -615,6 +629,13 @@ export const capture = {
   // 2500 since rock (Stage 4.4): where it meets the beach, a pixel runs both
   // surfaces' detail.
   frameBudgetMs: 2500,
+  // Seconds a capture waits before it fails rather than hang the tool: for the
+  // work a frame waits on (core/capture.js; the sky's light after a time
+  // change), and for a view, or one of the tool's checks, to be done once its
+  // page is ready, the pages it loads included, which may each take three
+  // minutes to get ready on SwiftShader beside other checks (tools/screenshot.js):
+  // at 1600 x 900, longer in proportion for frames of more pixels.
+  timeouts: { settleSeconds: 120, viewSeconds: 600 },
   // What the screenshot tool measures per view (tools/measure.js).
   motion: { frames: 6, stepSeconds: 0.5, threshold: 4 }, // strip at t, t + 0.5 s, ...; threshold in 8-bit levels
   // Frames panned by stepPixels at the centre; see shimmer() in tools/image.js.
@@ -649,9 +670,10 @@ export const capture = {
   // The terrain fixture (src/fixtures/terrain.js), in metres: how far the GPU's
   // heights may land from world/heightmap.js's (floats on the GPU, doubles in JS),
   // and the deliberate mistake, half a metre off, that the check has to catch.
-  // And how far the drawn ground may stray from world/island.js between samples,
-  // as a median per level and a share of its spacing: bilinear misses about
-  // 0.005 of it on curved ground, a grid shifted half a sample 0.1 and more.
+  // And how far each level's heights may stray from world/island.js between
+  // samples, as a median per level and a share of its spacing: as built they
+  // miss by 0.0001 of it (much of the sea floor is smooth), a grid shifted a
+  // quarter of a sample by 0.024, half a sample by 0.048.
   // `ground`: how far the GPU's ground may land from heightmap.js's, for the
   // shares of sand and rock, how lush and how sandy (`cover`), the band, and the reef's offset in metres: the
   // GPU's filtering and its half floats. Half floats, as maths/half-float.js makes them, hold
@@ -659,23 +681,45 @@ export const capture = {
   // on one D3D11 GPU. `bounce`: how far the ground's albedo the light from
   // below reads on the GPU may land from JS's, per channel: half floats and
   // filter weights cost 0.001 on one D3D11 GPU, 0.0003 on SwiftShader; the
-  // map read half a texel off misses by 0.1. `far`: the ground read `lod`
+  // map read half a texel off misses by 0.1. `wet`: how far the ground's
+  // wetness (0 to 1) on the GPU may land from world/albedo.js sandWetness's:
+  // floats; JS's heights 5 cm off miss by 0.2. `far`: the ground read `lod`
   // levels of mips up, as a pixel 256 m across reads the fine grid, within
   // `band` and `reef` (metres) of the mips made in JS: wider, as neighbouring
   // texels there differ by metres of reef and whole bands, which a GPU's
   // coarse filter weights and seven levels of half floats rounded its own way
   // carry into the result.
-  terrain: { limit: 0.002, offset: 0.5, islandMedian: 0.04, ground: { cover: 0.01, band: 0.005, reef: 0.25 }, mesh: 0.01, bounce: 0.01, far: { lod: 7, band: 0.05, reef: 2 } },
+  terrain: { limit: 0.002, offset: 0.5, islandMedian: 0.01, ground: { cover: 0.01, band: 0.005, reef: 0.25 }, mesh: 0.01, bounce: 0.01, wet: 0.001, far: { lod: 7, band: 0.05, reef: 2 } },
   // The surfaces fixture (src/fixtures/surfaces.js): a tile made again shifted
   // by a whole tile may change this share of its texels by more than `levels`
-  // (the odd texel on a cell's edge flips by rounding); shifted by half a tile,
-  // a deliberate mistake, it must change more than `mistaken` of them. `tiles`:
-  // the tiles it checks.
-  surfaces: { levels: 2, share: 0.01, mistaken: 0.3, tiles: ['grain', 'ripples', 'rock', 'grass', 'litter'] },
+  // (the odd texel on a cell's edge flips by rounding: 0.006% at most on one
+  // desktop GPU; a `%` for a floor-mod in the litter's tile, 83% shifted back);
+  // shifted by half a tile, a deliberate mistake, it must change more than
+  // `mistaken` of them. `tiles`: the tiles it checks.
+  surfaces: { levels: 2, share: 0.01, mistaken: 0.3, tiles: ['grain', 'ripples', 'rock', 'grass', 'litter', 'leaves'] },
   // The patches fixture (src/fixtures/patches.js): how far the GPU's patches
   // (0 to 1) may land from world/green.js's (floats and an approximate exp on
   // the GPU); points shifted a tenth of a patch, a mistake, must land further.
-  patches: { limit: 0.002 },
+  // `seen`: how far a cell's average, seen from any camera, may land from the
+  // nearest camera's through the same pixel: the sand's share, and a channel
+  // of the albedo. The detail's tiles average over the half-metre cells to
+  // within 0.07 of the plain colour beyond their reach (one desktop GPU); the
+  // green's edges frayed in the noise's units, as before 2026-10-28, moved
+  // the sand's share by 0.48 where the noise is flat, and bare ground taking
+  // on the green at a slant the albedo by 0.5.
+  patches: { limit: 0.002, seen: { share: 0.15, albedo: 0.15 } },
+  // The green-tiles fixture (src/fixtures/green-tiles.js): how far greenTile's
+  // averages on the GPU may land from world/green.js greenLayers' (relative for
+  // the grass's colour, else absolute): 0.002 on one D3D12 GPU, as the reads'
+  // mips round; the ground between the covers taken as nothing misses by 0.14.
+  // And how much lighter or darker the green near the camera may read than its
+  // albedo: `lift` where a pixel sees a leaf's own tone or none of it (1% at
+  // most, the jungle's green leaves; the scrub's bare sand 3.9% light before
+  // the leaves' tones were evened out, textures/litter-tones.js), `between`,
+  // where it mixes a few leaves' tones (1.6%, the same; the scrub 5.1% light,
+  // and 3.2% without the leaves' masks); the leaves at half their share, a
+  // mistake, 6%.
+  greenTiles: { layers: 0.01, lift: 0.015, between: 0.025 },
   // The rocks fixture (src/fixtures/rocks.js), in metres: how far the GPU's
   // offsets may land from their JS twin (as the terrain's mesh: floats on the
   // GPU), and the pixels its vertex shader draws from its twin's surface: 0.5 mm

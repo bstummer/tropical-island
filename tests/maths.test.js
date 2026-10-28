@@ -90,6 +90,9 @@ function placed(M, { num, rotation }, scaled = true) {
   return new M.Matrix4().compose(new M.Vector3(num(50), num(50), num(50)), new M.Quaternion(...rotation()), new M.Vector3(...scale));
 }
 
+// Whether a half float's bits are a NaN's: every exponent bit set, and a mantissa bit.
+const isHalfNaN = (h) => (h & 0x7c00) === 0x7c00 && (h & 0x3ff) !== 0;
+
 // A camera's projection, as core/camera.js makes it, now and then off-centre.
 function projection(M, { r }) {
   const [fov, aspect, near] = [r.range(20, 120), r.range(0.5, 3), r.range(0.01, 2)];
@@ -110,17 +113,20 @@ const CASES = {
     for (const x of [0, -0, 90, -90, 180, 360, Infinity, -Infinity, NaN]) put(M.degToRad(x), M.radToDeg(x), M.clamp(x, -1, 1), M.clamp(x, 1, -1));
   },
 
+  // A NaN's payload is the engine's and the CPU's to keep or drop on the way
+  // through a 32-bit float, so of a NaN's half float only its being one counts.
   'half floats from numbers'(M, { r }, put) {
     const word = new DataView(new ArrayBuffer(4));
     const float = (bits) => (word.setUint32(0, bits >>> 0), word.getFloat32(0));
+    const half = (x) => (Number.isNaN(x) ? isHalfNaN(M.toHalfFloat(x)) : M.toHalfFloat(x));
     // Every sign and exponent, with mantissas at the edges of what a half float keeps.
     const mantissas = [0, 1, 0xfff, 0x1000, 0x1fff, 0x2000, 0x3fffff, 0x400000, 0x7fffff];
-    for (let e = 0; e < 512; e++) for (const m of [...mantissas, r.int(0, 0x7fffff), r.int(0, 0x7fffff)]) put(M.toHalfFloat(float((e << 23) | m)));
+    for (let e = 0; e < 512; e++) for (const m of [...mantissas, r.int(0, 0x7fffff), r.int(0, 0x7fffff)]) put(half(float((e << 23) | m)));
     // Numbers that round on the way to 32 bits, too.
     for (let k = 0; k < N; k++) put(M.toHalfFloat(r.range(-70000, 70000)), M.toHalfFloat(r.range(-1, 1)), M.toHalfFloat(r.range(-1e-4, 1e-4)), M.toHalfFloat(r.range(-1e-7, 1e-7)));
     // 2^-24, 2^-25, 2^-14 and just under it, as literals (no Math.pow).
     for (const x of [0, -0, 65504, -65504, 65505, 65519.99, 65520, 1e9, Infinity, -Infinity, NaN, 5.9604644775390625e-8, 2.98023223876953125e-8, 6.103515625e-5, 6.103515625e-5 - 9.313225746154785e-10, 1 / 3]) {
-      put(M.toHalfFloat(x));
+      put(half(x));
     }
     put(console.warn.mock.callCount()); // a warning for each number out of range
   },
@@ -589,6 +595,46 @@ test('the projection has reversed depth, and the frustum culls what is outside i
   assert.ok(box([-100, -1, -11], [100, 1, -9]), 'a box across the view');
 });
 
+// three.js reads every input before it writes the target, so a target that is
+// also an input (q.multiply(r), m.premultiply(n), v.cross(w), as the game calls
+// them) comes out as a fresh one would; the recorded cases, made mostly with
+// fresh targets, would miss a port that writes before it has read.
+test('a target that is also an input comes out as a fresh one', () => {
+  const i = random();
+  const state = (o) => (o.elements ? [...o.elements] : ['x', 'y', 'z', 'w'].filter((k) => k in o).map((k) => o[k]));
+  const kinds = [
+    // A new one, a copy, the calls of the form t.f(a, b), and of the form t.f(a).
+    [() => new Vector3(i.num(), i.num(), i.num()), (v) => v.clone(), [(t, a, b) => t.crossVectors(a, b), (t, a, b) => t.addVectors(a, b), (t, a, b) => t.subVectors(a, b)], [(t, a) => t.cross(a)]],
+    [() => new Quaternion(i.num(), i.num(), i.num(), i.num()), (q) => new Quaternion().copy(q), [(t, a, b) => t.multiplyQuaternions(a, b)], [(t, a) => t.multiply(a)]],
+    [() => new Matrix4().set(...i.elements(16)), (m) => new Matrix4().copy(m), [(t, a, b) => t.multiplyMatrices(a, b)], [(t, a) => t.premultiply(a)]],
+  ];
+  for (let k = 0; k < 50; k++) {
+    for (const [make, copy, calls, selfCalls] of kinds) {
+      const [a, b, fresh] = [make(), make(), make()];
+      for (const call of calls) {
+        const want = (x, y) => state(call(copy(fresh), x, y));
+        let t = copy(a);
+        assert.deepEqual(state(call(t, t, b)), want(a, b), `${call}, t = a`);
+        t = copy(b);
+        assert.deepEqual(state(call(t, a, t)), want(a, b), `${call}, t = b`);
+        t = copy(a);
+        assert.deepEqual(state(call(t, t, t)), want(a, a), `${call}, t = a = b`);
+      }
+      for (const call of selfCalls) {
+        const t = copy(a);
+        assert.deepEqual(state(call(t, t)), state(call(copy(a), copy(a))), `${call}, t = a`);
+      }
+    }
+    // A box's centre written into one of its own corners.
+    const points = [new Vector3(i.num(), i.num(), i.num()), new Vector3(i.num(), i.num(), i.num())];
+    const box = () => points.reduce((b, p) => b.expandByPoint(p), new Box3());
+    for (const corner of ['min', 'max']) {
+      const b = box();
+      assert.deepEqual(state(b.getCenter(b[corner])), state(box().getCenter(new Vector3())), `the centre into ${corner}`);
+    }
+  }
+});
+
 test('boxes and spheres', () => {
   const box = new Box3();
   assert.ok(box.isEmpty());
@@ -610,6 +656,7 @@ test('half floats keep exactly what they can hold and cut the rest towards zero'
   assert.equal(maths.toHalfFloat(1 + 1 / 1024), 0x3c01, 'one step above 1');
   assert.equal(maths.toHalfFloat(1 + 1 / 1024 * 0.99), 0x3c00, 'just short of it');
   assert.equal(maths.toHalfFloat(-(1 + 1 / 1024 * 0.99)), 0xbc00, 'negative, towards zero too');
+  assert.ok(isHalfNaN(maths.toHalfFloat(NaN)), 'NaN stays NaN');
   assert.equal(warn.mock.callCount(), 0);
   assert.equal(maths.toHalfFloat(1e6), 0x7bff, 'clamped to the largest');
   assert.equal(maths.toHalfFloat(-Infinity), 0xfbff);

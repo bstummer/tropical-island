@@ -36,6 +36,14 @@ export function parseParams(search) {
   };
 }
 
+// The entry of `table` a param names (?quality=low: a preset), only one of its
+// own: "constructor" or "toString" would find what every object inherits.
+// what: the param, these: what the table holds, for the error.
+export function lookup(table, name, what, these) {
+  if (!Object.hasOwn(table, name)) throw new Error(`Unknown ${what} "${name}". ${these}: ${Object.keys(table).join(', ')}`);
+  return table[name];
+}
+
 function text(q, key) {
   const value = q.get(key);
   return value === null || value.trim() === '' ? null : value.trim();

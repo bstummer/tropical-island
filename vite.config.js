@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { defineConfig } from 'vite';
 import glsl from 'vite-plugin-glsl';
 import { viteSingleFile } from 'vite-plugin-singlefile';
-import { checkModules, checkOutputFiles } from './tools/check-build.js';
+import { checkModules, checkOutputFiles, SHADER_ROOT } from './tools/check-build.js';
 
 const SHADER_ID = /\.wgsl(\?.*)?$/;
 
@@ -62,7 +62,9 @@ function shaderHotSwap() {
 // The build must emit index.html and nothing else, made of index.html and
 // src/ alone (no module from a package). Runs after vite-plugin-singlefile has
 // dropped the inlined chunks, and fails the build before anything is written.
-function singleFileOutput() {
+// `files: false` checks the modules only: for the inline heightmap worker,
+// which Vite bundles on its own (with `worker.plugins`) into a chunk it inlines.
+function singleFileOutput({ files = true } = {}) {
   let root = '';
   return {
     name: 'single-file-output',
@@ -74,7 +76,7 @@ function singleFileOutput() {
     generateBundle: {
       order: 'post',
       handler(_options, bundle) {
-        const failures = [...checkOutputFiles(Object.keys(bundle)), ...checkModules([...this.getModuleIds()], root)];
+        const failures = [...(files ? checkOutputFiles(Object.keys(bundle)) : []), ...checkModules([...this.getModuleIds()], root)];
         if (failures.length) this.error(failures.map((f) => f.message).join('\n'));
       },
     },
@@ -89,11 +91,12 @@ export default defineConfig({
     shaderChunkPaths(),
     // Chunks share helpers (two chunks may both include noise.wgsl), and WGSL
     // rejects a function defined twice, so each chunk lands in a shader once.
-    glsl({ root: '/src/shaders', watch: true, minify: false, removeDuplicatedImports: true }),
+    glsl({ root: SHADER_ROOT, watch: true, minify: false, removeDuplicatedImports: true }),
     shaderHotSwap(),
     viteSingleFile({ removeViteModuleLoader: true }),
     singleFileOutput(),
   ],
+  worker: { plugins: () => [singleFileOutput({ files: false })] },
   build: {
     target: 'es2022',
     outDir: 'dist',

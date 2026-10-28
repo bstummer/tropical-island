@@ -11,8 +11,11 @@ const VISIBLE = () => GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT;
 // Bind groups kept per Bindings, the least recently used going first: a
 // material may cycle through a few sets of textures (the sky's two sets of
 // tables, the output's inputs), never many.
-const GROUPS = 16;
+export const GROUPS = 16;
 const TEXELS = { mag: 'nearest', min: 'nearest' }; // the sampler of `<name>Texels`
+// What a sampler_comparison compares with, unless its texture's sampler says:
+// depth is reversed (config.camera), so nearer is greater.
+const COMPARE = 'greater-equal';
 
 // The bind group layout entry of a reflected binding. A float texture with a
 // `<name>Sampler` beside it is filtered; one without is read unfiltered, which
@@ -128,6 +131,7 @@ export class Bindings {
   resource(binding, uniforms) {
     if (binding.kind === 'uniform') return this.uniformResource(binding);
     if (binding.kind === 'sampler' && binding.name.endsWith('Texels')) return this.gpu.sampler(TEXELS);
+    if (binding.type === 'sampler_comparison') return this.gpu.sampler(comparing(uniforms[binding.texture]?.value?.sampler));
     if (binding.kind === 'sampler') return this.gpu.sampler(uniforms[binding.texture]?.value?.sampler);
     if (binding.kind === 'storage') {
       const buffer = uniforms[binding.name]?.value;
@@ -157,6 +161,16 @@ export class Bindings {
     this.groups.clear();
     this.last = null;
   }
+}
+
+// A texture's sampler descriptor as a comparison sampler's, made once per
+// descriptor, so the device finds its sampler by identity (device.js sampler()).
+const comparisons = new WeakMap();
+const NO_SAMPLER = {};
+function comparing(descriptor = NO_SAMPLER) {
+  if (descriptor.compare) return descriptor;
+  if (!comparisons.has(descriptor)) comparisons.set(descriptor, { ...descriptor, compare: COMPARE });
+  return comparisons.get(descriptor);
 }
 
 function equal(a, b) {

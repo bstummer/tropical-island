@@ -10,13 +10,14 @@ test('percentiles by nearest rank', () => {
   assert.equal(percentile([], 0.5), null);
 });
 
-test('frame summaries: a hitch shows in p95 and max, not in the median', () => {
-  const ms = [...Array(99).fill(16.7), 100];
+test('frame summaries: hitches show in p95 and max, not in the median', () => {
+  const ms = [100, ...Array(5).fill(50), ...Array(94).fill(16.7)]; // out of order
   const s = summarizeFrames(ms);
   assert.equal(s.count, 100);
   assert.equal(s.median, 16.7);
+  assert.equal(s.p95, 50); // the 95th of 100, not the worst
   assert.equal(s.max, 100);
-  assert.ok(Math.abs(s.fps - 1000 / ((99 * 16.7 + 100) / 100)) < 1e-9);
+  assert.ok(Math.abs(s.fps - 1000 / ((94 * 16.7 + 5 * 50 + 100) / 100)) < 1e-9);
   assert.equal(summarizeFrames([]), null);
 });
 
@@ -39,7 +40,7 @@ test('the readout shows timing, GPU time when there is one, counts, memory, and 
 
 test('the benchmark summary names the machine and has a row per view plus all views', () => {
   const results = [
-    { view: 'beach', frameMs: [16.6, 16.7, 16.8], gpuMs: [4, 5], counts },
+    { view: 'beach', frameMs: [50, ...Array(19).fill(16.7), 20], gpuMs: [9, ...Array(19).fill(4), 5], counts }, // p95 short of the max
     { view: 'overview', frameMs: [33.3], gpuMs: [], counts },
   ];
   const text = formatBenchmark({
@@ -60,7 +61,7 @@ test('the benchmark summary names the machine and has a row per view plus all vi
   }
   const rows = text.split('\n');
   const beach = rows.find((r) => r.startsWith('beach'));
-  assert.match(beach, /16\.7\s+16\.8\s+16\.8\s+59\.9\s+4\.00\s+5\.00\s+4\s+162\.2k\s+2$/);
+  assert.match(beach, /16\.7\s+20\.0\s+50\.0\s+54\.2\s+4\.00\s+5\.00\s+4\s+162\.2k\s+2$/);
   assert.match(rows.find((r) => r.startsWith('overview')), /33\.3\s+30\.0\s+n\/a\s+n\/a/);
-  assert.match(rows.find((r) => r.startsWith('all views')), /16\.7\s+33\.3\s+33\.3\s+48\.0\s+4\.00\s+5\.00$/);
+  assert.match(rows.find((r) => r.startsWith('all views')), /16\.7\s+33\.3\s+50\.0\s+52\.3\s+4\.00\s+5\.00$/);
 });

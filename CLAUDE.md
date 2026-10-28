@@ -30,7 +30,7 @@ When choosing between approaches, pick the one that looks better in the screensh
 - **Everything is procedural**: geometry, textures, sky, sound. Generate it at runtime.
 - **No runtime dependencies.** The renderer (`src/gpu/`, raw WebGPU) and the maths (`src/maths/`) are the
   project's own. The build fails on any module from outside `src/` (and `index.html`), and `npm run check`
-  lints that `src/` imports only its own files. Ask the user before adding a dependency (runtime or dev).
+  lints that `src/` imports and `#include`s only its own files. Ask the user before adding a dependency (runtime or dev).
 - **All randomness goes through `src/core/random.js`** (`ctx.rng('name')`), and **all time goes through
   `src/core/clock.js`** (`ctx.clock`, or the `dt`/`t` passed to `update`). `Math.random`, `Date.now`,
   `new Date` and `performance.now` are forbidden anywhere else in `src/`. `npm run check` lints for these.
@@ -43,8 +43,8 @@ When choosing between approaches, pick the one that looks better in the screensh
 | `npm run dev` | Vite dev server. JS edits reload the page. Shader edits (`.wgsl`, including `#include`d chunks) are hot-swapped into live scene materials without a reload, so the camera stays put; shaders of fullscreen passes and of the sky's lookup tables reload the page. |
 | `npm test` | Unit and invariant tests: `node --test --test-concurrency=4` over `tests/*.test.js` (Node's built-in runner, no test deps; without the flag, CI's two CPUs run one file at a time). |
 | `npm run build` | Production build to `dist/index.html` (single file, no sourcemaps). The build fails if it would emit anything other than `index.html`, or bundle a module from outside `src/`. |
-| `npm run check` | `tools/check-build.js`: exactly one file in dist, no `<script src>`/`<link href>`, no URLs except XML namespaces, no network APIs or `import()`, size vs budget (warn > 3 MB raw, fail > 6 MB), plus the src/ lint: determinism, and imports of src/ files only. |
-| `npm run shot -- [args]` | Builds, then `tools/screenshot.js`: one PNG per view + `contact-sheet.png` + `info.json` in `screenshots/<label>/`, plus each view's measurements (banding view, zoomed crops, shimmer, motion strip, overdraw) in `screenshots/<label>/<view>/`, with the numbers and over-limit warnings in `info.json`. A reused label replaces the old capture. With `--checks` (`verify` passes it) the tool also checks itself and the game: that the shimmer and cost measurements still catch test scenes built to fail them, that the frame keeps its promises (smooth dark edges against a bright sky, depth precision from a hilltop, dithered gradients without bands, translucent layers blended in linear light and hidden behind the scene, the opaque scene handed to what draws after it), that errors nothing shows on screen (a broken shader out of sight, a validation error, a lost device, blending outside the translucent pass) fail a capture, that captures are reproducible, also after the time of day changed in the page (on every view, through every named time), that the GPU's sky maths agrees with the JS, that the terrain's heights on the GPU are the ones JS knows and keep close to the island's between samples, and the mesh's own height as drawn is its JS twin's, and that the light from below reads the ground's albedo map where JS expects it (`terrain` fixture, also with deliberate mistakes), that the rocks' offsets in the mesh as drawn and their vertex shader put them where their JS twins do (`rocks` fixture, likewise), that the green's patches on the GPU are the ones JS knows (`patches` fixture), that the sky's lookup tables agree with direct marches through the same air, and the sunlight by height with one in JS, also in the last minutes of daylight (`haze` fixture), and that the light reads neutral at midday and warm at golden hour, and that a quality change (default preset to low and back) leaks no GPU resources and brings back the same picture. Then it runs the game in player mode until it draws (no `?capture`: real-time loop, input, start screen, frame readout, walking on the ground, and a canvas that shows what the capture of the same view does), which captures never exercise, and a short benchmark run (`screenshots/<label>/benchmark.txt`). |
+| `npm run check` | `tools/check-build.js`: exactly one file in dist, no `<script src>`/`<link href>`, no URLs except XML namespaces, no network APIs or `import()`, size vs budget (warn > 3 MB raw, fail > 6 MB), plus the src/ lint: determinism, and imports and shader includes of src/ files only. |
+| `npm run shot -- [args]` | Builds, then `tools/screenshot.js`: one PNG per view + `contact-sheet.png` + `info.json` in `screenshots/<label>/`, plus each view's measurements (banding view, zoomed crops, shimmer, motion strip, overdraw) in `screenshots/<label>/<view>/`, with the numbers and over-limit warnings in `info.json`. A reused label replaces the old capture. With `--checks` (`verify` passes it) the tool also checks itself and the game: that the shimmer and cost measurements still catch test scenes built to fail them, that the frame keeps its promises (smooth dark edges against a bright sky, depth precision from a hilltop, dithered gradients without bands, translucent layers blended in linear light and hidden behind the scene, the opaque scene handed to what draws after it), that errors nothing shows on screen (a broken shader out of sight, a pipeline that can't be made, a validation error, a lost device, blending outside the translucent pass) fail a capture, that captures are reproducible, also after the time of day changed in the page (on every view, through every named time), that the GPU's sky maths agrees with the JS, that the terrain's heights on the GPU are the ones JS knows and keep close to the island's between samples, and the mesh's own height as drawn is its JS twin's, that the light from below reads the ground's albedo map where JS expects it, and that the ground is as wet as JS has it (`terrain` fixture, also with deliberate mistakes), that the rocks' offsets in the mesh as drawn and their vertex shader put them where their JS twins do (`rocks` fixture, likewise), that the green's patches on the GPU are the ones JS knows and lie where they lie from any camera, near or far (`patches` fixture), that the green's detail tiles on the GPU average to what JS says and the green near the camera keeps its albedo (`green-tiles` fixture), that the sky's lookup tables agree with direct marches through the same air, and the sunlight by height with one in JS, also in the last minutes of daylight (`haze` fixture), and that the light reads neutral at midday and warm at golden hour, and that a quality change (default preset to low and back) leaks no GPU resources and brings back the same picture, and the final teardown leaves nothing alive. Then it runs the game in player mode until it draws (no `?capture`: real-time loop, input, start screen, frame readout, walking on the ground, and a canvas that shows what the capture of the same view does; an error overlay that shows an error's cause, and a game that keeps drawing in a window 1 px high), which captures never exercise, and a short benchmark run (`screenshots/<label>/benchmark.txt`). |
 | `npm run verify` | test + build + check + shot with `--checks`. **The definition-of-done command.** |
 | `npm run map -- [args]` | `tools/map.js`: a top-down map of the island (relief, depths, zones, where the views stand) in `screenshots/map/<label>.png`, to judge the layout without rendering. `--seed`, `--label`, and `--set path=value` (repeatable) to override a setting of `config.world.island` for candidates. No build needed. |
 | `node tools/screenshot.js --compare A B` | Before/after sheet `screenshots/compare/A_vs_B.png`: A, B and a diff column per view, with the % of changed pixels and how many differ by more than 2 levels. No build needed. |
@@ -155,7 +155,8 @@ How tests are written:
 - `node:test` and `node:assert/strict` only. No test dependencies; ask before adding one.
 - Files are `tests/<module>.test.js`. `npm test` runs `node --test` with Node's default discovery
   (`node --test tests/` breaks on newer Node versions), so nothing outside `tests/` may have a name it runs as a test
-  (`*.test.js`, `*-test.js`, `*_test.js`, `test-*.js`, `test.js`, or any file in a `test/` folder). `tests/layout.test.js` checks this.
+  (`*.test.js`, `*-test.js`, `*_test.js`, `test-*.js`, `test.js`, or any file in a `test/` folder; the same in `.ts`, `.mts`
+  and `.cts`; on Windows in any case). `tests/layout.test.js` checks this.
 - Tests import from `src/` directly. Keep logic **pure and Node-importable** so they can: no shader
   imports, no DOM access at import time. Put the maths in its own module (e.g. `world/island.js`) and keep
   the GPU and shader wiring in the system that uses it.
@@ -173,7 +174,7 @@ How tests are written:
 index.html            source template: canvas, start and error overlays, readout and benchmark panels; loads src/main.js
 vite.config.js        single-file build to dist/; shader includes; dev shader hot-swap; stamps the commit into the build (__BUILD__)
 README.md             for players and visitors: play/download links, controls, dev quickstart
-PLAN.md               staged build plan, status and session log; update it at the end of every session
+PLAN.md               staged build plan, status and each stage's notes; update it at the end of every session
 .github/workflows/    deploy.yml: verify, then GitHub Pages + rolling "latest" release on every push to main
 src/
   main.js             boot: params -> renderer/scene/camera/frame -> systems -> loop; capture mode hands over to core/capture.js
@@ -184,7 +185,7 @@ src/
   gpu/                the renderer (raw WebGPU): device.js (the device, error reporting, caches),
                       renderer.js (draws a pass: pipelines, culling; fullscreen passes; compile),
                       scene.js (nodes and meshes, three's draw order), material.js, geometry.js, texture.js (textures, render targets,
-                      mipmaps, readbacks), reflect.js (what a WGSL module declares, to bind by name), bindings.js
+                      mipmaps), readback.js (reading a texture back), reflect.js (what a WGSL module declares, to bind by name), bindings.js
   core/               params.js, clock.js, random.js, renderer.js (the display: device, renderer, canvas size), camera.js,
                       input.js (free-fly + pointer lock), capture.js (the capture contract), gpu-stats.js (GPU counts,
                       memory, GPU time), overdraw.js (capture only), readout.js (F3), benchmark.js (?bench=1), timing.js
@@ -199,15 +200,17 @@ src/
   world/              island.js (the island's shape: the height function and the placement zones; pure), noise.js (its noise, a cell hash
                       and the hash's noise, which the GPU shares), green.js (where the green inland is green and where bare; pure),
                       heightmap.js (the island as drawn: nested grids of it, and their sampler; pure), heightmap-worker.js
-                      (builds them), lod.js (picks the terrain's mesh for a camera, and the mesh's own height; pure),
+                      (builds them), lod.js (picks the terrain's mesh for a camera, splits its quads, and gives the mesh's own height; pure),
                       albedo.js (the ground's albedo from above, for the light it sends up; pure), terrain.js (the ground
-                      and seabed), scatter.js (things scattered over the ground by rules, keeping clear of each
+                      and seabed), terrain-nodes.js (the grid each of its nodes draws, and the ground under each: heights
+                      for culling, surfaces for its shader; pure), scatter.js (things scattered over the ground by rules, keeping clear of each
                       other; pure), rock-shapes.js,
                       rock-placement.js (pure) and rocks.js (rocks and boulders)
   world/placeholder*  TEMPORARY stand-in water (flat, coloured by depth). Delete once replaced.
   textures/           procedural textures made on the GPU at boot: surfaces.js (the ground's tiles, in one texture array), which
                       sand.js (the sand's grain and ripple tiles), rock.js (the rock's detail tile) and green.js (the grass's and
-                      the leaf litter's tiles) draw into; tileable.wgsl
+                      the leaf litter's tiles, and masks of which leaves show at a share; litter-tones.js evens out the litter's
+                      tones and makes the masks, pure) draw into; tileable.wgsl
   shaders/chunks/     shared WGSL: frame.wgsl (what every scene material binds at group 0: the camera and
                       ctx.frame.uniforms), object.wgsl (a mesh's transform, group 2), fullscreen.wgsl (one-triangle
                       passes), noise.wgsl, scene-output.wgsl (how every scene material ends), lighting.wgsl (the
@@ -218,8 +221,8 @@ src/
                       how wet the ground is, and patches.wgsl: where the green grows), planet.wgsl (the planet's bend, see
                       section 8);
                       wind later
-tools/                screenshot.js, measure.js, analyse.js (its worker thread), image.js, png.js, check-build.js, map.js (Node
-                      only; pure helpers exported for tests); linux.js and linux.Dockerfile (a Linux container like CI's)
+tools/                screenshot.js, measure.js, analyse.js (its worker thread), image.js, png.js, check-build.js, map.js, labels.js
+                      (Node only; pure helpers exported for tests); linux.js and linux.Dockerfile (a Linux container like CI's)
 tests/                node:test suites + fixtures/check-build/{pass,fail}/*.html, fixtures/maths/ (three.js's answers)
 ```
 
@@ -279,8 +282,8 @@ exposure, the light state and the terrain's grids, bound at group 0 through `chu
 - `dispose()` removes everything the system added and disposes GPU resources. A quality change disposes the
   frame and every world system and creates them again (`setQuality` in `main.js`), so a system can't assume it
   lives forever, and reads `ctx.frame` and `ctx.quality` afresh in `create()`. The screenshot tool's teardown
-  check fails on GPU objects left behind (textures, render targets, buffers, query sets, pipelines), and on
-  scene objects left in the scene.
+  check fails on GPU objects left behind (textures, render targets, buffers, query sets, pipelines, shader
+  modules), on anything still alive after the final teardown, and on scene objects left in the scene.
 - UI must stay hidden when `ctx.params.capture` is true.
 
 **Capture contract** (`?capture=1`, used by tools/screenshot.js): no UI or pointer lock. The camera goes to
@@ -312,7 +315,8 @@ async work, put it behind `ready`, or behind `settled()` when its `update` start
 - **Bindings by name.** Group 0 is the frame's (`chunks/frame.wgsl`, which `scene-output.wgsl` includes): the
   camera and `ctx.frame.uniforms`, which the renderer binds for every scene material. Group 1 is the
   material's own: its `uniforms` fill the module's `var<uniform>` structs field by field and its textures by
-  name, each texture's sampler at `<name>Sampler` (a texture without one, such as `r32float`, is read with
+  name, each texture's sampler at `<name>Sampler` (a `sampler_comparison` there compares with `greater-equal`,
+  as depth is reversed; a texture without one, such as `r32float`, is read with
   `textureLoad`, or with `textureGather` through an unfiltered `<name>Texels` sampler: per pixel, prefer the
   gather, as WebGPU bounds-checks every `textureLoad`). Group 2 is the mesh's transform (`chunks/object.wgsl`). Within group 1, chunks that bring
   bindings of their own (terrain, tiles, sand, rock, green, patches, wet) each keep a fixed binding number.
@@ -392,5 +396,5 @@ water detail, post effects) reads its knobs from `ctx.quality`.
 - The before/after `--compare` contact sheet has been opened and reviewed, and you can say what changed.
 - New areas have views in `views.js`.
 - This file is updated if the structure, commands, conventions or contract changed.
-- PLAN.md's status table and log are updated. A finished stage goes to `review` with its list of known
+- PLAN.md's status table and the stage's notes are updated. A finished stage goes to `review` with its list of known
   flaws; only the user marks it `done`.

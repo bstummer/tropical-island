@@ -59,3 +59,18 @@ test('missingSceneOutput: the fragment entry point of every material must return
   const raw = new Material({ name: 'raw', shader: `${ENDS} @fragment fn rawFragment() -> @location(0) vec4f { if (a) { b(); } return c; }`, fragment: 'rawFragment' });
   assert.deepEqual(missingSceneOutput(sceneWith([material('ends')], [skipping], [raw])), ['skips', 'raw']);
 });
+
+test('missingSceneOutput: every return of the entry point must be sceneOutput() and nothing more', () => {
+  const entry = (body) => `fn helper() -> vec4f { return vec4f(1.0); } @fragment fn fragmentMain() -> @location(0) vec4f { ${body} }`;
+  const cases = {
+    // One path returns raw colour.
+    'early-raw': 'if (a) { return vec4f(1.0); } return sceneOutput(c, 1.0);',
+    'late-raw': 'if (a) { return sceneOutput(c, 1.0); } return helper();',
+    // Its result changed after the call.
+    scaled: 'return sceneOutput(c, 1.0) * 0.5;',
+    // Every path through it, over several lines, and a helper that returns anything: fine.
+    branches: 'if (a) {\n  return sceneOutput(\n    f(b), 1.0);\n}\nreturn sceneOutput(helper().rgb, 1.0);',
+  };
+  const scene = sceneWith(...Object.entries(cases).map(([name, body]) => [new Material({ name, shader: entry(body) })]));
+  assert.deepEqual(missingSceneOutput(scene), ['early-raw', 'late-raw', 'scaled']);
+});
