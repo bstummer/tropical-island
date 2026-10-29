@@ -13,6 +13,7 @@ const page = {
     const source = String(fn);
     if (source.includes('stats()')) return { drawCalls: 1, triangles: 1, passes: 1, pipelines: 1, textureBytes: 0, renderTargetBytes: 0, canvasBytes: 0, bufferBytes: 0 };
     if (source.includes('overdraw()')) return { width: 1, height: 1, counts: Buffer.from([1]).toString('base64') };
+    if (source.includes('depth()')) return { images: Array(arg.frames).fill(NOT_A_PNG), depths: Array(arg.frames).fill(''), step: arg.step }; // renderMoves
     if (source.includes('image()') && !arg) return NOT_A_PNG;
     return arg.map(() => NOT_A_PNG); // renderFrames
   },

@@ -4,9 +4,11 @@
 
 // The scene's materials whose fragment entry point doesn't return sceneOutput(), as "name":
 // every return in it must be that call and nothing else (the functions it calls may return anything).
+// The shadow pass's draw depth alone: they have no colour to give.
 export function missingSceneOutput(scene) {
   const missing = new Set();
-  for (const { material } of scene.meshes(undefined, [], true)) {
+  for (const { material, pass } of scene.meshes(undefined, [], true)) {
+    if (pass === 'shadow') continue;
     const returns = functionBody(material.shader, material.fragment).match(/\breturn\b[^;]*/g) ?? [];
     if (!returns.length || !returns.every(returnsSceneOutput)) missing.add(material.name);
   }

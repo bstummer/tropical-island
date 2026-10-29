@@ -17,10 +17,12 @@ import * as benchmark from './core/benchmark.js';
 import { defineTimeOfDay } from './sky/sun.js';
 import * as timeControl from './sky/time-control.js';
 import * as sky from './sky/sky.js';
+import * as shadows from './sky/shadows.js';
 import * as terrain from './world/terrain.js';
 import * as rocks from './world/rocks.js';
 import * as placeholder from './world/placeholder.js';
 import * as shimmerFixture from './fixtures/shimmer.js';
+import * as crawlFixture from './fixtures/crawl.js';
 import * as heavyFixture from './fixtures/heavy.js';
 import * as silhouetteFixture from './fixtures/silhouette.js';
 import * as depthFixture from './fixtures/depth.js';
@@ -38,16 +40,19 @@ import * as surfacesFixture from './fixtures/surfaces.js';
 import * as patchesFixture from './fixtures/patches.js';
 import * as rocksFixture from './fixtures/rocks.js';
 import * as greenTilesFixture from './fixtures/green-tiles.js';
+import * as shadowsFixture from './fixtures/shadows.js';
+import * as shadeFixture from './fixtures/shade.js';
 
 // Updated in this order every frame. Each module exports create(ctx) -> { update(dt, t), dispose(), ready? }
 // where the optional `ready` promise is awaited before a capture starts.
-const WORLD_SYSTEMS = [sky, terrain, rocks, placeholder];
+const WORLD_SYSTEMS = [sky, terrain, shadows, rocks, placeholder];
 
 // Test scenes that replace the world with ?fixture=<name>: tools/screenshot.js
 // uses them to prove its measurements and the frame's guarantees, the tonecard
 // shows the tonemapping, light the lighting and surfaces the ground's surfaces.
 const FIXTURES = {
   shimmer: [shimmerFixture],
+  crawl: [crawlFixture],
   heavy: [heavyFixture],
   silhouette: [silhouetteFixture],
   depth: [depthFixture],
@@ -65,6 +70,8 @@ const FIXTURES = {
   patches: [patchesFixture],
   rocks: [sky, terrain, rocks, rocksFixture],
   'green-tiles': [greenTilesFixture],
+  shadows: [sky, shadows, shadowsFixture],
+  shade: [sky, terrain, shadows, shadeFixture],
 };
 
 let captureMode = false;

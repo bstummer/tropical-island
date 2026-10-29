@@ -39,6 +39,8 @@ import {
   removeCapture,
   resourceLeaks,
   rockProblems,
+  shadowProblems,
+  shadeProblems,
   sheetFiles,
   summarize,
   teardownLeftovers,
@@ -670,6 +672,62 @@ test('rock problems: GPU offsets or vertices off, mistakes the check misses, too
   assert.match(rockProblems({ ...goodRocks, vertices: { ...goodRocks.vertices, pixels: 100 } }, rockLimits).join(), /measures too little/);
   assert.match(rockProblems({ ...goodRocks, vertices: { ...goodRocks.vertices, gpu: NaN } }, rockLimits).join(), /rocks.wgsl/);
   assert.equal(rockProblems(undefined, rockLimits).length, 5);
+});
+
+// ---------------------------------------------------------------- shadows fixture
+
+const sharp = (ratio) => ({ ratio, sharp: true, soft: false });
+const soft = (ratio) => ({ ratio, sharp: false, soft: true });
+const between = (ratio) => ({ ratio, sharp: false, soft: false });
+const goodShadows = {
+  sets: { shade: { points: 248, wrong: 0 }, lit: { points: 4307, wrong: 0.002 }, holes: { points: 171, wrong: 0 }, foot: { points: 25, wrong: 0 }, faces: { points: 128, wrong: 0 }, beyond: { points: 24, wrong: 0 } },
+  mistakes: { acne: 0.5, detached: 0.6, moved: 1, solid: 1 },
+  contact: [sharp(0.9), sharp(0.91), between(1.24), soft(1.14), soft(0.8)],
+  contactMistakes: { hard: [sharp(0.9), sharp(0.91), between(0.6), soft(0.26), soft(0.13)], blurred: [sharp(4.1), sharp(4.9), between(3.4), soft(1.3), soft(0.8)] },
+};
+const shadowLimits = { wrong: 0.01, caught: 0.25, least: 10, contact: { low: 0.6, high: 1.6, least: 2 } };
+
+test('shadow problems: shade where JS casts it, penumbrae as wide as they should be, and mistakes caught, pass', () => {
+  assert.deepEqual(shadowProblems(goodShadows, shadowLimits), []);
+});
+
+test('shadow problems: a set wrong, too few points, a mistake the check misses or no answer fail', () => {
+  const set = (name, value) => ({ ...goodShadows, sets: { ...goodShadows.sets, [name]: value } });
+  assert.match(shadowProblems(set('foot', { points: 25, wrong: 0.2 }), shadowLimits).join(), /blocks' feet .*: 20.0% of 25 points wrong/);
+  assert.match(shadowProblems(set('holes', { points: 3, wrong: 0 }), shadowLimits).join(), /cut-out: only 3 points/);
+  assert.match(shadowProblems({ ...goodShadows, mistakes: { ...goodShadows.mistakes, moved: 0 } }, shadowLimits).join(), /moved caster .* misses it/);
+  assert.match(shadowProblems(set('faces', { points: 128, wrong: NaN }), shadowLimits).join(), /no acne/);
+  assert.equal(shadowProblems(undefined, shadowLimits).length, 13);
+});
+
+test('shadow problems: a penumbra too wide or too sharp, too few profiles, or a contact mistake the check misses fail', () => {
+  const contact = (list) => shadowProblems({ ...goodShadows, contact: list }, shadowLimits).join();
+  assert.match(contact([sharp(0.9), sharp(1.7), soft(1), soft(1)]), /1 of 4 profiles .* not 0.6 to 1.6 times .*\(1.70\)/);
+  assert.match(contact([sharp(0.9), sharp(1), soft(0.5), soft(1)]), /\(0.50\)/);
+  assert.match(contact([sharp(0.9), sharp(NaN), soft(1), soft(1)]), /profiles .* not 0.6 to 1.6/);
+  assert.match(contact([sharp(0.9), soft(1), soft(1)]), /only 1 sharp and 2 soft profiles/);
+  const mistaken = (name, list) => shadowProblems({ ...goodShadows, contactMistakes: { ...goodShadows.contactMistakes, [name]: list } }, shadowLimits).join();
+  // As sharp far out as at the foot, which only the soft profiles show; as soft at the foot as far out, only the sharp.
+  assert.match(mistaken('hard', [sharp(0.3), soft(0.9), soft(1)]), /as sharp far from their caster .*: only 0% of the soft profiles off/);
+  assert.match(mistaken('blurred', [sharp(1), sharp(1.2), soft(5)]), /as soft at their foot .*: only 0% of the sharp profiles off/);
+  assert.match(mistaken('hard', []), /as sharp far .* misses it/);
+});
+
+// ---------------------------------------------------------------- shade fixture
+
+const goodShade = { points: 2048, high: 2048, gpu: { ground: 0.0034, around: 0.0004, above: 0.003 }, mistaken: { ground: 0.5, around: 0.039, above: 0.15 } };
+const shadeLimits = { ground: 0.02, around: 0.005, above: 0.03, least: 50 };
+
+test('shade problems: a GPU shade on its twin, and mistakes past the limits, pass', () => {
+  assert.deepEqual(shadeProblems(goodShade, shadeLimits), []);
+});
+
+test('shade problems: off its twin, a mistake the check misses, too few points or no answer fail', () => {
+  assert.match(shadeProblems({ ...goodShade, gpu: { ...goodShade.gpu, ground: 0.1 } }, shadeLimits).join(), /ground's share of the sun: the GPU's off/);
+  assert.match(shadeProblems({ ...goodShade, mistaken: { ...goodShade.mistaken, around: 0.001 } }, shadeLimits).join(), /ground around .* misses it/);
+  assert.match(shadeProblems({ ...goodShade, gpu: { ...goodShade.gpu, above: 0.2 } }, shadeLimits).join(), /above the ground: the GPU's off/);
+  assert.match(shadeProblems({ ...goodShade, high: 3 }, shadeLimits).join(), /only 3 points under a shade's top/);
+  assert.equal(shadeProblems(undefined, shadeLimits).length, 7);
 });
 
 // ---------------------------------------------------------------- surfaces fixture

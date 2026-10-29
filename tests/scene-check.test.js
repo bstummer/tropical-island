@@ -5,7 +5,7 @@ import { Material, TRANSLUCENT_BLEND } from '../src/gpu/material.js';
 import { Mesh, Scene } from '../src/gpu/scene.js';
 import { misplacedBlending, missingSceneOutput } from '../src/post/scene-check.js';
 
-const PASSES = ['opaque', 'afterOpaque', 'translucent']; // as post/frame.js has them
+const PASSES = ['shadow', 'opaque', 'afterOpaque', 'translucent']; // as post/frame.js has them
 const ENDS = '@fragment fn fragmentMain() -> @location(0) vec4f { return sceneOutput(c, 1.0); }';
 
 // A scene with one mesh per material, each in the given pass (default opaque).
@@ -58,6 +58,14 @@ test('missingSceneOutput: the fragment entry point of every material must return
   // Another entry point of the same shader that does return it doesn't count.
   const raw = new Material({ name: 'raw', shader: `${ENDS} @fragment fn rawFragment() -> @location(0) vec4f { if (a) { b(); } return c; }`, fragment: 'rawFragment' });
   assert.deepEqual(missingSceneOutput(sceneWith([material('ends')], [skipping], [raw])), ['skips', 'raw']);
+});
+
+test("missingSceneOutput: the shadow pass's materials draw depth alone, with no colour to give", () => {
+  const depthOnly = new Material({ name: 'caster', shader: ENDS, fragment: null });
+  const cutOut = new Material({ name: 'leaf', shader: '@fragment fn cutOut() { if (a) { discard; } }', fragment: 'cutOut' });
+  assert.deepEqual(missingSceneOutput(sceneWith([depthOnly, 'shadow'], [cutOut, 'shadow'])), []);
+  // Elsewhere they would draw nothing to the frame.
+  assert.deepEqual(missingSceneOutput(sceneWith([depthOnly], [cutOut])), ['caster', 'leaf']);
 });
 
 test('missingSceneOutput: every return of the entry point must be sceneOutput() and nothing more', () => {

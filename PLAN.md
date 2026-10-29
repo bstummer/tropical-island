@@ -78,7 +78,7 @@ when a choice is about taste or scope rather than engineering (see Open question
 | 4 | Ground surfaces and rocks | The cove | done |
 | 4b | WebGPU port | The cove | done |
 | 4c | Maths of our own | The cove | done |
-| 5 | Shadows | The cove | todo |
+| 5 | Shadows | The cove | review |
 | 6 | Ocean | The cove | todo |
 | 7 | Shoreline | The cove | todo |
 | 8 | Foliage foundation and coconut palms | The cove | todo |
@@ -970,8 +970,184 @@ GPU does the same work as before, so the user's review needs no benchmark or bro
     range (`gpu/geometry.js` Attribute, `firstInstance`): the terrain and the rocks do. A shadow pass
     that needs other instances than the main view's needs ranges of its own.
 - **Done when** low-sun captures show long, soft shadows from the rocks and terrain, with no acne, no
-  detached shadows and no hard edges, and the camera-offset captures show no shimmer (the tool turns the
-  camera but can't move it yet).
+  detached shadows and no hard edges, and the camera-offset captures show no shimmer, the camera turned
+  or moved (5.1).
+
+Sub-steps, in order. Each one ends with `npm run verify` green and `main` shippable, and fixes whatever it
+made untrue in CLAUDE.md. The frame learns to draw shadows in a test scene whose answers JS knows before
+the island casts any; then the island's own relief, which shades at every distance, and the rocks; then
+the look, judged at low sun in every view. Room comes first: shadows cost every lit pixel, and four views
+are over the capture budget already.
+
+- [x] **5.1 Room, and a camera that moves.** Every view captures within its frame budget on SwiftShader
+  again, with room for shadows: `rocks`, `overview`, `jungle-edge` and `sand-edge` are over 2.5 s (Known
+  from 4.8; the green's near detail costs most). No view looks worse. The screenshot tool moves the camera
+  as well as turning it, so shimmer from movement, which shadows are prone to, is measured from here on.
+  Check: the compare sheet shows nothing a viewer would notice, or what changed, reviewed; every view's
+  frame time and its margin; a test scene that crawls only when the camera moves proves the new
+  measurement catches it.
+- [x] **5.2 Shadows in a test scene.** The frame draws the sun's shadows. A fixture stands test casters on
+  level and sloping ground under a high and a low sun: a block, a thin pole, an overhang, and a cut-out
+  with holes, as a leaf will be; JS knows where their shadows fall. Shadows lie where JS puts them, start
+  at their caster's foot, leave lit surfaces as lit as without shadows (no acne, also at a grazing sun),
+  let the sun through the cut-out's holes, and fade over soft edges, sharper where they touch their caster
+  and softer away from it, without noise. A caster whose vertex shader moves it casts from where it is
+  drawn. Every lit material takes the shadows, the sun's glints too. Shadows scale with the quality
+  presets. Check: the fixture's checks in `--checks`, each seen red on a deliberate mistake (a shadow
+  pushed off its caster, acne, a caster cast from where its instance starts, a cut-out cast solid); the
+  pipelines made before the first frame include the shadows'; the quality change and teardown checks
+  still pass.
+- [x] **5.3 The island's own shade.** The ridges, the volcano, the headland's cliffs and the flats' old
+  beach ridges shade the land at every distance, from the camera's feet to the overview: softer the
+  further the shade falls from what casts it, the same wherever the camera stands, and following the time
+  of day when it is set. Under a wide shade the light from below dims as well, as the ground around is in
+  shade too, and shade at golden hour turns cool. JS knows which ground lies in the island's shade, and
+  the GPU agrees. Check: invariant tests over seeds 1–20, each seen red once (among them: a lower sun from
+  the same direction never lights ground a higher one shaded); a GPU check against the JS twin at sample
+  points, proven on a deliberate offset; the time-change reproducibility checks pass; a new view shows the
+  ridges' shade lying across the cove at a low sun.
+- [x] **5.4 Rocks in the sun.** Rocks cast shadows on the ground they sit in and on each other, from where
+  they are drawn (moved onto the mesh as drawn, sunk as they shrink), out as far as their shadows show;
+  rocks out of view cast into it when a low sun throws their shadows long. They take the island's shade
+  like the ground under them. Check: the rocks fixture proves the shadow pass casts each rock from where
+  the main view draws it, and fails on its deliberate mistakes; a new close-up of rocks on the sand at a
+  low sun, and `rocks` at golden hour, show rocks sitting in the ground; cost within limits.
+- [x] **5.5 The look.** Every view at its own time and at golden hour against the Done line: soft edges and
+  no hard ones, no acne, no detached shadows, no seam where near shadows meet far ones, cool shade at
+  golden hour, nothing crawling as the camera moves or turns. Left from 5.2: edges sharper where a shadow
+  touches its caster and softer away from it, weighed against what it costs, and the test scene's sloping
+  ground. How soft shadows are, as the sun's own disk makes them or softer, is a matter of taste: show the
+  user candidates side by side, near and far, at noon and at golden hour. Each preset within its frame-cost limits. Check: the Done line; shimmer under
+  movement within its limit at every view; the user runs the benchmark and looks for crawling in the
+  running game.
+
+Done out of order: 5.3 and 5.4 before 5.2's test scene, which then caught a bug in each; 5.1 last.
+
+- Known from 5.1 (2026-10-29): the views over budget are slow for more than the green's near detail.
+  Switching one surface off at a time on SwiftShader (scratch builds, same machine, frames taken in turn):
+  the green costs 11–30% of a frame (13% of `overview`, which has none of its near detail: its stands'
+  noise and patches), rock's relief 5–33% (`rocks` 33%, `overview` 15%), sand's detail 0–12%; reading a
+  frame back costs 0.1 s of 3. Room needs a pass over the terrain shader's cost, which would help real
+  GPUs too (the benchmark on the user's machines will say how much). The user raised the frame budget to
+  4 s instead (2026-10-29); the cost pass waits. SwiftShader frames against it, in the Linux container:
+  `sand-edge` 3.7 s, `jungle-edge` 3.5, `overview`, `rocks` and `rock-shade` 3.3, `shoreline` 2.8,
+  `morning-shade` 2.7, `beach` and `into-the-sun` 2.1, `sand` 1.8, `horizon` 0.8: all within it, the
+  least margin 7%. The user saw no shadow move with the camera in the running game.
+  The tool moves the camera as well as turning it: two walking steps of 2.5 cm to its right, each frame
+  foretold from the one before by the scene's depth, leaving out what comes out from behind something
+  (`shimmer-move.png`; within shimmer's limit). Every view scores 0.00–0.01% on hardware and on
+  SwiftShader. The test scene `crawl` (stripes that keep to where the camera stands on one half, as the
+  shadows of a map that follows it without snapping to its texels would) crawls on 11% of that half, on
+  none of the other, and not at all as the camera turns. With the shadow maps' snapping switched off for
+  a trial, `rock-shade` went from 0.004% to 0.02% only: through the filter, a map that follows the
+  camera unsnapped moves its edges by fractions of a texel at these resolutions. The moved frames make a
+  SwiftShader run about 12% longer.
+- Known from 5.2–5.4 (2026-10-29): two kinds of shadow, multiplied in `sunVisibility()`
+  (`chunks/shadows.wgsl`). The island's own shade (`world/shade.js`): per time of day, over the whole
+  island, the share of the sun's disk each point of the ground sees over its horizon, from a hull sweep
+  in rows turned to the sun, worked out in bands by a pool of workers and landing with the sky's light
+  (`ctx.sky.follow`): a time change takes about a quarter of what one worker took, and more than before
+  Stage 5, when it was the sky's alone (Decisions); 2 m apart (4 m on low), so edges near the camera blur
+  over a texel or two; soft
+  as the sun's disk (twice it since 5.5). What stands above the ground reads the shade's top
+  instead, and misses the outer half of a far ridge's soft edge where the ground just beyond grazes the
+  sun's line (on rocks, hard to see; palms' crowns stand high enough to read it right). The light from
+  below dims under it. The shadow maps round the camera (`sky/cascades.js`): 4, 3 and 2 cascades out to
+  100, 80 and 50 m on high, medium and low, of what stands on the ground (rocks; the terrain casts none),
+  filtered over a fixed tent of about three texels until 5.5 softened them by their casters' distance. At a grazing sun a point is read 1.5 texels up its normal, which
+  moves a long shadow's end by tenths of a metre. The terrain's far pieces (past sand's detail, 120 m)
+  skip the maps, so a far rock casts nothing onto them. The test scene (`?fixture=shadows`) stood on
+  level ground only until 5.5; the GPU check that a rock's shadow pass draws it where its view does is the test
+  scene's moved block (same shader, same uniforms), not the rocks fixture. Group 0 now binds 13 textures
+  of the 16 a shader is sure to have (the rocks' pipelines 15): Stage 6's water and Stage 10's cloud
+  shadows will need some of the island shade's channels or a texture array. A caster whose vertex shader
+  moves it must set `frustumCulled = false` (CLAUDE.md §8): the test scene found the renderer culling one
+  where its mesh sat. The test scene also caught ground past a map's far end read as shaded (fixed).
+  Cost: render passes 3 to 7, texture memory 85 to 127 MB, render targets 89 to 153 MB on high;
+  SwiftShader frames 9–15% dearer (the island's shade 4–9%, the maps 3–8%): in the Linux container, 7
+  or 8 of the 11 views over the 2.5 s budget (`sand-edge` 3.7 s, `jungle-edge` 3.5, `overview`, `rocks`
+  and `rock-shade` 3.3–3.4, `shoreline` 2.8, `morning-shade` 2.7, `beach` 2.2–2.8 between runs), against
+  5 of 9 before. The
+  test scene's feet stand 3 cm out from the blocks, and 3 mm more a metre from the camera: closer, under
+  a high sun, SwiftShader and a GPU disagreed on one. New views `rock-shade` and `morning-shade`.
+- Known from 5.5 (2026-10-29): the maps' shadows are as soft as the sun's disk makes them, twice widened
+  (Decisions): sharp where they touch their caster, softer further out. How far the caster is comes
+  from the coarsest map that holds a point (its 4 x 4 texels round it, weighted so it changes smoothly);
+  then the finest map, its filter (3 x 3 reads) spread from half a texel to one as the penumbra takes,
+  or past that the two maps whose filters at their widest come closest to it, mixed. Its limits:
+  - The maps can soften no further than the coarsest one's filter, about 27 cm each way on every
+    preset, reached about 30 m from a caster; and no sharper than the finest one's where a point lies:
+    2 cm each way 5–16 m from the camera on high, 6 cm at 16–45 m, so far rocks' feet stay that soft.
+  - A long edge under a low sun shows a soft sawtooth (`rock-shade`, the big rock's shadow's far end):
+    the texels of the map it reads, stretched along the sun's way, move the edge by half a texel. A
+    filter can't even out steps much longer than itself, and those along an edge that runs almost with
+    the texels' rows run a dozen texels and more; it shrinks them only as far as it spans more texels,
+    at a cost growing with the square of that. Three reads a side instead of two made them a third
+    smaller beside the penumbra (2026-10-29). Turning the maps' frame 45° moved them, no smaller: the
+    edges that show them are the shadows of rocks' top edges, at any angle. Gone, they would take maps
+    filtered before they are read (moments, or coverage, so a wide filter is one read), or smoothing
+    over frames: a project of its own.
+  - A gap a few texels across in the map that softens it comes out dimmer than the sun's disk would
+    leave it. With three reads a side the map a penumbra reads has texels 1.5 times finer for it, so a
+    gap the sun's disk lets full sun through stays open; narrower ones dim, as they should, if sooner.
+  The test scene (`?fixture=shadows`) has sloping ground, one patch facing the sun and one turned from
+  it at a grazing light, each with a block standing in it, and a wall 25 m high whose shadow's sides are
+  measured at 15 distances each: every penumbra 0.87–1.27 times what the sun's disk makes there (or the
+  maps' filter, where that is sharper or softer; 0.79–1.33 at softness 1, 2 and 3 with the earlier
+  filter, on a GPU and on SwiftShader alike); as sharp far out as at the foot, the soft ones fall to
+  0.12–0.41; as soft at the foot as far out, the sharp ones rise to 6.9–8.3. Its card stands low, so under a low sun its holes cast spots
+  close by, and a spot counts where the map that softens it holds the hole two texels clear of its edge.
+  Presets, all within their limits: low 5 passes, 48 MB render targets, 85 MB textures; medium 6, 91,
+  141; high 7, 153, 141 (the textures 14 MB more on each since the terrain's were packed, below). Shimmer at most 0.05% turning and 0.004% moving on a GPU.
+  The outside review (an agent that hadn't seen the code, over every view at its own time, golden hour
+  and midday) found shade cool and attached on sand, soft, without acne or a seam between near and far,
+  and the volcano's long shade from above the best of it. What it found short, kept for later:
+  - Shade on dark ground is near black at golden hour: basalt under the headland's own shade in
+    `rock-shade` (sRGB 0–3 per channel), shaded grass from above. Not this step's: the same before it.
+    The light is physical (dark rock, half a blue sky, exposure set by the sunlit sand); how much to
+    lift it is for the grade (Stage 11) or the hours (Stage 12).
+  - The sand drifted against a rock's foot (Stage 4) reads as a pale collar under a shaded face at
+    midday, a pedestal more than a rock sunk in sand. At golden hour the lit strip at the big rock's
+    foot in `rock-shade` is sand the sun reaches past the rock's side: right.
+  - At the waterline in `morning-shade`, the hills' shade edge smears into streaks: its 2 m samples
+    seen at a grazing angle. The lit sand there reads cool for a brief that says the first light warms
+    it (7:45, the sun 23° up).
+  - Not shadows: the sun's disk in `horizon` reads flat; the green's edge on the sand speckles at
+    grazing angles in `shoreline` (its shimmer measures 0.05%); rock patches on the hills read as
+    decals with dark rims; the placeholder water's glowing ring round the coast at golden hour.
+  Still open from 5.2–5.4: the island's shade 2 m apart (4 m on low); rocks past the maps' reach cast
+  nothing.
+- Known from the user's review of 5.5 (2026-10-29), who asked for room first, then the flaws fixed that
+  cost nothing and the sawtooth and dim gaps (the island's shade near the camera and rocks past the
+  maps left for later): what a SwiftShader frame costs, switching one thing off at a time side by side:
+  the green 23–28% (`sand-edge`, `jungle-edge`; its near detail 12–15%, patches 4–9%, stands 2–5%), the
+  shadow maps 17–19% (`overview` 7%), rock's relief 31% of `rocks`, sand's detail up to 10%. Two cuts
+  that save real GPUs the same work, the pictures as they were:
+  - The ground reads the maps only where a caster's shadow can fall: what casts tells `ctx.shadows`
+    where it stands (spheres), and per time of day the cells of the ground their shadows reach
+    (`sky/shadow-reach.js`) pick, per piece of the terrain, a shader with the maps or without. Every
+    view came out byte for byte the same with and without, at its own time, golden hour and sunrise.
+    8–12% where rocks are few, none in `rock-shade`. A caster that doesn't say where it stands casts
+    no shadow on the ground (CLAUDE.md §8).
+  - Pieces with no ground but sand and rock draw the green as its plain average, which shows nowhere
+    on them (`INLAND`, `world/terrain-nodes.js`): 3–9%; a few far pixels mixing green in from past
+    their piece move by up to 28 levels at 5x, not seen at 1x.
+  The terrain draws 32 variants instead of 12 (47 pipelines of the 64 allowed), and a few more draws.
+  The three reads a side cost 0–2% on top.
+  The container's `verify` afterwards, against the one at hand-over: `sand-edge` 3.76 s (-8%),
+  `rock-shade` 3.70 (0%), `jungle-edge` 3.68 (-5%), `rocks` 3.61 (-3%), `overview` 3.43 (-3%),
+  `shoreline` 2.78 (-14%), `morning-shade` 2.71 (-10%), `into-the-sun` 2.12 (-12%), `beach` 2.00 (-19%),
+  `sand` 1.74 (-17%), `horizon` 0.89: all within the 4 s budget, the least margin 6%. The run takes 11%
+  longer all the same: each page compiles 20 more of the terrain's pipelines, on SwiftShader 7 s to
+  10 s a page load. More room would come from the green's near detail and rock's relief, which keep
+  their look only as they are read now (their tiles filtered over a slanted footprint).
+  Fixed at no frame cost:
+  - What stands on the ground (rocks) goes from the ground's share of the island's shade at its foot to
+    the share at its height over 2 m (`world/shade.js` ABOVE_GROUND): rocks at a shade's edge are no
+    longer lit where the ground round them isn't, nor dark at the foot where it is lit.
+  - Each terrain level's info and ground are one texture of two layers (the ground's bytes as half
+    floats), so group 0 binds 11 textures, the rocks 13, of the 16 a shader is sure to have: room for
+    Stage 6's water and Stage 10's cloud shadows. Texture memory 127 to 141 MB on high.
 
 ### 6. Ocean
 
@@ -1281,6 +1457,11 @@ Made with the user. Don't reopen them unless the user does.
 
 - **Time of day doesn't pass.** It stays where it's set, and the player sets it in the settings menu.
   (2026-10-20)
+- **The island's own shade is worked out per time of day, made fast**, not replaced: a time change waits
+  for it, briefly. Should time ever pass on its own, the next time's shade is worked out in the background
+  and blended in, or worked out on the GPU behind the same texture. The terrain casting into the shadow
+  maps round the camera instead was the alternative: time changes at once, but the ridges' shade past the
+  maps' reach is lost. Time of day still doesn't pass. (2026-10-29)
 - **Island size depends on performance.** The user expects the game to be heavy. Build the cove first,
   measure it (Stage 11), then grow the island only as far as the budget allows. (2026-10-20)
 - **Daylight only.** Time of day spans sunrise to sunset. Night isn't part of the game. (2026-10-20)
@@ -1363,6 +1544,10 @@ Made with the user. Don't reopen them unless the user does.
   (grey crust with orange rosettes, first picked, was too much spread over all the rock); rock
   stepping out of the sand as ledges (sand drifted against it);
   blockier rocks (a sheen on dry rock). (2026-10-28)
+- **Shadows twice as soft as the sun's own disk makes them** (`config.shadows.softness` 2), the rocks' and
+  the island's own shade alike: sharp at a caster's foot, softening further out. The real disk (rock
+  shadows crisp almost to their tips in the low sun, a ragged edge to the hills' shade on the beach) and
+  three times (hazy shade) were the alternatives. (2026-10-29)
 - **The air stays as clear as it is**: the light from below lifts shade on the beach, and more aerosol
   barely changes midday (the sky's share of the light on level ground goes from 9% to 13% at ten times
   as much) while it spreads a large halo round the low sun. Four and ten times as much were the

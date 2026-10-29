@@ -123,11 +123,11 @@ fn terrainGround(ao: vec2f, dx: vec2f, dy: vec2f, info: ptr<function, vec4f>, co
     let uv = (terrainGrid(k, ao) + 0.5) / frame.uTerrainLevels[k].w;
     let lod = log2(max(footprint / frame.uTerrainLevels[k].z, 1e-6));
     if (k == 0) {
-      *info += left * w * textureSampleLevel(uTerrainInfo, uTerrainInfoSampler, uv, lod);
-      *cover += left * w * textureSampleLevel(uTerrainGround, uTerrainGroundSampler, uv, lod);
+      *info += left * w * textureSampleLevel(uTerrainSurface, uTerrainSurfaceSampler, uv, 0, lod);
+      *cover += left * w * textureSampleLevel(uTerrainSurface, uTerrainSurfaceSampler, uv, 1, lod);
     } else {
-      *info += left * w * textureSampleLevel(uTerrainInfoCoarse, uTerrainInfoCoarseSampler, uv, lod);
-      *cover += left * w * textureSampleLevel(uTerrainGroundCoarse, uTerrainGroundCoarseSampler, uv, lod);
+      *info += left * w * textureSampleLevel(uTerrainSurfaceCoarse, uTerrainSurfaceCoarseSampler, uv, 0, lod);
+      *cover += left * w * textureSampleLevel(uTerrainSurfaceCoarse, uTerrainSurfaceCoarseSampler, uv, 1, lod);
     }
     left *= 1.0 - w;
     if (left <= 0.0) {

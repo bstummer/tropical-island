@@ -19,10 +19,16 @@
 // their JS twins, with the helpers exported here. Needs the terrain
 // (ctx.terrain), so comes after it in WORLD_SYSTEMS.
 //
+// They cast shadows into the sun's shadow maps (sky/shadows.js), from where
+// they are drawn: the same vertex shader, sunk alike, with instances of their
+// own, picked each frame from all of them, in view or not, that stand out
+// enough to be drawn and can cast into a map.
+//
 // Puts ctx.rocks on the context: { ready, placed (rock-placement.js's rocks,
 // once ready), shapes, clearance }. clearance (world/scatter.js) holds the
 // rocks' footprints once ready: later placement (Stages 8–9) passes it to
-// scatter, which keeps what it places clear of the rocks and adds it.
+// scatter, which keeps what it places clear of the rocks and adds it. Casts
+// into the shadows (ctx.shadows) where they are, so comes after them.
 import { Frustum, Matrix4, Sphere, Vector2 } from '../maths/index.js';
 import shader from './rocks.wgsl';
 import offsetsShader from './rock-offsets.wgsl';
@@ -52,28 +58,37 @@ export function create(ctx) {
       ...ctx.terrain.surfaces,
       uRockOffsets: { value: null },
     },
-    overrides: { ROCK_DETAIL: true },
+    overrides: { ROCK_DETAIL: true, SHADE_ONCE: true },
   });
+  // Into the shadow maps: depth alone, pushed a little away from the sun along
+  // its slope, so a face doesn't shade itself.
+  const shadowMaterial = new Material({ name: 'rocks-shadow', shader, uniforms: material.uniforms, overrides: material.overrides, fragment: null, depthBiasSlope: -1.5 });
 
   let rocks = [];
   // Every prototype's rocks in one set of attributes, each mesh drawing its range of them.
   let instances = rockInstances(1);
-  let sinks = new Float64Array(0); // how far each rock in view sinks this frame; -1 out of view
-  const meshes = shapes.map((shape) => {
-    const mesh = new Mesh(rockGeometry(shape, instances), material);
-    mesh.name = 'rocks';
-    mesh.frustumCulled = false; // culled rock by rock
-    mesh.renderOrder = -1; // before the terrain, which they hide in part
-    mesh.visible = false; // until they are placed
-    scene.add(mesh);
-    return mesh;
-  });
+  let shadowInstances = rockInstances(1); // the shadow maps' own
+  let sinks = new Float64Array(0); // how far each rock picked sinks this frame; -1 if left out
+  const meshesOf = (rockMaterial, of, pass) =>
+    shapes.map((shape) => {
+      const mesh = new Mesh(rockGeometry(shape, of), rockMaterial);
+      mesh.name = rockMaterial.name;
+      mesh.pass = pass;
+      mesh.frustumCulled = false; // culled rock by rock
+      mesh.renderOrder = -1; // before the terrain, which they hide in part
+      mesh.visible = false; // until they are placed
+      scene.add(mesh);
+      return mesh;
+    });
+  const meshes = meshesOf(material, instances, 'opaque');
+  const shadowMeshes = meshesOf(shadowMaterial, shadowInstances, 'shadow');
 
   let places = null;
   let offsets = null;
   const offsetsPass = createOffsetsPass(ctx);
 
   let disposed = false;
+  let stopReaching = () => {};
   const ready = Promise.all([placed, ctx.terrain.ready]).then(([all]) => {
     if (disposed) return;
     const { island } = ctx.terrain;
@@ -81,16 +96,25 @@ export function create(ctx) {
     for (const rock of rocks) clearance.claim(rock.footprint); // as placement claimed them
     ctx.rocks.placed = rocks;
     instances = rockInstances(rocks.length);
+    shadowInstances = rockInstances(rocks.length);
     sinks = new Float64Array(rocks.length);
     meshes.forEach((mesh, k) => {
       mesh.geometry.dispose();
       mesh.geometry = rockGeometry(shapes[k], instances);
     });
+    shadowMeshes.forEach((mesh, k) => {
+      mesh.geometry.dispose();
+      mesh.geometry = rockGeometry(shapes[k], shadowInstances);
+    });
     places = rockPlaces(ctx, rocks, island);
     offsets = offsetsTarget(ctx, rocks.length);
     offsetsPass.uniforms.uRockPlaces.value = places;
     material.uniforms.uRockOffsets.value = offsets.color;
-    for (const mesh of meshes) mesh.visible = true;
+    for (const mesh of [...meshes, ...shadowMeshes]) mesh.visible = true;
+    // Where they stand, so the ground reads the shadow maps only where their shadows can fall.
+    const spheres = new Float32Array(4 * rocks.length);
+    rocks.forEach((rock, i) => spheres.set([...rock.centre, rock.radius], 4 * i));
+    stopReaching = ctx.shadows?.from(spheres) ?? stopReaching;
   });
 
   ctx.rocks = { ready, placed: rocks, shapes, clearance };
@@ -102,15 +126,20 @@ export function create(ctx) {
   const groundRadius = config.sky.atmosphere.groundRadius * 1000;
   const least = quality.rockPixels;
   const full = settings.fade * least;
-  const stopSelecting = frame.beforeScene(() => {
-    if (!rocks.length) return;
+  // The offsets, once a frame, before the shadow maps or the view need them.
+  let offsetsFrame = -1;
+  function offsetsNow() {
+    if (offsetsFrame === ctx.clock.frame) return;
+    offsetsFrame = ctx.clock.frame;
     offsetsPass.uniforms.uCamera.value.fromArray(ctx.terrain.island.toCove(camera.position.x, camera.position.z));
     offsetsPass.render(offsets);
-    viewProjection.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
-    frustum.setFromProjectionMatrix(viewProjection);
+  }
+  // The rocks that keeps() keeps (given a rock's sphere as drawn) into the
+  // meshes `into`, whose instances are `of`, each sunk as far as it is drawn.
+  function pick(into, of, keeps) {
     // Something h tall at distance d stands about h / d x pixelsPerRadian pixels.
     const pixelsPerRadian = frame.size.height / ((camera.fov * Math.PI) / 180);
-    for (const mesh of meshes) mesh.geometry.instanceCount = 0;
+    for (const mesh of into) mesh.geometry.instanceCount = 0;
     rocks.forEach((rock, id) => {
       sinks[id] = -1;
       sphere.center.fromArray(rock.centre);
@@ -121,23 +150,36 @@ export function create(ctx) {
       // which strays further from the finest height the further away it is.
       sphere.center.y -= (d * d) / (2 * groundRadius);
       sphere.radius = rock.radius + settings.stray * d;
-      if (!frustum.intersectsSphere(sphere)) return;
+      if (!keeps(sphere)) return;
       sinks[id] = rock.shows * Math.min(Math.max((full - pixels) / (full - least), 0), 1);
-      meshes[rock.shape].geometry.instanceCount++;
+      into[rock.shape].geometry.instanceCount++;
     });
     // Each prototype's range of the rocks, in their order.
     let count = 0;
-    for (const { geometry } of meshes) {
+    for (const { geometry } of into) {
       geometry.firstInstance = count;
       count += geometry.instanceCount;
       geometry.instanceCount = 0;
     }
     rocks.forEach((rock, id) => {
       if (sinks[id] < 0) return;
-      const { geometry } = meshes[rock.shape];
+      const { geometry } = into[rock.shape];
       setInstance(geometry, geometry.firstInstance + geometry.instanceCount++, rock, id, sinks[id]);
     });
-    for (const name of INSTANCED) instances[name].update(0, count);
+    for (const name of INSTANCED) of[name].update(0, count);
+  }
+  // The shadow maps draw before the view: what casts into them, from all the rocks.
+  const stopCasting = (ctx.shadows?.cast ?? (() => () => {}))((shadows) => {
+    if (!rocks.length) return;
+    offsetsNow();
+    pick(shadowMeshes, shadowInstances, (s) => shadows.holds(s.center.toArray(), s.radius));
+  });
+  const stopSelecting = frame.beforeScene(() => {
+    if (!rocks.length) return;
+    offsetsNow();
+    viewProjection.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+    frustum.setFromProjectionMatrix(viewProjection);
+    pick(meshes, instances, (s) => frustum.intersectsSphere(s));
   });
 
   return {
@@ -146,11 +188,14 @@ export function create(ctx) {
     dispose() {
       disposed = true;
       stopSelecting();
-      for (const mesh of meshes) {
+      stopCasting();
+      stopReaching();
+      for (const mesh of [...meshes, ...shadowMeshes]) {
         scene.remove(mesh);
         mesh.geometry.dispose();
       }
       material.dispose();
+      shadowMaterial.dispose();
       offsetsPass.dispose();
       places?.destroy();
       offsets?.dispose();

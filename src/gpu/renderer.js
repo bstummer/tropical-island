@@ -16,7 +16,9 @@
 //       keepSamples, keepDepth false: nothing after this pass reads the target's
 //       multisampled colour or its depth, so they needn't be stored (tile-based
 //       GPUs then never write them out);
-//       viewport [x, y, width, height] in pixels from the top left draws into that part only
+//       viewport [x, y, width, height] in pixels from the top left draws into that part only;
+//       eye: a Vector3 for the frame's cameraPosition instead of the camera's own (a shadow
+//       map drawn from the sun takes the eye's, which the planet's bend and levels of detail measure from)
 //   compile(scene, camera, target, { pass }) -> Promise of the materials whose
 //       shaders or pipelines failed, as "name: message", made in the background
 //       (it also waits for pipelines an earlier compile() is still making)
@@ -94,7 +96,7 @@ export function createRenderer(gpu) {
     if (groups.has(0)) sameGroup(reflection, frameReflection, 0, material.name, 'chunks/frame.wgsl');
     if (groups.has(2)) sameGroup(reflection, objectReflection, 2, material.name, 'chunks/object.wgsl');
     for (const entry of [material.vertex, material.fragment]) {
-      if (!reflection.entries[entry]) throw new Error(`material ${material.name}: its shader has no entry point "${entry}"`);
+      if (entry !== null && !reflection.entries[entry]) throw new Error(`material ${material.name}: its shader has no entry point "${entry}"`);
     }
     const shader = gpu.module(material.shader, material.name);
     const own = ownBindings(reflection, material);
@@ -189,21 +191,26 @@ export function createRenderer(gpu) {
     return sig;
   }
 
+  // A material without a fragment entry point draws depth alone; into a target
+  // without colour (a shadow map), one that has one runs it for what it
+  // discards (a leaf's cut-out) and writes no colour.
   function pipelineDescriptor(material, s, target, buffers) {
     const { module } = s.shader;
+    const targets = target.format ? [{ format: target.format, ...(material.blend && { blend: material.blend }), writeMask: material.colorWrite === false ? 0 : GPUColorWrite.ALL }] : [];
     return {
       label: material.name,
       layout: s.layout,
       vertex: { module, entryPoint: material.vertex, buffers, constants: s.constants },
-      fragment: {
-        module,
-        entryPoint: material.fragment,
-        constants: s.constants,
-        targets: [{ format: target.format, ...(material.blend && { blend: material.blend }), writeMask: material.colorWrite === false ? 0 : GPUColorWrite.ALL }],
-      },
+      ...(material.fragment !== null && { fragment: { module, entryPoint: material.fragment, constants: s.constants, targets } }),
       primitive: { topology: 'triangle-list', cullMode: CULL[material.side], frontFace: 'ccw' },
       ...(target.depthFormat && {
-        depthStencil: { format: target.depthFormat, depthWriteEnabled: material.depthWrite, depthCompare: material.depthTest ? 'greater-equal' : 'always' },
+        depthStencil: {
+          format: target.depthFormat,
+          depthWriteEnabled: material.depthWrite,
+          depthCompare: material.depthTest ? 'greater-equal' : 'always',
+          depthBias: material.depthBias,
+          depthBiasSlopeScale: material.depthBiasSlope,
+        },
       }),
       multisample: { count: target.samples, alphaToCoverageEnabled: material.alphaToCoverage },
     };
@@ -349,17 +356,18 @@ export function createRenderer(gpu) {
     return target.color.attachment(layer, level);
   }
 
-  function setCamera(cam) {
+  function setCamera(cam, eye) {
     camera.projectionMatrix.value.copy(cam.projectionMatrix);
     camera.viewMatrix.value.copy(cam.matrixWorldInverse);
-    camera.cameraPosition.value.setFromMatrixPosition(cam.matrixWorld);
+    if (eye) camera.cameraPosition.value.copy(eye);
+    else camera.cameraPosition.value.setFromMatrixPosition(cam.matrixWorld);
   }
 
   function render(scene, cam, target, options = {}) {
-    const { pass, clearColor = null, clearDepth = null, layer = 0, level = 0, resolve = true, resolveInto = null, keepSamples = true, keepDepth = true, viewport = null } = options;
+    const { pass, clearColor = null, clearDepth = null, layer = 0, level = 0, resolve = true, resolveInto = null, keepSamples = true, keepDepth = true, viewport = null, eye = null } = options;
     if (cam) {
       if (!Array.isArray(scene)) scene.updateMatrixWorld();
-      setCamera(cam);
+      setCamera(cam, eye);
       projScreen.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse);
       frustum.setFromProjectionMatrix(projScreen);
     }
@@ -414,16 +422,20 @@ export function createRenderer(gpu) {
     }
 
     const samples = Boolean(target.msaa);
-    const color = {
-      ...attachments(target, layer, level, resolve, resolveInto),
-      loadOp: clearColor ? 'clear' : 'load',
-      storeOp: samples && !keepSamples ? 'discard' : 'store',
-      ...(clearColor && { clearValue: clearColor }),
-    };
-    const descriptor = { label: target.name, colorAttachments: [color] };
+    const colorAttachments = [];
+    if (target.canvas || target.color) {
+      colorAttachments.push({
+        ...attachments(target, layer, level, resolve, resolveInto),
+        loadOp: clearColor ? 'clear' : 'load',
+        storeOp: samples && !keepSamples ? 'discard' : 'store',
+        ...(clearColor && { clearValue: clearColor }),
+      });
+    }
+    const descriptor = { label: target.name, colorAttachments };
     if (target.depth) {
       descriptor.depthStencilAttachment = {
-        view: target.depth.view,
+        // A target of depth alone may have layers: one at a time.
+        view: target.color ? target.depth.view : target.depth.attachment(layer, 0).view,
         depthLoadOp: clearDepth !== null ? 'clear' : 'load',
         depthStoreOp: keepDepth ? 'store' : 'discard',
         ...(clearDepth !== null && { depthClearValue: clearDepth }),

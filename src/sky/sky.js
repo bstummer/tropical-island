@@ -12,7 +12,11 @@
 // whole between two frames, tables and light at once, so no frame mixes two
 // times. ready resolves once the first light is in; settled() returns a
 // promise while a time change is on its way (core/capture.js waits for it).
-// Puts ctx.sky on the context, { ready }, for what needs the first light.
+// Puts ctx.sky on the context, { ready, follow }: ready for what needs the
+// first light; follow(fn) for what else follows the time of day and must land
+// with its light (the island's shade, sky/shadows.js): from the next time
+// change on, fn(time, sun) is called as it starts and returns a promise of a
+// function, called as the light lands, in the same frame (follow returns a remover).
 import { Mesh } from '../gpu/scene.js';
 import { Geometry } from '../gpu/geometry.js';
 import { Material } from '../gpu/material.js';
@@ -57,25 +61,27 @@ export function create(ctx) {
   scene.add(mesh);
 
   const baseExposure = params.exposure ?? config.post.exposure;
+  const followers = new Set(); // ctx.sky.follow's
   let current = 0; // the set of tables the light in use came from
   let applied = { time: null, height: null, haze: 1 };
   let coming = null; // a time on its way: { time, set, sun, haze, probe: promise }
   let failed = null;
   let disposed = false;
 
-  // Renders the probe for `time` into the spare set, from which it lands later.
+  // Renders the probe for `time` into the spare set, from which it lands later,
+  // with what the followers made for it.
   function start(time) {
     const sun = sunPath.position(time);
     const haze = hazeAmount(sun.elevation, settings.haze);
     const set = 1 - current;
     atmosphere.renderTables(set, haze);
     const next = { time, set, sun, haze };
-    // A failure, in the readback or in landing it, is thrown by the next update.
-    next.probe = atmosphere
-      .probe(set, haze, sun.direction)
-      .then((probe) => {
+    // A failure, in the readback, a follower or in landing it, is thrown by the next update.
+    next.probe = Promise.all([atmosphere.probe(set, haze, sun.direction), ...[...followers].map((follow) => follow(time, sun))])
+      .then(([probe, ...lands]) => {
         if (disposed) return;
         land(next, probe);
+        for (const followerLands of lands) followerLands?.();
         coming = null;
       })
       .catch((err) => (failed = err));
@@ -120,7 +126,13 @@ export function create(ctx) {
   const ready = coming.probe.then(() => {
     if (failed) throw failed;
   });
-  ctx.sky = { ready };
+  ctx.sky = {
+    ready,
+    follow(fn) {
+      followers.add(fn);
+      return () => followers.delete(fn);
+    },
+  };
 
   return {
     ready,

@@ -28,6 +28,9 @@
 override TERRAIN_SAND: bool = false;
 override TERRAIN_ROCK: bool = false;
 override TERRAIN_WET: bool = false;
+// false: the piece has no ground that is neither sand nor rock, so the green's
+// share is none and its plain average stands in for it (world/terrain-nodes.js INLAND).
+override TERRAIN_GREEN: bool = true;
 
 struct Terrain {
   uDrySand: vec3f, // linear albedos, as all here
@@ -120,7 +123,11 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
   r.normal = n;
   gr.normal = n;
   if (!hidden) {
-    gr = green(vWorldPos, n, info.z, cover.z, cover.w, terrain.uDrySand, pdx, pdy);
+    if (TERRAIN_GREEN) {
+      gr = green(vWorldPos, n, info.z, cover.z, cover.w, terrain.uDrySand, pdx, pdy);
+    } else {
+      gr.albedo = greenAlbedo(info.z, cover.z, cover.w, terrain.uDrySand);
+    }
     s = sandPlain(w, n, terrain.uDrySand, terrain.uWetSand);
     if (TERRAIN_SAND) {
       if (cover.x > 0.0) {
@@ -163,6 +170,7 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
     return sceneOutput(vec3f(0.0), 1.0);
   }
 
+  shadeOnce(vWorldPos, n, dx, dy, 0.0); // its shadows, before it lights (chunks/shadows.wgsl)
   var diffuse = cover.y * r.albedo + rest * gr.albedo;
   diffuse += cover.x * sandDiffuse(s, n, view);
   var radiance = diffuse / PI * (sunLight(vWorldPos, n) + skyIrradiance(vWorldPos, n));

@@ -1,7 +1,8 @@
 // What every scene material shares, at bind group 0: the camera, and
 // ctx.frame.uniforms (post/frame.js), which the systems fill: the exposure, the
 // light state that sky/sky.js keeps in step with the time of day (lighting.wgsl),
-// and the terrain's grids that world/terrain.js fills (terrain.wgsl). The
+// the terrain's grids that world/terrain.js fills (terrain.wgsl), and the
+// shadows that sky/shadows.js fills (shadows.wgsl). The
 // renderer (gpu/renderer.js) packs it by field name once per pass.
 
 #include "frame-struct.wgsl"
@@ -19,13 +20,19 @@
 @group(0) @binding(10) var uBounceMapSampler: sampler;
 // The terrain's fine grid (terrain.wgsl), and below its coarse one's, alike.
 @group(0) @binding(11) var uTerrainHeight: texture_2d<f32>; // the height at each sample (r32float: read unfiltered)
-@group(0) @binding(12) var uTerrainInfo: texture_2d<f32>; // slope along a and o, the ground's band, the reef's offset
-@group(0) @binding(13) var uTerrainInfoSampler: sampler;
-@group(0) @binding(14) var uTerrainGround: texture_2d<f32>; // how much of the ground is sand, and rock; how lush the green; how sandy the soil
-@group(0) @binding(15) var uTerrainGroundSampler: sampler;
-@group(0) @binding(16) var uTerrainHeightTexels: sampler; // unfiltered, for textureGather of either grid (gpu/bindings.js)
-@group(0) @binding(17) var uTerrainHeightCoarse: texture_2d<f32>;
-@group(0) @binding(18) var uTerrainInfoCoarse: texture_2d<f32>;
-@group(0) @binding(19) var uTerrainInfoCoarseSampler: sampler;
-@group(0) @binding(20) var uTerrainGroundCoarse: texture_2d<f32>;
-@group(0) @binding(21) var uTerrainGroundCoarseSampler: sampler;
+// Layer 0: slope along a and o, the ground's band, the reef's offset; layer 1:
+// how much of the ground is sand, and rock; how lush the green; how sandy the soil.
+@group(0) @binding(12) var uTerrainSurface: texture_2d_array<f32>;
+@group(0) @binding(13) var uTerrainSurfaceSampler: sampler;
+@group(0) @binding(14) var uTerrainHeightTexels: sampler; // unfiltered, for textureGather of either grid (gpu/bindings.js)
+@group(0) @binding(15) var uTerrainHeightCoarse: texture_2d<f32>;
+@group(0) @binding(16) var uTerrainSurfaceCoarse: texture_2d_array<f32>;
+@group(0) @binding(17) var uTerrainSurfaceCoarseSampler: sampler;
+// The island's own shade (shadows.wgsl, world/shade.js): per sample, the ground's share of the sun; the shade's top; its reach.
+@group(0) @binding(18) var uShade: texture_2d<f32>;
+@group(0) @binding(19) var uShadeSampler: sampler;
+// The sun's shadow maps round the camera, a layer per cascade (shadows.wgsl,
+// sky/cascades.js): bound as a placeholder while sky/shadows.js draws them.
+@group(0) @binding(20) var uShadowMap: texture_depth_2d_array;
+@group(0) @binding(21) var uShadowMapSampler: sampler_comparison;
+@group(0) @binding(22) var uShadowMapTexels: sampler; // unfiltered, for textureGather of its depths (gpu/bindings.js)

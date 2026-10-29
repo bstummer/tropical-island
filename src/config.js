@@ -17,10 +17,13 @@ export const quality = {
   // rockPixels: a rock standing out of the ground less than this many pixels
   // of the drawing buffer isn't drawn (world/rocks.js): thinner than about two,
   // it would crawl (CLAUDE.md §8).
+  // shadeTexel: metres between the samples of the island's own shade (sky/shadows.js);
+  // shadowMaps: the shadow maps round the camera, texels across and where their
+  // cascades end (m ahead; config.shadows).
   presets: {
-    low: { renderScale: 0.67, maxPixelRatio: 1, terrainDetail: 18, terrainRatio: 2, groundDetail: 0.6, surfaceTexture: 512, rockPixels: 3 },
-    medium: { renderScale: 0.85, maxPixelRatio: 1.5, terrainDetail: 14.4, terrainRatio: 2.5, groundDetail: 0.8, surfaceTexture: 1024, rockPixels: 2.5 },
-    high: { renderScale: 1, maxPixelRatio: 2, terrainDetail: 20.5, terrainRatio: 2.5, groundDetail: 1, surfaceTexture: 1024, rockPixels: 2 },
+    low: { renderScale: 0.67, maxPixelRatio: 1, terrainDetail: 18, terrainRatio: 2, groundDetail: 0.6, surfaceTexture: 512, rockPixels: 3, shadeTexel: 4, shadowMaps: { size: 1024, splits: [10, 50] } },
+    medium: { renderScale: 0.85, maxPixelRatio: 1.5, terrainDetail: 14.4, terrainRatio: 2.5, groundDetail: 0.8, surfaceTexture: 1024, rockPixels: 2.5, shadeTexel: 2, shadowMaps: { size: 1536, splits: [6, 24, 80] } },
+    high: { renderScale: 1, maxPixelRatio: 2, terrainDetail: 20.5, terrainRatio: 2.5, groundDetail: 1, surfaceTexture: 1024, rockPixels: 2, shadeTexel: 2, shadowMaps: { size: 2048, splits: [5, 16, 45, 100] } },
   },
 };
 
@@ -31,6 +34,25 @@ export const camera = {
   fov: 70, // vertical, degrees; a view may override it
   near: 0.02,
   far: 100000, // beyond the horizon from any hilltop
+};
+
+// The sun's shadows (sky/shadows.js). Both kinds are as soft as the sun's
+// disk makes them, widened by `softness` (1: the real disk,
+// config.sky.atmosphere.sunRadius; 2, the user's pick in Stage 5.5 over 1 and 3:
+// the real disk left rock shadows crisp to their tips in the low sun, 3 hazy
+// shade). The island's own shade (world/shade.js): the light from below dims
+// with the share of the ground in shade about config.world.terrain.bounceReach
+// around. The shadow maps round the camera (sky/cascades.js; their sizes and splits
+// per preset, quality.shadowMaps) reach `reach` metres towards the sun past
+// what they cover, for what casts into it from outside, and the last fades
+// out over its outer `fade`. `island`: the island's shade is worked out per
+// time of day in bands of `stripsPerTask` rows of its grid turned to the sun,
+// by up to `maxWorkers` workers (and one more that puts the bands together).
+export const shadows = {
+  softness: 2,
+  reach: 60,
+  fade: 0.15,
+  island: { stripsPerTask: 64, maxWorkers: 8 },
 };
 
 // The output pass (post/output.wgsl). `tonemap` picks one of `tonemaps`
@@ -627,8 +649,10 @@ export const capture = {
   // Raised from 1000 when the ground got its surfaces (Stage 4), with the
   // user's leave: SwiftShader runs every line of a shader at every pixel.
   // 2500 since rock (Stage 4.4): where it meets the beach, a pixel runs both
-  // surfaces' detail.
-  frameBudgetMs: 2500,
+  // surfaces' detail. 4000 since the sun's shadows (Stage 5), with the user's
+  // leave: every lit pixel reads them, and a pass over the terrain shader's
+  // cost waits (PLAN.md, Known from 5.1).
+  frameBudgetMs: 4000,
   // Seconds a capture waits before it fails rather than hang the tool: for the
   // work a frame waits on (core/capture.js; the sky's light after a time
   // change), and for a view, or one of the tool's checks, to be done once its
@@ -642,6 +666,11 @@ export const capture = {
   // edge: local contrast (levels) that makes a pixel an edge pixel; edgeLimitPercent: the
   // share of edge pixels the silhouette fixture may have shimmering.
   shimmer: { frames: 5, stepPixels: 0.25, threshold: 24, ratio: 0.5, fullRatio: 0.7, edge: 48, limitPercent: 0.5, edgeLimitPercent: 5 },
+  // The same score with the camera moved instead: frames `stepMetres` apart to
+  // its right (a walking step at 60 frames a second), each foretold from the
+  // last by its depth, where it was in sight (`tolerance`: moveShift() in
+  // tools/image.js), within shimmer's limit.
+  move: { frames: 3, stepMetres: 0.025, tolerance: 0.02 },
   crop: { width: 300, height: 168, zoom: 4 }, // source pixels, shown at zoom x
   // edge: levels off the local mean that count as a real edge (drawn flat grey);
   // limitPercent: the share of a view, or of the gradient fixture, in bands (tools/image.js bandedShare).
@@ -727,6 +756,22 @@ export const capture = {
   // a facet's edge read the facet a hair past it. And at least how many pixels
   // it must draw to tell. Its deliberate mistakes miss by metres.
   rocks: { offsets: 0.01, vertices: 0.01, pixels: 20000 },
+  // The shadows fixture (src/fixtures/shadows.js): at most this share of a set's
+  // points wrong, at least this share of a mistake's set wrong, and at least
+  // this many points in each set. `contact`: how wide a penumbra across the
+  // wall's shadow may be, as a share of the one the sun's disk makes there or,
+  // where that is sharper, of the one the maps' texels make (0.78 to 1.33 on
+  // one D3D12 GPU; as sharp far out as at the foot, 0.13 to 0.46 where the
+  // sun's disk shows; as soft at the foot as far out, 2.8 to 4.9 where the
+  // texels show), and at least how many profiles of each.
+  shadows: { wrong: 0.01, caught: 0.25, least: 10, contact: { low: 0.6, high: 1.6, least: 2 } },
+  // The shade fixture (src/fixtures/shade.js): how far the GPU's island shade
+  // may be off its JS twin's on the ground (the share of the sun, and of the
+  // ground around in it), the share of points above the ground it may get
+  // more than 0.05 off (the GPU filters the shade's top coarsely: one in a
+  // hundred or so under a ridge a texel or two away), and at least how many
+  // of those it must find. Its deliberate mistakes miss by 0.02 and more.
+  shade: { ground: 0.02, around: 0.005, above: 0.03, least: 50 },
 };
 
 // Frame cost limits per quality preset. tools/screenshot.js measures every view
@@ -749,4 +794,4 @@ export const build = {
   sizeBudgetBytes: 3 * 1024 * 1024, // raw size of dist/index.html; warn above, fail above 2x
 };
 
-export const config = { quality, camera, post, sky, world, readout, bench, movement, defaults, capture, budget, build };
+export const config = { quality, camera, post, sky, shadows, world, readout, bench, movement, defaults, capture, budget, build };

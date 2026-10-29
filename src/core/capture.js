@@ -4,14 +4,19 @@
 //
 // Once ready, window.__CAPTURE__ lets the tool take many frames per page load
 // (each returns a promise):
-//   render({ t, turn, time })    renders the view again at another time t, with the
-//                                camera turned (see camera.js) and/or at another time
-//                                of day (hours or a name, as the game's time control
-//                                sets it). Every call starts from the view and its
-//                                time of day, so a frame never depends on the calls
-//                                before it.
+//   render({ t, turn, move, time, depth })
+//                                renders the view again at another time t, with the
+//                                camera turned and/or moved (see camera.js), and/or at
+//                                another time of day (hours or a name, as the game's
+//                                time control sets it); with `depth`, keeping the
+//                                scene's depth for depth(). Every call starts from the
+//                                view and its time of day, so a frame never depends on
+//                                the calls before it.
 //   image()                      the output as a PNG data URL, read back from the GPU:
 //                                exactly the rendered pixels.
+//   depth()                      after a render with `depth`: how far each pixel's surface
+//                                lies along the view's axis, in metres (the far plane where
+//                                nothing is), as base64 32-bit floats, rows from the top
 //   stats()                      the last frame's GPU counts and live memory (gpu-stats.js)
 //   gpuTime(frames)              median GPU milliseconds per frame, or null without timestamp queries
 //   overdraw()                   fragments shaded per pixel (overdraw.js), base64, one byte each
@@ -52,15 +57,30 @@ export async function runCapture(ctx, display, app, frame) {
   window.__CAPTURE__ = {
     // Back to back, without waiting for the display: the clock is frozen, so
     // pacing changes nothing, and image() reads the buffer directly.
-    async render({ t = start, turn, time = startTime } = {}) {
+    async render({ t = start, turn, move, time = startTime, depth = false } = {}) {
       ctx.clock.seek(t);
       ctx.timeOfDay = time;
-      applyView(camera, ctx.view, { turn });
-      await renderSettled(app, frame, config.capture.warmupFrames, config.capture.timeouts.settleSeconds);
+      applyView(camera, ctx.view, { turn, move });
+      ctx.frame.keepDepth = depth;
+      try {
+        await renderSettled(app, frame, config.capture.warmupFrames, config.capture.timeouts.settleSeconds);
+      } finally {
+        ctx.frame.keepDepth = false;
+      }
     },
     async image() {
       const { output } = ctx.frame;
       return pngDataUrl(await output.read(), output.width, output.height);
+    },
+    async depth() {
+      // Reversed depth (CLAUDE.md §8): d = (near/z)(far - z)/(far - near), so z = te[14] / (d + te[10]).
+      const te = camera.projectionMatrix.elements;
+      const depths = await ctx.frame.opaque.depth.read();
+      const distances = depths.map((d) => te[14] / (d + te[10]));
+      const bytes = new Uint8Array(distances.buffer);
+      let binary = '';
+      for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+      return btoa(binary);
     },
     stats() {
       return { ...ctx.stats.frame(), ...ctx.stats.memory() };

@@ -114,6 +114,7 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
 
   r.roughness = mix(r.roughness, max(r.roughness, 0.8), smoothstep(0.01, 0.04, footprint));
   let kernel = specularKernel(r.normal);
+  shadeOnce(vWorldPos, normalize(in.vNormal), dx, dy, above); // its shadows, before it lights (chunks/shadows.wgsl)
   var radiance = r.albedo / PI * (sunLight(vWorldPos, r.normal) + (1.0 - 0.4 * low) * skyIrradiance(vWorldPos, r.normal));
   radiance += (1.0 - against) * rockShine(r, vWorldPos, r.normal, view, kernel);
   return sceneOutput(aerialPerspective(radiance, vWorldPos), 1.0);

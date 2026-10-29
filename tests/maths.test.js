@@ -595,6 +595,23 @@ test('the projection has reversed depth, and the frustum culls what is outside i
   assert.ok(box([-100, -1, -11], [100, 1, -9]), 'a box across the view');
 });
 
+test('the parallel projection has reversed depth, even between its ends, and its frustum is its box', () => {
+  const box3 = new Matrix4().makeOrthographic(-2, 6, 3, -1, 0.5, 100.5);
+  const at = (x, y, z) => new Vector3(x, y, z).applyMatrix4(box3);
+  near(at(0, 0, -0.5).z, 1, 1e-12, 'near');
+  near(at(0, 0, -100.5).z, 0, 1e-12, 'far');
+  near(at(0, 0, -50.5).z, 0.5, 1e-12, 'halfway');
+  for (const [x, y, nx, ny] of [[-2, -1, -1, -1], [6, 3, 1, 1], [2, 1, 0, 0], [-2, 3, -1, 1]]) {
+    const p = at(x, y, -30);
+    near(p.x, nx, 1e-12, `x at ${x}`);
+    near(p.y, ny, 1e-12, `y at ${y}`);
+  }
+  const frustum = new Frustum().setFromProjectionMatrix(box3);
+  const sphere = (x, y, z, radius = 0.1) => frustum.intersectsSphere(new Sphere(new Vector3(x, y, z), radius));
+  assert.ok(sphere(2, 1, -50), 'inside');
+  for (const [x, y, z] of [[-3, 1, -50], [7, 1, -50], [2, -2, -50], [2, 4, -50], [2, 1, 0], [2, 1, -101]]) assert.ok(!sphere(x, y, z), `outside at ${[x, y, z]}`);
+});
+
 // three.js reads every input before it writes the target, so a target that is
 // also an input (q.multiply(r), m.premultiply(n), v.cross(w), as the game calls
 // them) comes out as a fresh one would; the recorded cases, made mostly with

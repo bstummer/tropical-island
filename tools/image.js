@@ -184,6 +184,41 @@ export function panShift(width, height, fov, step) {
   return { dx, dy, turn: [degrees, degrees] };
 }
 
+// How a still scene's image moves when the camera moves by `move` metres
+// ([right, up, back] in camera space), from how far each pixel's surface lies
+// along the view's axis before the move and after it (`before`, `after`: per
+// pixel, rows from the top, as __CAPTURE__.depth gives them): per pixel after
+// the move, where its surface lay before it (dx, dy as panShift's), and
+// whether it lay there in sight (`seen`: the depth before, at the four pixels
+// round where it lay, within `tolerance` of its own, as a share). A surface
+// that came out from behind another, or lies on a depth edge, isn't seen: what
+// stood there before can't foretell it. `fov` is vertical, in degrees.
+export function moveShift(width, height, fov, before, after, move, tolerance = 0.02) {
+  const f = height / 2 / Math.tan((fov * Math.PI) / 360);
+  const dx = new Float32Array(width * height);
+  const dy = new Float32Array(width * height);
+  const seen = new Uint8Array(width * height);
+  const [mx, my, mz] = move;
+  const near = (x, y, z) => Math.abs(before[y * width + x] - z) <= tolerance * z;
+  for (let y = 0; y < height; y++) {
+    const v = (height / 2 - (y + 0.5)) / f;
+    for (let x = 0; x < width; x++) {
+      const i = y * width + x;
+      const u = (x + 0.5 - width / 2) / f;
+      const z = after[i];
+      // Where the surface lies from the camera before the move: the move back on it.
+      const was = z - mz;
+      const xb = ((u * z + mx) / was) * f + width / 2 - 0.5;
+      const yb = height / 2 - ((v * z + my) / was) * f - 0.5;
+      dx[i] = x - xb;
+      dy[i] = y - yb;
+      const [x0, y0] = [Math.floor(xb), Math.floor(yb)];
+      seen[i] = Number(was > 0 && x0 >= 0 && y0 >= 0 && x0 + 1 < width && y0 + 1 < height && near(x0, y0, was) && near(x0 + 1, y0, was) && near(x0, y0 + 1, was) && near(x0 + 1, y0 + 1, was));
+    }
+  }
+  return { dx, dy, seen };
+}
+
 // Shimmer across frames of a still scene panned in equal sub-pixel steps,
 // where `shift` ({ dx, dy } per pixel, see panShift) says how far the image
 // moves per step. Well-filtered content moves smoothly, so each frame nearly
@@ -200,9 +235,12 @@ export function panShift(width, height, fov, step) {
 // share of pixels at or above `threshold`, and `edgePercent` the share among
 // edge pixels only (local contrast of `edge` levels or more in the first
 // frame), which tells crawling edges apart from a clean frame with few edges.
-// A `border` where content enters the frame is left out.
+// A `border` where content enters the frame is left out. `shift` may also be
+// a list, one per step, and each may say which pixels to judge (`seen`, as
+// moveShift's): a pixel counts where any step judges it.
 export function shimmer(frames, { shift, threshold = 24, ratio = 0.5, fullRatio = 0.7, edge = 48, border = 2 }) {
   const { width, height } = frames[0];
+  const shifts = Array.isArray(shift) ? shift : frames.slice(1).map(() => shift);
   const heat = new Float32Array(width * height);
   const ranges = frames.map(localRange);
   let flagged = 0;
@@ -212,22 +250,26 @@ export function shimmer(frames, { shift, threshold = 24, ratio = 0.5, fullRatio 
   for (let y = border; y < height - border; y++) {
     for (let x = border; x < width - border; x++) {
       const i = y * width + x;
-      const sx = x - shift.dx[i];
-      const sy = y - shift.dy[i];
-      const x0 = Math.floor(sx);
-      const y0 = Math.floor(sy);
-      if (x0 < 0 || y0 < 0 || x0 + 1 >= width || y0 + 1 >= height) continue;
-      const fx = sx - x0;
-      const fy = sy - y0;
-      const w00 = (1 - fx) * (1 - fy);
-      const w10 = fx * (1 - fy);
-      const w01 = (1 - fx) * fy;
-      const w11 = fx * fy;
-      const j00 = 4 * (y0 * width + x0);
-      const j01 = j00 + 4 * width;
-      const nearest = 4 * (Math.round(sy) * width + Math.round(sx));
       let worst = 0;
+      let judged = false;
       for (let k = 0; k + 1 < frames.length; k++) {
+        const { dx, dy, seen } = shifts[k];
+        if (seen && !seen[i]) continue;
+        const sx = x - dx[i];
+        const sy = y - dy[i];
+        const x0 = Math.floor(sx);
+        const y0 = Math.floor(sy);
+        if (x0 < 0 || y0 < 0 || x0 + 1 >= width || y0 + 1 >= height) continue;
+        judged = true;
+        const fx = sx - x0;
+        const fy = sy - y0;
+        const w00 = (1 - fx) * (1 - fy);
+        const w10 = fx * (1 - fy);
+        const w01 = (1 - fx) * fy;
+        const w11 = fx * fy;
+        const j00 = 4 * (y0 * width + x0);
+        const j01 = j00 + 4 * width;
+        const nearest = 4 * (Math.round(sy) * width + Math.round(sx));
         const a = frames[k].data;
         const b = frames[k + 1].data;
         for (let c = 0; c < 3; c++) {
@@ -239,6 +281,7 @@ export function shimmer(frames, { shift, threshold = 24, ratio = 0.5, fullRatio 
           if (counted > worst) worst = counted;
         }
       }
+      if (!judged) continue;
       heat[i] = worst;
       counted++;
       if (worst >= threshold) flagged++;

@@ -39,10 +39,12 @@ const lookAt = new Matrix4();
 const UP = new Vector3(0, 1, 0);
 
 // Puts the camera at a view from views.js. Captures can turn it by [yaw, pitch]
-// degrees in camera space, which is how they probe for shimmer.
-export function applyView(camera, view, { turn = [0, 0] } = {}) {
+// degrees in camera space, and move it by [right, up, back] metres in the
+// view's camera space, which is how they probe for shimmer.
+export function applyView(camera, view, { turn = [0, 0], move = [0, 0, 0] } = {}) {
   camera.position.fromArray(view.position);
   camera.rotation.set(degToRad(view.pitch), degToRad(view.yaw), 0, 'YXZ');
+  camera.translateX(move[0]).translateY(move[1]).translateZ(move[2]);
   camera.rotateY(degToRad(turn[0])).rotateX(degToRad(turn[1]));
   camera.updateMatrixWorld();
 }

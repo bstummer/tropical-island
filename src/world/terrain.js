@@ -44,16 +44,21 @@ import { sandUniforms } from '../textures/sand.js';
 import { rockUniforms } from '../textures/rock.js';
 import { greenUniforms } from '../textures/green.js';
 import { createLod, createMeshHeight, lodRanges } from './lod.js';
-import { DETAIL, GREEN, gridGeometry, nodeBounds, ROCK, SAND, WET } from './terrain-nodes.js';
+import { DETAIL, GREEN, gridGeometry, INLAND, nodeBounds, ROCK, SAND, WET } from './terrain-nodes.js';
 
 const built = new Map(); // seed -> Promise of the heightmap's grids
 const TERRAIN_LEVELS = 2; // chunks/terrain.wgsl's (tests/heightmap.test.js keeps config.world.terrain at it)
-// The uniforms of each level's textures (chunks/frame.wgsl), finest first.
+// The uniforms of each level's textures (chunks/frame.wgsl), finest first:
+// its heights, and its info and ground as the two layers of one array, which
+// takes one of the textures a shader can bind for both.
 const LEVEL_TEXTURES = [
-  { height: 'uTerrainHeight', info: 'uTerrainInfo', ground: 'uTerrainGround' },
-  { height: 'uTerrainHeightCoarse', info: 'uTerrainInfoCoarse', ground: 'uTerrainGroundCoarse' },
+  { height: 'uTerrainHeight', surface: 'uTerrainSurface' },
+  { height: 'uTerrainHeightCoarse', surface: 'uTerrainSurfaceCoarse' },
 ];
 const LOD_MAX = 16; // chunks/terrain-mesh.wgsl's arrays hold this many levels
+// A variant's surfaces with this bit read no shadow maps: no shadow falls on its
+// pieces (ctx.shadows.reaches), though they lie within the maps' reach.
+const UNSHADED = 64;
 
 export function create(ctx) {
   const { scene, camera, frame, config, quality, params, gpu } = ctx;
@@ -136,9 +141,12 @@ export function create(ctx) {
   const near = [0, SAND, ROCK | DETAIL, SAND | ROCK | DETAIL];
   // Beyond sand's detail: rock with or without its detail, either with wet sand.
   const far = [ROCK, WET, ROCK | WET, ROCK | DETAIL | WET];
-  for (const surfaces of [...near, ...far, ...near.map((s) => s | GREEN)]) {
+  // Each with the green or without it, near with its detail or without.
+  const nearAll = [...near, ...near.map((s) => s | INLAND), ...near.map((s) => s | INLAND | GREEN)];
+  const farAll = [...far, ...far.map((s) => s | INLAND)];
+  for (const surfaces of [...nearAll, ...farAll, ...nearAll.map((s) => s | UNSHADED)]) {
     const material = new Material({
-      name: ['terrain', surfaces & SAND && 'sand', surfaces & ROCK && 'rock', surfaces & DETAIL && 'detail', surfaces & GREEN && 'green', surfaces & WET && 'wet'].filter(Boolean).join('-'),
+      name: ['terrain', surfaces & SAND && 'sand', surfaces & ROCK && 'rock', surfaces & DETAIL && 'detail', surfaces & GREEN && 'green', surfaces & WET && 'wet', surfaces & UNSHADED && 'unshaded'].filter(Boolean).join('-'),
       shader,
       uniforms: materialUniforms,
       overrides: {
@@ -146,8 +154,13 @@ export function create(ctx) {
         TERRAIN_SAND: Boolean(surfaces & SAND),
         TERRAIN_ROCK: Boolean(surfaces & ROCK),
         ROCK_DETAIL: Boolean(surfaces & DETAIL),
+        TERRAIN_GREEN: Boolean(surfaces & INLAND),
         GREEN_DETAIL: Boolean(surfaces & GREEN),
         TERRAIN_WET: Boolean(surfaces & WET),
+        SHADE_ONCE: true, // its shadows read once a pixel, the island's shade as the ground's own (chunks/shadows.wgsl)
+        SHADE_GROUND: true,
+        // Far pieces lie past the shadow maps (config.shadows): what casts into them stands near.
+        SHADOW_MAP: !farAll.includes(surfaces) && !(surfaces & UNSHADED),
       },
     });
     const meshes = [settings.grid, settings.grid / 2].map((quads) => {
@@ -225,13 +238,13 @@ export function create(ctx) {
       // Filtered and mipmapped: from afar a pixel shows its footprint's average,
       // so a far ridge keeps its share of rock. As many levels as halve the
       // grid exactly (config.world.terrain.mips): further on, a pixel reads the last.
-      const info = texture('terrain info', 'rgba16float', level.infoHalf, settings.mips).generateMipmaps();
-      const ground = texture('terrain ground', 'rgba8unorm', level.ground, settings.mips).generateMipmaps();
-      textures.push(height, info, ground);
+      // Its info (layer 0) and ground (layer 1, its bytes as half floats).
+      const surface = new Texture(gpu, { name: 'terrain surface ' + level.texel + ' m', width: n, height: n, depth: 2, array: true, format: 'rgba16float', mips: settings.mips, data: true, sampler: filtered });
+      surface.upload(level.infoHalf, { layer: 0, layers: 1 }).upload(byteHalves(level.ground), { layer: 1, layers: 1 }).generateMipmaps();
+      textures.push(height, surface);
       const names = LEVEL_TEXTURES[k];
       uniforms[names.height].value = height;
-      uniforms[names.info].value = info;
-      uniforms[names.ground].value = ground;
+      uniforms[names.surface].value = surface;
       uniforms.uTerrainLevels.value[k].set(level.origin[0], level.origin[1], level.texel, n);
     });
     const { origin, texel, samples: n, albedoHalf } = grids.levels.at(-1);
@@ -284,7 +297,9 @@ export function create(ctx) {
       const sandy = node.surfaces & SAND ? (near2 < sandRange2 ? SAND : node.surfaces & WET) : 0;
       const rocky = node.surfaces & ROCK ? (near2 < rockRange2 ? ROCK | DETAIL : ROCK) : 0;
       const greeny = node.surfaces & GREEN && near2 < greenRange2 ? GREEN : 0;
-      node.geometry = variants.get(sandy | rocky | greeny).meshes[node.quarter ? 1 : 0].geometry;
+      let surfaces = sandy | rocky | greeny | (node.surfaces & INLAND);
+      if (!farAll.includes(surfaces) && ctx.shadows && !ctx.shadows.reaches(node.a, node.o, node.a + size, node.o + size)) surfaces |= UNSHADED;
+      node.geometry = variants.get(surfaces).meshes[node.quarter ? 1 : 0].geometry;
       node.geometry.instanceCount++;
     }
     // Each mesh's range of the nodes, in the order selected.
@@ -324,6 +339,14 @@ export function create(ctx) {
       delete ctx.terrain;
     },
   };
+}
+
+// Bytes (0 to 255) as half floats of their share of 255.
+const BYTE_HALVES = Uint16Array.from({ length: 256 }, (_, b) => toHalfFloat(b / 255));
+function byteHalves(bytes) {
+  const half = new Uint16Array(bytes.length);
+  for (let i = 0; i < half.length; i++) half[i] = BYTE_HALVES[bytes[i]];
+  return half;
 }
 
 // Floats as half floats, into `half`. A plain loop: Uint16Array.from with a

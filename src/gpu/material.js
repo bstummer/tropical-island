@@ -1,4 +1,5 @@
-// A material: a WGSL module with a vertex and a fragment entry point, the
+// A material: a WGSL module with a vertex and a fragment entry point (none,
+// `fragment: null`, for one that writes depth alone: a shadow map's), the
 // values of its overrides and uniforms, and how it draws (depth, blending,
 // culling). Plain data until the renderer first draws with it, which makes its
 // pipelines and buffers (renderer.js); `needsUpdate` makes them again after a
@@ -41,10 +42,15 @@ export class Material {
     transparent = false, // drawn after the opaque objects of its pass, back to front, in one pass even if double-sided
     alphaToCoverage = false, // on targets with samples only
     colorWrite = true, // false: writes depth only
+    // Added to the depth it writes, as WebGPU's depthBias (units of the depth
+    // format's precision) and depthBiasSlopeScale (times the triangle's depth
+    // slope): negative pushes it away, as depth is reversed. For shadow maps.
+    depthBias = 0,
+    depthBiasSlope = 0,
   }) {
     if (typeof shader !== 'string') throw new Error(`material ${name}: no shader`);
     this.id = nextId++;
-    Object.assign(this, { name, shader, vertex, fragment, uniforms, overrides, side, depthTest, depthWrite, blend, transparent, alphaToCoverage, colorWrite });
+    Object.assign(this, { name, shader, vertex, fragment, uniforms, overrides, side, depthTest, depthWrite, blend, transparent, alphaToCoverage, colorWrite, depthBias, depthBiasSlope });
     this.version = 0;
     this.gpu = null; // the renderer's
   }

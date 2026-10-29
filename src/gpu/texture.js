@@ -106,23 +106,26 @@ export class Texture {
 
 // What a pipeline drawing into a target must know of it.
 export function signature({ format, samples, depthFormat }) {
-  return `${format}x${samples}${depthFormat ? `+${depthFormat}` : ''}`;
+  return `${format ?? 'none'}x${samples}${depthFormat ? `+${depthFormat}` : ''}`;
 }
 
 // A render target: { width, height, samples, format, depthFormat, color, msaa,
 // depth, setSize(w, h), dispose() }. depth: a depth buffer with the colour's
-// samples; layers with array or dimension '3d'.
-export function createTarget(gpu, { name = 'target', width, height, format = 'rgba16float', samples = 1, depth = false, layers = 1, array = false, dimension = '2d', mips = false, sampler = {} }) {
-  const color = new Texture(gpu, { name, width, height, depth: layers, array, dimension, format, mips, render: true, sampler });
-  const msaa = samples > 1 ? new Texture(gpu, { name: `${name} samples`, width, height, format, samples, render: true }) : null;
-  const depthTexture = depth ? new Texture(gpu, { name: `${name} depth`, width, height, format: 'depth32float', samples, render: true, sampler: { mag: 'nearest', min: 'nearest' } }) : null;
+// samples; layers with array or dimension '3d'. With `format` null, depth
+// alone (a shadow map), its layers with array, filtered by `depthSampler`.
+export function createTarget(gpu, { name = 'target', width, height, format = 'rgba16float', samples = 1, depth = false, layers = 1, array = false, dimension = '2d', mips = false, sampler = {}, depthSampler = { mag: 'nearest', min: 'nearest' } }) {
+  const color = format ? new Texture(gpu, { name, width, height, depth: layers, array, dimension, format, mips, render: true, sampler }) : null;
+  const msaa = format && samples > 1 ? new Texture(gpu, { name: `${name} samples`, width, height, format, samples, render: true }) : null;
+  const depthLayers = format ? { depth: 1 } : { depth: layers, array };
+  const depthTexture = depth ? new Texture(gpu, { name: `${name} depth`, width, height, ...depthLayers, format: 'depth32float', samples, render: true, sampler: depthSampler }) : null;
+  const main = color ?? depthTexture;
   return {
     name,
     get width() {
-      return color.width;
+      return main.width;
     },
     get height() {
-      return color.height;
+      return main.height;
     },
     samples,
     format,

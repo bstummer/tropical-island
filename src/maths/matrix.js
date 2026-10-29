@@ -142,6 +142,21 @@ export class Matrix4 {
     return this;
   }
 
+  // A parallel projection with reversed depth, as makePerspective's: depth 1
+  // at `near`, 0 at `far`, falling evenly between (the sun's shadow maps,
+  // sky/shadows.js). Not three.js's: three's isn't reversed.
+  makeOrthographic(left, right, top, bottom, near, far) {
+    const te = this.elements;
+    const w = 1 / (right - left);
+    const h = 1 / (top - bottom);
+    const p = 1 / (far - near);
+    te[0] = 2 * w; te[4] = 0; te[8] = 0; te[12] = -(right + left) * w;
+    te[1] = 0; te[5] = 2 * h; te[9] = 0; te[13] = -(top + bottom) * h;
+    te[2] = 0; te[6] = 0; te[10] = p; te[14] = far * p;
+    te[3] = 0; te[7] = 0; te[11] = 0; te[15] = 1;
+    return this;
+  }
+
   // Sets the upper 3×3 to turn -z from `eye` towards `target`, with `up` above.
   lookAt(eye, target, up) {
     const te = this.elements;

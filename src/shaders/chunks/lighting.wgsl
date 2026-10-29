@@ -20,13 +20,14 @@
 #include "sh.wgsl"
 #include "sunlight.wgsl"
 #include "terrain.wgsl"
+#include "shadows.wgsl"
 
 // How much of the sun reaches a point, per colour: 1 lit, 0 in shadow, tinted
 // where it comes through leaves or water. The one place where shadows join the
-// light: Stage 5's sun shadows and Stage 10's cloud shadows multiply in here,
-// so every material gets them.
+// light: the sun's shadows (shadows.wgsl) and Stage 10's cloud shadows
+// multiply in here, so every material gets them.
 fn sunVisibility(position: vec3f, normal: vec3f) -> vec3f { // position first, as everywhere here
-  return vec3f(1.0);
+  return vec3f(sunShadow(position, normal));
 }
 
 // Irradiance from the sun on a surface with this normal. It grows with the
@@ -52,12 +53,20 @@ fn groundAlbedo(position: vec3f) -> vec3f {
   return textureSampleLevel(uBounceMap, uBounceMapSampler, uv, frame.uBounceLayout.w).rgb;
 }
 
+// Irradiance on level ground around a point: the sky's, and the sun's as far
+// as the ground around is in it (shadows.wgsl shadeAround), which it sends
+// back up as the light from below.
+fn groundLight(position: vec3f) -> vec3f {
+  let sun = frame.uSunRadiance * max(frame.uSunDirection.y, 0.0);
+  return frame.uLevelLight - sun * (1.0 - shadeAround(position));
+}
+
 // Irradiance from the sky above and the ground below on a surface at position
-// with normal n. The ground is diffuse, lit as level ground in the open is, and
+// with normal n. The ground is diffuse, lit as level ground around it is, and
 // fills the lower half of the view from the surface. Where something blocks the
 // sky (a canopy, PLAN.md Stage 8), it is blocked here.
 fn skyIrradiance(position: vec3f, n: vec3f) -> vec3f {
-  return shIrradiance(n) + groundAlbedo(position) * frame.uLevelLight * (0.5 - 0.5 * n.y);
+  return shIrradiance(n) + groundAlbedo(position) * groundLight(position) * (0.5 - 0.5 * n.y);
 }
 
 // The sky's radiance towards dir, as the sky draws it: for reflections.
@@ -114,7 +123,7 @@ fn specularLight(position: vec3f, n: vec3f, view: vec3f, roughness: f32, f0: f32
 
   let r = reflect(-view, n);
   let sky = mix(skyRadiance(r), shIrradiance(r) / PI, smoothstep(0.1, 0.7, roughness));
-  let ground = groundAlbedo(position) * frame.uLevelLight / PI;
+  let ground = groundAlbedo(position) * groundLight(position) / PI;
   let mirrored = mix(ground, sky, smoothstep(-0.05, 0.05, r.y));
   // Rough surfaces mirror less at grazing angles than Schlick's smooth surface.
   let f = mix(fresnel(f0, nv), f0, roughness);

@@ -1,7 +1,8 @@
 // The frame: everything from the systems' update to the pixels on screen. The
 // only place tonemapping happens. In order:
 //
-//   1. beforeScene passes: the systems' own (shadow maps, lookup tables)
+//   1. beforeScene passes: the systems' own (the sun's shadow maps: meshes in
+//      pass 'shadow', drawn by sky/shadows.js; lookup tables)
 //   2. opaque pass: meshes in pass 'opaque' (every mesh's default) into the
 //      HDR target. The sky draws last in it (renderOrder skyOrder), only where
 //      nothing else did.
@@ -32,11 +33,14 @@
 //   onResize(fn)      fn(size) now and after every resize; returns a remover
 //   uniforms          shared by every scene material (chunks/frame.wgsl, bind group 0):
 //                     uExposure, the light state that chunks/lighting.wgsl reads and
-//                     sky/sky.js keeps in step with the time of day, and the terrain's
-//                     grids that chunks/terrain.wgsl reads and world/terrain.js fills
-//                     (neutral until then)
-//   beforeScene(fn)   fn(renderer) every frame after all systems updated and before
-//                     the scene renders, for passes of their own; returns a remover
+//                     sky/sky.js keeps in step with the time of day, the terrain's
+//                     grids that chunks/terrain.wgsl reads and world/terrain.js fills,
+//                     and the shadows that chunks/shadows.wgsl reads and sky/shadows.js
+//                     fills (neutral until then)
+//   beforeScene(fn, compile)  fn(renderer) every frame after all systems updated and
+//                     before the scene renders, for passes of their own; compile(),
+//                     if given, makes their pipelines ahead (compile() below) and
+//                     resolves to the problems; returns a remover
 //   passes            the frame's passes, in the order they draw: a mesh's `pass` is one
 //   skyOrder          the sky's renderOrder: after every other opaque mesh
 //   translucent(node) puts the meshes under node in the translucent pass and sets up
@@ -56,6 +60,8 @@
 //                     Passes run by `order`, then by when they were added. Returns a remover.
 //   sceneTarget       the HDR target
 //   output            capture mode only: the output pass's texture, which the canvas shows a copy of
+//   keepDepth         capture mode only: while set, every frame leaves the scene's depth,
+//                     after-opaque meshes included, in `opaque.depth` for it to read back
 import { Vector2, Vector3, Vector4 } from '../maths/index.js';
 import outputShader from './output.wgsl';
 import compositeShader from './composite.wgsl';
@@ -64,7 +70,8 @@ import { Material, TRANSLUCENT_BLEND } from '../gpu/material.js';
 import { createTarget } from '../gpu/texture.js';
 import { lookup } from '../core/params.js';
 
-const PASSES = ['opaque', 'afterOpaque', 'translucent'];
+// 'shadow': the sun's shadow maps' casters, which sky/shadows.js draws in a beforeScene pass.
+const PASSES = ['shadow', 'opaque', 'afterOpaque', 'translucent'];
 const SAMPLES = 4; // WebGPU has 1 or 4; the after-opaque pass needs the samples kept apart from what it reads
 
 export function createFrame(ctx, display) {
@@ -116,6 +123,7 @@ export function createFrame(ctx, display) {
   const size = { width: 1, height: 1 };
   const listeners = new Set();
   const passes = new Set();
+  const compiles = new Set(); // beforeScene passes' compile()
   const posts = [];
   let postCount = 0;
   const stopResize = display.onResize(() => {
@@ -163,15 +171,23 @@ export function createFrame(ctx, display) {
     uSunlightTop: { value: config.sky.sunlightTop },
     // The terrain's grids (chunks/terrain.wgsl), which world/terrain.js fills.
     uTerrainHeight: { value: null },
-    uTerrainInfo: { value: null },
-    uTerrainGround: { value: null },
+    uTerrainSurface: { value: null },
     uTerrainHeightCoarse: { value: null },
-    uTerrainInfoCoarse: { value: null },
-    uTerrainGroundCoarse: { value: null },
+    uTerrainSurfaceCoarse: { value: null },
     uTerrainLevels: { value: config.world.terrain.levels.map(() => new Vector4(0, 0, 1, 2)) },
     uTerrainFrame: { value: new Vector4(1, 0, 0, 1) },
     uTerrainBlend: { value: 1 },
     uTerrainReady: { value: 0 },
+    // The island's own shade (chunks/shadows.wgsl), which sky/shadows.js fills.
+    uShade: { value: null },
+    uShadeLayout: { value: new Vector4() },
+    uShadeParams: { value: new Vector4() },
+    // The sun's shadow maps round the camera (chunks/shadows.wgsl), likewise.
+    uShadowMap: { value: null },
+    uShadowFrame: { value: [new Vector4(), new Vector4(), new Vector4()] },
+    uShadowCascades: { value: Array.from({ length: 4 }, () => new Vector4()) },
+    uShadowParams: { value: new Vector4() },
+    uShadowSoftness: { value: new Vector4() },
   };
   renderer.setGlobals(uniforms);
 
@@ -198,6 +214,7 @@ export function createFrame(ctx, display) {
     get output() {
       return outputTarget?.color ?? null;
     },
+    keepDepth: false,
     outputMaterials: [output.material, composite.material, depthResolve.material],
     tonemap,
     onResize(fn) {
@@ -205,9 +222,13 @@ export function createFrame(ctx, display) {
       fn(size);
       return () => listeners.delete(fn);
     },
-    beforeScene(fn) {
+    beforeScene(fn, compile = null) {
       passes.add(fn);
-      return () => passes.delete(fn);
+      if (compile) compiles.add(compile);
+      return () => {
+        passes.delete(fn);
+        compiles.delete(compile);
+      };
     },
     translucent(node) {
       const materials = new Set();
@@ -243,6 +264,7 @@ export function createFrame(ctx, display) {
         composite.compile({ format: 'rgba16float', samples: 1 }),
         depthResolve.compile(layerSignature),
         output.compile(outputSignature),
+        ...[...compiles].map((compile) => compile()),
       ]).then((lists) => lists.flat());
     },
     render() {
@@ -254,7 +276,7 @@ export function createFrame(ctx, display) {
       const use = used();
       const linear = use.translucent || posts.length > 0;
       // The layer hides behind the scene, after-opaque meshes included, and so do depth posts.
-      const depthAfter = use.translucent || posts.some((p) => p.depth);
+      const depthAfter = use.translucent || posts.some((p) => p.depth) || this.keepDepth;
       // The scene's depth so far, one sample a pixel, into the layer's depth.
       // The layer's colour is cleared on the way: nothing in front yet, everything shows through.
       const resolveDepth = () => depthResolve.render(sizedTarget(layerTarget), { clearColor: [0, 0, 0, 1], clearDepth: 0 });
@@ -294,6 +316,7 @@ export function createFrame(ctx, display) {
       stopResize();
       listeners.clear();
       passes.clear();
+      compiles.clear();
       posts.length = 0;
       for (const target of [sceneTarget, layerTarget, opaqueTarget, ...postTargets, outputTarget]) target?.dispose();
       output.dispose();

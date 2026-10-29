@@ -7,8 +7,12 @@
 # One-time setup: Settings -> Pages -> Build and deployment -> Source: "GitHub Actions".
 # The deploy job fails until it is set (see its first step).
 #
+# Don't hand-edit the "latest" tag or release, and don't create other releases:
+# a newer latest release would take over the download link above.
+#
 # Only the build job installs npm packages, and it gets a read-only token. The
-# jobs that publish (Pages, release) run no third-party code from node_modules.
+# jobs that publish (Pages, release) run no third-party code from node_modules:
+# keep it that way.
 # They run for main only: on another branch, a push or "Run workflow" just verifies it.
 # A push that changes only Markdown (README, PLAN, CLAUDE) runs nothing: no .md
 # file goes into the build or the checks.

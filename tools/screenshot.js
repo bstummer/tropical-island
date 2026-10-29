@@ -35,7 +35,7 @@ import { findView, views as allViews } from '../src/views.js';
 import { config } from '../src/config.js';
 import { parseParams } from '../src/core/params.js';
 import { sunPath } from '../src/sky/sun.js';
-import { measureCost, measureShimmer, measureView, renderFrame, stopAnalysis } from './measure.js';
+import { measureCost, measureMove, measureShimmer, measureView, renderFrame, stopAnalysis } from './measure.js';
 import { decodeDataUrl, decodePng, encodePng } from './png.js';
 import { bandedShare, bandingView, brightestNear, meanColor, overdrawImage } from './image.js';
 import { labelName } from './labels.js';
@@ -326,6 +326,7 @@ function limitsFor(query) {
   return {
     frameMs: config.capture.frameBudgetMs,
     shimmerPercent: config.capture.shimmer.limitPercent,
+    moveShimmerPercent: config.capture.shimmer.limitPercent,
     bandingPercent: config.capture.banding.limitPercent,
     ...config.budget[query.quality ?? config.quality.default],
   };
@@ -340,7 +341,7 @@ export function summarize(result, dir) {
   const percent = (p, digits) => (Number.isFinite(p) ? `${p.toFixed(digits)}%` : '?');
   const gpu = m.gpuMs == null ? '' : ` · GPU ${m.gpuMs.toFixed(2)} ms`;
   return (
-    `shimmer ${percent(m.shimmerPercent, 2)} · banding ${percent(m.bandingPercent, 2)} · motion ${percent(m.motionPercent, 1)} · ` +
+    `shimmer ${percent(m.shimmerPercent, 2)}, moving ${percent(m.moveShimmerPercent, 2)} · banding ${percent(m.bandingPercent, 2)} · motion ${percent(m.motionPercent, 1)} · ` +
     `${count(m.drawCalls, 'draw')} · ${tris(m.triangles)} tris · ${count(m.passes, 'pass', 'passes')} · ${count(m.pipelines, 'pipeline')} · ` +
     `overdraw ${m.overdraw.toFixed(2)} · tex ${megabytes(m.textureMB)} · RT ${megabytes(m.renderTargetMB)}${gpu} · ` +
     `${Math.round(result.timing.frameMs)} ms/frame`
@@ -444,6 +445,21 @@ function toolCheckTasks(context, fileUrl, query, outDir) {
       const detail = `${percent.toFixed(1)}% shimmers (limit ${limitPercent}%), smooth half ${smooth.toFixed(2)}%`;
       if (!(percent > limitPercent)) problems.push({ kind: 'tool check', text: `shimmer fixture: ${detail}; the score no longer catches aliasing` });
       if (smooth > limitPercent) problems.push({ kind: 'tool check', text: `shimmer fixture: ${detail}; smooth content counts as shimmer` });
+      return detail;
+    }),
+    // Crawls on its left half as the camera moves, and nowhere as it turns.
+    () => checkFixture(context, fileUrl, { ...params, fixture: 'crawl' }, async (page, info, problems) => {
+      const { limitPercent, threshold } = config.capture.shimmer;
+      const turned = await measureShimmer(page, info, join(dir, 'crawl-turn.png'));
+      const moved = await measureMove(page, info, join(dir, 'crawl-move.png'));
+      const share = (inColumn) => shimmerShare(moved.heat, moved.width, moved.height, threshold, inColumn);
+      const crawls = share((x) => x < moved.width / 2 - 16);
+      const still = share((x) => x > moved.width / 2 + 16);
+      const detail = `moving: ${crawls.toFixed(1)}% of the crawling half shimmers (limit ${limitPercent}%), ${still.toFixed(2)}% of the still half; turning: ${turned.percent.toFixed(2)}%`;
+      const fail = (why) => problems.push({ kind: 'tool check', text: `crawl fixture: ${detail}; ${why}` });
+      if (!(crawls > limitPercent)) fail('the score no longer catches what crawls as the camera moves');
+      if (still > limitPercent) fail('what keeps to the world counts as crawling: the move is foretold wrong');
+      if (turned.percent > limitPercent) fail('it shimmers as the camera turns, so it no longer shows the move sees more');
       return detail;
     }),
     // Built to exceed every cost limit of the low preset.
@@ -567,6 +583,33 @@ function toolCheckTasks(context, fileUrl, query, outDir) {
         `${r.vertices.gpu.toExponential(1)} m (limit ${vertices}), ${r.vertices.mistaken.toFixed(2)} m turned the wrong way`
       );
     }),
+    // The sun's shadow maps shade what JS's rays say they shade (src/fixtures/shadows.js),
+    // at a low sun and a high one, and catch their deliberate mistakes.
+    ...['golden-hour', 'midday'].map(
+      (time) => () =>
+        checkFixture(context, fileUrl, { ...params, fixture: 'shadows', time, name: `shadows at ${time}` }, async (page, info, problems) => {
+          const s = await page.evaluate(() => window.__SHADOWS__);
+          for (const text of shadowProblems(s, config.capture.shadows)) problems.push({ kind: 'tool check', text: `shadows fixture at ${time}: ${text}` });
+          const sets = Object.entries(s?.sets ?? {}).map(([name, set]) => `${name} ${set.points} (${(100 * set.wrong).toFixed(1)}%)`);
+          const mistakes = Object.entries(s?.mistakes ?? {}).map(([name, share]) => `${name} ${(100 * share).toFixed(0)}%`);
+          const ratios = (s?.contact ?? []).map((p) => p.ratio);
+          const range = ratios.length ? `${Math.min(...ratios).toFixed(2)} to ${Math.max(...ratios).toFixed(2)}` : 'none';
+          return `points per set (share wrong): ${sets.join(', ')}; mistakes caught: ${mistakes.join(', ')}; penumbrae across the wall's shadow at ${ratios.length} places, ${range} times as wide as they should be`;
+        }),
+    ),
+    // The island's shade the GPU reads is the one JS knows (src/fixtures/shade.js),
+    // on the ground and above it, and the check catches what is half a texel or 2 m off.
+    () =>
+      checkFixture(context, fileUrl, { ...params, fixture: 'shade', time: 'golden-hour' }, async (page, info, problems) => {
+        const s = await page.evaluate(() => window.__SHADE__);
+        for (const text of shadeProblems(s, config.capture.shade)) problems.push({ kind: 'tool check', text: `shade fixture: ${text}` });
+        const { ground, around, above } = config.capture.shade;
+        return (
+          `${s.points} points on the ground: the share of the sun off its twin by ${s.gpu.ground.toExponential(1)} (limit ${ground}), ${s.mistaken.ground.toFixed(2)} half a texel off; ` +
+          `of the ground around by ${s.gpu.around.toExponential(1)} (limit ${around}), ${s.mistaken.around.toFixed(3)} half a texel off; ` +
+          `${s.high} points above it: ${(100 * s.gpu.above).toFixed(2)}% off by more than 0.05 (limit ${100 * above}%), ${(100 * s.mistaken.above).toFixed(1)}% 2 m too high`
+        );
+      }),
     // The ground's tiles repeat (src/fixtures/surfaces.js), and the check would see if they didn't.
     () => checkFixture(context, fileUrl, { ...params, fixture: 'surfaces', view: 'sand' }, async (page, info, problems) => {
       const s = await page.evaluate(() => window.__SURFACES__);
@@ -847,6 +890,78 @@ export function rockProblems(r, { offsets, vertices, pixels }) {
   return problems;
 }
 
+// The shadows fixture's results (src/fixtures/shadows.js): in each set at
+// least `least` points and at most `wrong` of them shaded or lit where JS's
+// rays say otherwise, and each deliberate mistake turning at least `caught`
+// of its set's points wrong. Returns problem texts.
+export const SHADOW_SETS = {
+  shade: 'shade where JS casts it',
+  lit: 'sun where JS finds none in the way',
+  holes: "sun through the card's cut-out",
+  foot: "shade at the blocks' feet (a shadow starts at its caster)",
+  faces: 'sun on the faces that face it (no acne)',
+  beyond: "sun past the maps' far end",
+};
+export const SHADOW_MISTAKES = {
+  acne: 'faces read 2 texels into themselves',
+  detached: 'feet read 2.5 m towards the sun',
+  moved: 'a moved caster cast from where its mesh is',
+  solid: 'a cut-out cast solid',
+};
+// How soft (`contact`): each profile across the wall's shadow is { ratio (its
+// penumbra's width to the one it should have), sharp, soft }; every one within
+// `contact.low` to `contact.high`, at least `contact.least` sharp ones and
+// soft ones, and each mistake out of that range on at least `caught` of those
+// it should change: the soft ones as sharp as at the foot, the sharp ones as soft as far out.
+export const CONTACT_MISTAKES = {
+  hard: ['soft', 'shadows as sharp far from their caster as at its foot'],
+  blurred: ['sharp', 'shadows as soft at their foot as far out'],
+};
+export function shadowProblems(s, { wrong, caught, least, contact }) {
+  const problems = [];
+  for (const [name, what] of Object.entries(SHADOW_SETS)) {
+    const set = s?.sets?.[name];
+    if (!(set?.points >= least)) problems.push(`${what}: only ${set?.points} points (at least ${least}): the check measures too little`);
+    else if (!(set.wrong <= wrong)) problems.push(`${what}: ${(100 * set.wrong).toFixed(1)}% of ${set.points} points wrong (limit ${100 * wrong}%)`);
+  }
+  for (const [name, what] of Object.entries(SHADOW_MISTAKES)) {
+    if (!(s?.mistakes?.[name] >= caught)) problems.push(`${what}: only ${(100 * s?.mistakes?.[name]).toFixed(0)}% wrong (at least ${100 * caught}%): the check misses it`);
+  }
+  const within = ({ ratio }) => ratio >= contact.low && ratio <= contact.high;
+  const profiles = s?.contact ?? [];
+  const count = (kind) => profiles.filter((p) => p[kind]).length;
+  if (!(count('sharp') >= contact.least && count('soft') >= contact.least)) {
+    problems.push(`penumbrae: only ${count('sharp')} sharp and ${count('soft')} soft profiles across the wall's shadow (at least ${contact.least} each): the check measures too little`);
+  }
+  const off = profiles.filter((p) => !within(p));
+  if (off.length) {
+    const worst = off.map((p) => p.ratio.toFixed(2)).join(', ');
+    problems.push(`penumbrae: ${off.length} of ${profiles.length} profiles across the wall's shadow not ${contact.low} to ${contact.high} times as wide as the sun's disk or the maps' texels make them (${worst})`);
+  }
+  for (const [name, [kind, what]] of Object.entries(CONTACT_MISTAKES)) {
+    const changed = (s?.contactMistakes?.[name] ?? []).filter((p) => p[kind]);
+    const share = changed.length ? changed.filter((p) => !within(p)).length / changed.length : 0;
+    if (!(share >= caught)) problems.push(`${what}: only ${(100 * share).toFixed(0)}% of the ${kind} profiles off (at least ${100 * caught}%): the check misses it`);
+  }
+  return problems;
+}
+
+// The shade fixture's results (src/fixtures/shade.js): the GPU's island shade
+// within the limits of its JS twin's, on the ground (`ground`, `around`: the
+// worst difference) and above it (`above`: the share of points off), each
+// mistake beyond them, and at least `least` points above the ground.
+export function shadeProblems(s, { ground, around, above, least }) {
+  const problems = [];
+  const limits = { ground, around, above };
+  const what = { ground: "the ground's share of the sun", around: 'the share of the ground around in the sun', above: 'the share of the sun above the ground' };
+  for (const [name, limit] of Object.entries(limits)) {
+    if (!(s?.gpu?.[name] <= limit)) problems.push(`${what[name]}: the GPU's off its JS twin's by ${s?.gpu?.[name]?.toExponential(1)} (limit ${limit})`);
+    if (!(s?.mistaken?.[name] > limit)) problems.push(`${what[name]}: the deliberate mistake is only ${s?.mistaken?.[name]?.toExponential(1)} off, within the limit: the check misses it`);
+  }
+  if (!(s?.high >= least)) problems.push(`only ${s?.high} points under a shade's top (at least ${least}): the check measures too little above the ground`);
+  return problems;
+}
+
 // The surfaces fixture's tile check (src/fixtures/surfaces.js): per tile, the
 // share of texels a whole tile's shift changed within `share`, and half a
 // tile's above `mistaken`. Returns problem texts.
@@ -1002,6 +1117,7 @@ const megabytes = (mb) => `${mb.toFixed(0)} MB`;
 const METRIC_LABELS = {
   frameMs: ['capture time per frame', (ms) => `${Math.round(ms)} ms`],
   shimmerPercent: ['shimmer', (p) => `${p.toFixed(2)}%`],
+  moveShimmerPercent: ['shimmer as the camera moves', (p) => `${p.toFixed(2)}%`],
   bandingPercent: ['banding', (p) => `${p.toFixed(2)}%`],
   drawCalls: ['draw calls', String],
   triangles: ['triangles', (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(2)} M` : `${(n / 1e3).toFixed(1)} k`)],

@@ -9,6 +9,7 @@ import {
   heatImage,
   meanColor,
   motion,
+  moveShift,
   overdrawImage,
   overdrawStats,
   panShift,
@@ -295,6 +296,68 @@ test('panShift matches how the camera projects when turned', () => {
     assert.ok(Math.abs(after[1] - before[1] - dy[i]) < 0.01, `dy at (${x}, ${y}): ${after[1] - before[1]} vs ${dy[i]}`);
   }
   assert.ok(Math.abs(dx[90 * width + 160] - step) < 0.01, 'a quarter pixel at the centre');
+});
+
+test('moveShift matches how the camera projects when moved, and judges only what was in sight before', () => {
+  const [width, height, fov] = [320, 180, 70];
+  const view = { position: [3, 2, 1], yaw: 40, pitch: -12 };
+  const move = [0.3, -0.1, 0.2];
+  const camera = new Camera(fov, width / height, 0.1, 1000);
+  const toPixel = (p) => {
+    const ndc = p.clone().project(camera);
+    return [((ndc.x + 1) / 2) * width - 0.5, ((1 - ndc.y) / 2) * height - 0.5];
+  };
+  // A wall square to the view 20 m ahead of where the camera starts, so 19.8 m
+  // from where it moves to; a post 5 m ahead of the start hides a patch of it.
+  const before = new Float32Array(width * height).fill(20);
+  const after = new Float32Array(width * height).fill(20 + move[2]);
+  for (let y = 80; y < 100; y++) for (let x = 100; x < 120; x++) before[y * width + x] = 5;
+  const { dx, dy, seen } = moveShift(width, height, fov, before, after, move);
+  for (const [x, y] of [[160, 90], [3, 5], [300, 20], [40, 170], [250, 150]]) {
+    applyView(camera, view, { move });
+    // The wall's point at the centre of pixel (x, y) after the move.
+    const ndc = new Vector3(((x + 0.5) / width) * 2 - 1, 1 - ((y + 0.5) / height) * 2, 0.5);
+    const ray = ndc.applyMatrix4(camera.projectionMatrixInverse).applyMatrix4(camera.matrixWorld).sub(camera.position);
+    const forward = new Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+    const point = ray.multiplyScalar(after[0] / ray.dot(forward)).add(camera.position);
+    const now = toPixel(point);
+    applyView(camera, view);
+    const was = toPixel(point);
+    const i = y * width + x;
+    assert.ok(Math.abs(now[0] - was[0] - dx[i]) < 1e-3, `dx at (${x}, ${y}): ${now[0] - was[0]} vs ${dx[i]}`);
+    assert.ok(Math.abs(now[1] - was[1] - dy[i]) < 1e-3, `dy at (${x}, ${y}): ${now[1] - was[1]} vs ${dy[i]}`);
+    assert.equal(seen[i], 1, `in sight at (${x}, ${y})`);
+  }
+  // Where the post stood, and where the move brings in what lay out of the frame, isn't judged.
+  const hidden = (x, y) => seen[y * width + x] === 0;
+  const behindPost = (x, y) => before[Math.round(y - dy[y * width + x]) * width + Math.round(x - dx[y * width + x])] === 5;
+  let behind = 0;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (!behindPost(x, y)) continue;
+      behind++;
+      assert.ok(hidden(x, y), `behind the post at (${x}, ${y})`);
+    }
+  }
+  assert.ok(behind > 300, `${behind} pixels behind the post`);
+  assert.ok(hidden(width - 1, 90), 'the right edge came into the frame');
+});
+
+test('shimmer counts a pixel only where some step judges it, each by its own shift', () => {
+  // A checker that flips every frame: nothing foretells it.
+  const checker = (k) => greyImage(WIDTH, HEIGHT, (x, y) => ((x + y + k) % 2 ? 30 : 220));
+  const frames = [0, 1, 2].map(checker);
+  const none = { ...uniformShift(0, 0), seen: new Uint8Array(WIDTH * HEIGHT) };
+  const left = { ...uniformShift(0, 0), seen: Uint8Array.from({ length: WIDTH * HEIGHT }, (_, i) => Number(i % WIDTH < WIDTH / 2)) };
+  const all = { ...uniformShift(0, 0), seen: new Uint8Array(WIDTH * HEIGHT).fill(1) };
+  assert.equal(shimmer(frames, { shift: [none, left], threshold: 24 }).percent, 100, 'the share is of the pixels judged');
+  assert.equal(shimmer(frames, { shift: [none, all], threshold: 24 }).percent, 100, 'the second step judges every pixel');
+  // A still frame foretold right by the first step and wrong by a second that moves it a pixel.
+  const still = greyImage(WIDTH, HEIGHT, (x) => (x % 2 ? 30 : 220));
+  const right = shimmer([still, still, still], { shift: [uniformShift(0, 0), uniformShift(0, 0)], threshold: 24 });
+  const wrong = shimmer([still, still, still], { shift: [uniformShift(0, 0), uniformShift(1, 0)], threshold: 24 });
+  assert.equal(right.percent, 0);
+  assert.equal(wrong.percent, 100, "with the second step's shift wrong");
 });
 
 test('the shimmer image marks flagged pixels in magenta, grown by a pixel', () => {

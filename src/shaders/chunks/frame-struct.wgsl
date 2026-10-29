@@ -24,4 +24,10 @@ struct Frame {
   uTerrainLevels: array<vec4f, 2>, // per level: origin a, o; texel; samples across
   uTerrainFrame: vec4f, // a = dot(xz, .xy), o = dot(xz, .zw)
   uTerrainReady: f32, // 0 until the grids are built: everything is deep sea
+  uShadeLayout: vec4f, // the island's shade (shadows.wgsl): its corner in the cove's frame; 1 / its size in metres (0: no shade); 1 / its texel
+  uShadeParams: vec4f, // x: 1 / the sun's disk's radius (radians); y: 1 / the height (m) over which what stands on the ground goes from its share to the share at its height
+  uShadowFrame: array<vec4f, 3>, // the sun's shadow maps (shadows.wgsl): the sun's frame, right, up and towards it
+  uShadowCascades: array<vec4f, 4>, // per cascade, its centre in the sun's frame and its radius (m)
+  uShadowParams: vec4f, // how many cascades (0: none); their reach towards the sun (m); 1 / their texels across; the share of the last one over which they fade
+  uShadowSoftness: vec4f, // x: the tangent of the sun's disk's radius as the maps soften it: a penumbra's half-width per metre to its caster
 }

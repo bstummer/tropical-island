@@ -11,7 +11,7 @@ import { createRandom } from '../src/core/random.js';
 import { sandWetness } from '../src/world/albedo.js';
 import { createIsland } from '../src/world/island.js';
 import { buildHeightmap, createHeightmap, GROUND } from '../src/world/heightmap.js';
-import { GREEN, nodeBounds, ROCK, SAND, WET } from '../src/world/terrain-nodes.js';
+import { GREEN, INLAND, nodeBounds, ROCK, SAND, WET } from '../src/world/terrain-nodes.js';
 
 const settings = config.world.terrain;
 const { leaf } = settings;
@@ -38,10 +38,10 @@ function handmade(levels, blend) {
   return createHeightmap(null, { blend }, filled);
 }
 
-// The surfaces the ground as drawn has at a, o: SAND, ROCK and GREEN (a share worth its detail).
+// The surfaces the ground as drawn has at a, o: SAND, ROCK, INLAND (any green) and GREEN (a share worth its detail).
 function surfacesAt(heightmap, a, o, out = {}) {
   const { sand, rock } = heightmap.groundAtCove(a, o, out);
-  return (sand > 0 ? SAND : 0) | (rock > 0 ? ROCK : 0) | (sand + rock < 0.85 ? GREEN : 0);
+  return (sand > 0 ? SAND : 0) | (rock > 0 ? ROCK : 0) | (sand + rock < 1 - 1e-6 ? INLAND : 0) | (sand + rock < 0.85 ? GREEN : 0);
 }
 
 test("sand carries the wet sheen from a metre under the sea to past where it dries, by the waves' reach", () => {
@@ -54,7 +54,9 @@ test("sand carries the wet sheen from a metre under the sea to past where it dri
   assert.equal(bitsOf(() => [0.2, 40, 215]), SAND | WET | ROCK);
   // Rock and the green the sea wets have no sheen of sand.
   assert.equal(bitsOf(() => [0.2, 0, 255]), ROCK);
-  assert.equal(bitsOf(() => [0.2, 0, 0]), GREEN);
+  assert.equal(bitsOf(() => [0.2, 0, 0]), INLAND | GREEN);
+  // A little green: some, but no share worth its detail.
+  assert.equal(bitsOf(() => [5, 230, 0]), SAND | INLAND);
 });
 
 test('a node takes its surfaces from the grids drawn over it: a finer one that covers it hides the coarser', () => {

@@ -5,6 +5,7 @@
 //   banding.png          contrast-boosted copy: bands show as contour lines, dither as fine noise
 //   crop-<name>.png      zoomed regions (views.js `crops`, else the centre)
 //   shimmer.png          where the image shimmers under a sub-pixel pan, in magenta
+//   shimmer-move.png     where it shimmers as the camera moves a walking step at a time
 //   motion.png           frames at t, t + step, ... left to right, top to bottom, at half size
 //   motion-map.png       where anything changed over those frames, in magenta
 //   overdraw.png         fragments shaded per pixel: black 0, blue 1, teal 2, green 3,
@@ -58,13 +59,38 @@ export async function measureView(page, { info, crops, first, dir, gpuTime }) {
   const started = Date.now();
   const urls = await renderFrames(page, [...turns, ...motionTimes.slice(1).map((t) => ({ t }))]);
   const frameMs = (Date.now() - started) / urls.length;
-  const analysis = analyse('view', { first, pan: urls.slice(0, turns.length), motion: urls.slice(turns.length), overdraw, crops, dir, fov: info.fov });
+  const moved = await renderMoves(page);
+  const analysis = analyse('view', { first, pan: urls.slice(0, turns.length), motion: urls.slice(turns.length), moved, overdraw, crops, dir, fov: info.fov });
   return { cost, motionTimes, frameMs, lastFrame: urls.at(-1), analysis };
 }
 
 // Render options for the shimmer pan: turns of 1, 2, ... steps.
 function panTurns(pan) {
   return Array.from({ length: settings.shimmer.frames - 1 }, (_, k) => ({ turn: pan.turn.map((a) => a * (k + 1)) }));
+}
+
+// Frames with the camera moved 0, 1, 2, ... steps to its right (config.capture.move),
+// each with its depth: { images, depths, step } (data URLs, base64 distances).
+function renderMoves(page) {
+  const { frames, stepMetres } = settings.move;
+  return page.evaluate(
+    async ({ frames, step }) => {
+      const [images, depths] = [[], []];
+      for (let k = 0; k < frames; k++) {
+        await window.__CAPTURE__.render({ move: [k * step, 0, 0], depth: true });
+        images.push(await window.__CAPTURE__.image());
+        depths.push(await window.__CAPTURE__.depth());
+      }
+      return { images, depths, step };
+    },
+    { frames, step: stepMetres },
+  );
+}
+
+// Moves the camera a step at a time and scores the shimmer (see analyseMove in
+// tools/analyse.js), writing where it shimmers to `heatPath`.
+export async function measureMove(page, info, heatPath) {
+  return analyse('move', { moved: await renderMoves(page), fov: info.fov, heatPath });
 }
 
 // Cost of the start frame, so call it while the page still shows that frame:
@@ -110,7 +136,7 @@ let worker = null;
 let nextJob = 0;
 const jobs = new Map();
 
-// Runs a task of tools/analyse.js ('view' or 'shimmer') in the worker thread, started on first use.
+// Runs a task of tools/analyse.js ('view', 'shimmer' or 'move') in the worker thread, started on first use.
 function analyse(task, job) {
   if (!worker) {
     worker = new Worker(new URL('./analyse.js', import.meta.url));

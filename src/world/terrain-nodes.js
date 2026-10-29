@@ -11,14 +11,17 @@ import { gridIndex } from './lod.js';
 // where a pixel has none of it, but SwiftShader runs every line of a shader at
 // every pixel, branches or not. Sand, rock and green show their detail near
 // the camera only: SAND is sand with it, ROCK rock without, DETAIL adds
-// rock's, GREEN the green's (any shader has the green without it); WET is
-// sand without its detail, but with the sheen of wet sand, where a node far
-// away reaches down to sand the sea wets.
+// rock's, GREEN the green's; WET is sand without its detail, but with the
+// sheen of wet sand, where a node far away reaches down to sand the sea wets.
+// INLAND is any ground that is neither sand nor rock, the green's without its
+// detail: a node that has none draws the green as its plain average, which it
+// shows nowhere.
 export const SAND = 1;
 export const ROCK = 2;
 export const DETAIL = 4;
 export const GREEN = 8;
 export const WET = 16;
+export const INLAND = 32;
 
 // A grid of `quads` x `quads` quads, its vertices at whole numbers (x, 0, z),
 // drawn once per node of `nodes` (an instance Attribute); `mirrored` winds its
@@ -125,6 +128,7 @@ function surfacesOver({ heights, ground, samples }, [i0, i1, j0, j1], dry) {
       const h = heights[j * samples + i];
       if (ground[n] > 0) surfaces |= h < dry + 0.5 && h > -1 ? SAND | WET : SAND;
       if (ground[n + 1] > 0) surfaces |= ROCK;
+      if (ground[n] + ground[n + 1] < 255) surfaces |= INLAND;
       if (ground[n] + ground[n + 1] < 0.85 * 255) surfaces |= GREEN; // a share worth its detail
     }
   }
