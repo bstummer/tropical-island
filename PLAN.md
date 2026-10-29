@@ -1556,6 +1556,11 @@ Made with the user. Don't reopen them unless the user does.
   is 1.6 times the beach's, and lit hilltops over a dark shore show only in the last minutes before the
   sun touches the sea. Thicker evening haze (a greyer horizon) and a named sunset 0.5° up were the
   alternatives. (2026-10-22)
+- **CI checks, it doesn't measure**: it runs `verify` with `--no-measurements`, every check that can fail
+  but none of the views' measurements, which only warn; sessions measure in their own `verify`. Stage 5's
+  run hit the job's 30 minutes, most of it in measurement frames on SwiftShader. Splitting the captures
+  across parallel jobs and publishing before the screenshots finish were the alternatives. The repo is
+  public, for runners with twice the cores and free minutes. (2026-10-29)
 
 ## Open questions
 

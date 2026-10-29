@@ -341,9 +341,10 @@ test('options parse in both --key value and --key=value form', () => {
   });
 });
 
-test('--checks is a flag without a value', () => {
-  assert.deepEqual(parseArgs(['--checks', '--gl', 'swiftshader']), { checks: true, gl: 'swiftshader' });
+test('--checks and --no-measurements are flags without a value', () => {
+  assert.deepEqual(parseArgs(['--checks', '--gl', 'swiftshader', '--no-measurements']), { checks: true, gl: 'swiftshader', 'no-measurements': true });
   assert.throws(() => parseArgs(['--checks=yes']), /--checks takes no value/);
+  assert.throws(() => parseArgs(['--no-measurements=1']), /--no-measurements takes no value/);
 });
 
 test('--compare takes two labels', () => {

@@ -52,7 +52,8 @@ When choosing between approaches, pick the one that looks better in the screensh
 Screenshot args: `--views beach,shoreline` (default: all not `disabled` in `src/views.js`), `--label` (default
 `<git hash>[-dirty]-<timestamp>`), `--size 1600x900`, `--t 12.5` (sim seconds), `--time 17.5` or `--time sunset`,
 `--seed`, `--quality`, `--tonemap`, `--exposure`, `--fixture`, `--gl auto|hardware|swiftshader` (auto: the GPU,
-else SwiftShader, which exists on Linux only), `--checks`. `SCREENSHOT_PROGRESS=1` reports each check as it ends.
+else SwiftShader, which exists on Linux only), `--checks`, `--no-measurements` (CI's: stills and checks only, as
+the measurements only warn). `SCREENSHOT_PROGRESS=1` reports each check as it ends.
 
 URL params: `?view=beach&time=17.5&t=12.5&seed=1&quality=low&capture=1`. `time` takes hours of daylight or a
 named time (`sunrise`, `midday`, `golden-hour`, `sunset`); night is an error. Also `tonemap` and `exposure` (to

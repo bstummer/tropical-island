@@ -3,7 +3,7 @@
 //   node tools/screenshot.js [--views beach,shoreline] [--label before] [--size 1600x900]
 //                            [--t 12.5] [--time 17.5|sunset] [--seed 1] [--quality high]
 //                            [--tonemap agx] [--exposure 1.5] [--fixture tonecard]
-//                            [--gl auto|hardware|swiftshader] [--checks]
+//                            [--gl auto|hardware|swiftshader] [--checks] [--no-measurements]
 //   node tools/screenshot.js --compare <labelA> <labelB>
 //
 // Capture writes screenshots/<label>/<view>.png, contact-sheet.png and info.json,
@@ -16,6 +16,9 @@
 // fail a capture, captures must be reproducible (also after the time of day
 // changed in the page), and the game runs for a few frames in player mode (no
 // ?capture; also to show an error's cause, and in a window 1 px high) and as the benchmark.
+// --no-measurements (CI's runs) leaves out the views' measurements, which only
+// warn and take most of a run's frames on SwiftShader: each view keeps its still
+// and, with --checks, its checks.
 // Compare writes screenshots/compare/<A>_vs_<B>.png: A | B | diff for every view.
 // Exits non-zero on console errors, page errors, shader and WebGPU errors, a lost
 // device, network requests, capture errors, timeouts or a failed check, in
@@ -87,7 +90,7 @@ const BACKENDS = {
 const SOFTWARE_GPU = /swiftshader|llvmpipe|softpipe|software|basic render|warp/i;
 
 const OPTIONS = new Set(['views', 'label', 'size', 't', 'time', 'seed', 'quality', 'tonemap', 'exposure', 'fixture', 'gl']);
-const FLAGS = new Set(['checks']);
+const FLAGS = new Set(['checks', 'no-measurements']);
 // The tools' own folders in screenshots/, which no capture's label may name.
 const RESERVED_LABELS = { compare: 'compare sheets go there', map: 'tools/map.js writes its maps there' };
 
@@ -100,7 +103,8 @@ async function capture(args) {
 
   const { browser, kind, gl } = await launch(args.gl ?? 'auto');
   console.log(`screenshot: WebGPU adapter = ${kind} (${gl}), Chromium ${browser.version()}`);
-  console.log(`screenshot: ${views.length} view(s) at ${width}x${height} -> ${rel(outDir)}${args.checks ? ', then the checks' : ''}`);
+  const measured = args['no-measurements'] ? ' without their measurements' : '';
+  console.log(`screenshot: ${views.length} view(s)${measured} at ${width}x${height} -> ${rel(outDir)}${args.checks ? ', then the checks' : ''}`);
 
   const started = Date.now();
   const fileUrl = pathToFileURL(BUILT_HTML).href;
@@ -121,7 +125,7 @@ async function capture(args) {
     for (const [i, view] of views.entries()) {
       // The contract checks test the game's capture code, not the view: once per run is enough.
       // The time check runs on every view, each going to a named time of its own (timeChangeTarget).
-      const captured = await captureView(context, fileUrl, query, view, outDir, { contractChecks: args.checks && i === 0, timeCheck: args.checks, gpuTime: kind === 'hardware' });
+      const captured = await captureView(context, fileUrl, query, view, outDir, { measure: !args['no-measurements'], contractChecks: args.checks && i === 0, timeCheck: args.checks, gpuTime: kind === 'hardware' });
       reporting = reporting.then(async () => {
         const result = await finishView(captured, query);
         if (existsSync(join(outDir, result.file))) outputs.push(join(outDir, result.file));
@@ -190,15 +194,15 @@ async function capture(args) {
 }
 
 // One view: load the page, save the still, then render the measurement frames
-// in the same page (tools/measure.js). Resolves once the page is done with
-// { result, analysis }, where `analysis` is still running (see finishView).
-// With `contractChecks`, also require that rendering the start frame again, and
-// loading the view fresh at the last motion frame's time, both reproduce the
-// pixels exactly. With `timeCheck`, changing the time of day in the page
-// (timeChangeTarget) must render as loading the view at that time does.
+// in the same page (tools/measure.js), unless `measure` is false. Resolves once
+// the page is done with { result, analysis }, where `analysis` is still running
+// (see finishView). With `contractChecks`, also require that rendering the start
+// frame again, and loading the view fresh at the last motion frame's time, both
+// reproduce the pixels exactly. With `timeCheck`, changing the time of day in the
+// page (timeChangeTarget) must render as loading the view at that time does.
 // A view not done config.capture.timeouts.viewSeconds after its page got ready
 // fails: its pages close (watchdog), so a frame that never finishes can't hang the tool.
-async function captureView(context, fileUrl, query, view, outDir, { contractChecks, timeCheck, gpuTime }) {
+async function captureView(context, fileUrl, query, view, outDir, { measure, contractChecks, timeCheck, gpuTime }) {
   const started = Date.now();
   const { page, info, problems, consoleWarnings } = await openCapture(context, fileUrl, { ...query, view: view.name });
   const result = { view: view.name, file: `${view.name}.png`, info, timing: { loadMs: Date.now() - started }, problems, warnings: [], consoleWarnings };
@@ -215,15 +219,23 @@ async function captureView(context, fileUrl, query, view, outDir, { contractChec
       if (contractChecks && (await renderFrame(page)) !== first) {
         problems.push({ kind: 'capture', text: 'rendering the start frame again changed its pixels' });
       }
-      const measured = await measureView(page, { info, crops: view.crops, first, dir: join(outDir, view.name), gpuTime });
-      result.measurements = { ...measured.cost, motionTimes: measured.motionTimes };
-      result.timing.frameMs = measured.frameMs;
-      analysis = measured.analysis;
+      let last = null; // the last motion frame: { t, frame }
+      if (measure) {
+        const measured = await measureView(page, { info, crops: view.crops, first, dir: join(outDir, view.name), gpuTime });
+        result.measurements = { ...measured.cost, motionTimes: measured.motionTimes };
+        result.timing.frameMs = measured.frameMs;
+        analysis = measured.analysis;
+        last = { t: measured.motionTimes.at(-1), frame: measured.lastFrame };
+      } else if (contractChecks) {
+        const { frames, stepSeconds } = config.capture.motion;
+        const t = info.t + (frames - 1) * stepSeconds;
+        last = { t, frame: await renderFrame(page, { t }) };
+      }
       if (contractChecks) {
-        const t = measured.motionTimes.at(-1);
+        const { t } = last;
         const fresh = await openCapture(context, fileUrl, { ...query, view: view.name, t });
         problems.push(...fresh.problems);
-        if (fresh.info && (await fresh.page.evaluate(() => window.__CAPTURE__.image())) !== measured.lastFrame) {
+        if (fresh.info && (await fresh.page.evaluate(() => window.__CAPTURE__.image())) !== last.frame) {
           problems.push({ kind: 'capture', text: `loading at t=${t} renders differently from seeking there: some state depends on more than t` });
         }
         await fresh.page.close();
