@@ -8,7 +8,7 @@
 // quality.rockPixels pixels go to their meshes; the rest cost nothing. Thinner,
 // a rock would crawl (CLAUDE.md §8). A rock sinks into the ground as it shrinks
 // towards that (config.world.rocks.fade), so it is gone before it is dropped.
-// TEMPORARY: a rock wholly under the placeholder water isn't drawn (rocks.wgsl).
+// A rock too deep for the water to show isn't drawn (rocks.wgsl).
 //
 // Placement sinks each rock into the ground at its finest. Far from the camera
 // the terrain's mesh strays from that, by metres on far cliffs, so each frame

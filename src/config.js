@@ -20,10 +20,14 @@ export const quality = {
   // shadeTexel: metres between the samples of the island's own shade (sky/shadows.js);
   // shadowMaps: the shadow maps round the camera, texels across and where their
   // cascades end (m ahead; config.shadows).
+  // The sea (water/): waterSize, texels across each cascade of its waves;
+  // waterDetail and waterGrid, its mesh as terrainDetail has the terrain's, each level reaching twice as far
+  // as the last, a node waterGrid quads across, 8 m across at its finest
+  // (config.water.mesh).
   presets: {
-    low: { renderScale: 0.67, maxPixelRatio: 1, terrainDetail: 18, terrainRatio: 2, groundDetail: 0.6, surfaceTexture: 512, rockPixels: 3, shadeTexel: 4, shadowMaps: { size: 1024, splits: [10, 50] } },
-    medium: { renderScale: 0.85, maxPixelRatio: 1.5, terrainDetail: 14.4, terrainRatio: 2.5, groundDetail: 0.8, surfaceTexture: 1024, rockPixels: 2.5, shadeTexel: 2, shadowMaps: { size: 1536, splits: [6, 24, 80] } },
-    high: { renderScale: 1, maxPixelRatio: 2, terrainDetail: 20.5, terrainRatio: 2.5, groundDetail: 1, surfaceTexture: 1024, rockPixels: 2, shadeTexel: 2, shadowMaps: { size: 2048, splits: [5, 16, 45, 100] } },
+    low: { renderScale: 0.67, maxPixelRatio: 1, terrainDetail: 18, terrainRatio: 2, groundDetail: 0.6, surfaceTexture: 512, rockPixels: 3, shadeTexel: 4, shadowMaps: { size: 1024, splits: [10, 50] }, waterSize: 64, waterDetail: 18, waterGrid: 16 },
+    medium: { renderScale: 0.85, maxPixelRatio: 1.5, terrainDetail: 14.4, terrainRatio: 2.5, groundDetail: 0.8, surfaceTexture: 1024, rockPixels: 2.5, shadeTexel: 2, shadowMaps: { size: 1536, splits: [6, 24, 80] }, waterSize: 128, waterDetail: 18, waterGrid: 16 },
+    high: { renderScale: 1, maxPixelRatio: 2, terrainDetail: 20.5, terrainRatio: 2.5, groundDetail: 1, surfaceTexture: 1024, rockPixels: 2, shadeTexel: 2, shadowMaps: { size: 2048, splits: [5, 16, 45, 100] }, waterSize: 128, waterDetail: 24, waterGrid: 32 },
   },
 };
 
@@ -606,6 +610,89 @@ export const world = {
   },
 };
 
+// The sea (water/). Light through it (water/optics.js, whose header has the
+// model), linear, per channel: `dimming`, per metre, for very clear tropical
+// water, red gone in a few metres and blue lasting tens; `body`, what deep water
+// sends back of the light on it; `through`, the share of the seabed's light
+// that leaves through the surface; the seabed fades out between `seabedFade` m
+// down, past which nothing is drawn. `seabedSand`: its albedo, white coral sand,
+// whiter and cooler than the beach's wet sand; `seabedRock`: what rock and the
+// reef's rubble average, algae and coral, not bare basalt; `seabedCoral`: the
+// darkest and lightest of that mottling; `seabedWeed`: the beds of weed on the
+// sand; `seabedTile`: its mottling's tile, m, and how much larger its second read
+// is; what stands `seabedRises`-wide proud of the ground round it is coral. The
+// ground as drawn gives way to the seabed the water draws over `groundFade` m under
+// the sea, and needs its shading no further down than the deepest trough, `troughs` m.
+export const water = {
+  ior: 1.33,
+  dimming: [0.45, 0.055, 0.04],
+  body: [0.002, 0.012, 0.06],
+  through: 0.8,
+  seabedFade: [25, 45],
+  seabedSand: [0.78, 0.75, 0.62],
+  seabedRock: [0.2, 0.22, 0.18],
+  seabedCoral: [[0.09, 0.11, 0.08], [0.46, 0.42, 0.28]],
+  seabedWeed: [0.2, 0.28, 0.15],
+  seabedTile: { size: 128, larger: 6.7 },
+  seabedRises: 32,
+  groundFade: [0.05, 0.25],
+  troughs: 2,
+  // What the sea knows of the island (water/sea-map.js), `texel` metres apart.
+  // The swell runs in from `from` degrees to the right of straight out to sea,
+  // over a fan of [degrees off that, share]; it is held to the water under it
+  // from `breaks` m deep up, what that takes breaks as surf (`surf`: how much of
+  // it per metre reads as a full surf), and `spreading` of it goes sideways per
+  // sample. The wind blows the way the sand's does, over a fan of gusts; its chop
+  // grows over `fetch` m of open water, and is held to the water under it from
+  // `depth` m deep up.
+  map: {
+    texel: 4,
+    swell: { from: 15, spread: [[-40, 0.1], [-20, 0.2], [0, 0.4], [20, 0.2], [40, 0.1]], breaks: 1.6, spreading: 0.08, surf: 6 },
+    wind: { blows: world.terrain.sand.wind, gusts: [[-15, 0.25], [0, 0.5], [15, 0.25]], fetch: 400, depth: 1 },
+  },
+  // The waves (water/spectrum.js). Three cascades, the sides of their patches in
+  // m, whose ratios aren't simple so each hides the others' repeats: the swell,
+  // the chop's long waves, its ripples, split at wave number `chop.split`. Each
+  // sea: `height`, its significant wave height in m; `period`, s at its peak, how
+  // narrow that peak (`gamma`); `spread`, how narrow its directions (cos^2s of
+  // half the angle); `choppy`, how far crests lean; `swell.shortest`: m, the shortest
+  // of its waves, many of its metres-wide texels long. They repeat after `loop` s;
+  // `smallest`: m, the wavelengths they fade out below, over a little more;
+  // `ripplesLeast`: how much of the ripples reaches the calmest water, in the
+  // island's lee; `chop.rippleSlope`: how steep the ripples stand, the root of
+  // their slopes' variance: most of what breaks the sun into glints. `finest`:
+  // how much finer a second read of the ripples is near the camera, and how
+  // strong. `wander`: how far the ripples' tile wanders where it is read (m), its
+  // `reach`, `across` how far (m), so it never lines up with itself; `highUp`: from and
+  // to what `heights` of the eye (m) the chop's crests soften into what the surface
+  // mirrors, down to a share of `chop`, and the ripples are read `ripples` mip levels softer. `inJs`: what water/surface.js sums of each: all
+  // but `rest` of its power, at most `most` waves.
+  waves: {
+    patches: [800, 120, 17],
+    loop: 900,
+    smallest: 0.03,
+    ripplesLeast: 0.6,
+    finest: { scale: 5.3, strength: 0.6 },
+    wander: { reach: 6, across: 160 },
+    highUp: { heights: [40, 250], chop: 0.2, ripples: 0.5 },
+    swell: { height: 1.1, period: 11, gamma: 3.3, spread: 30, from: 15, choppy: 0.5, shortest: 50 },
+    chop: { height: 0.55, period: 3.8, gamma: 2, spread: 6, blows: world.terrain.sand.wind, split: 2.5, choppy: 0.65, rippleSlope: 0.09 },
+    inJs: { rest: 0.02, most: 256 },
+  },
+  // The surface's mesh: a quadtree (water/water-nodes.js) with leaves `leaf` m
+  // across, reaching `reach` m from side to side, past the horizon from any view;
+  // its nodes morph over their band's last `morph`; `tallest`: m, the most the
+  // waves move a point any way, for culling.
+  mesh: { leaf: 8, reach: 120000, morph: 0.3, tallest: 6 },
+  // The variance per axis of the slopes of waves too small for any cascade,
+  // which a mirror of the sun always spreads by. `glitterCeiling`: the most the
+  // sun's light in the water may reach once exposed, so it keeps its colour.
+  fineSlopes: 0.0006,
+  // How many mip levels sharper than its longer side a square pixel reads the slopes.
+  sharper: 0.25,
+  glitterCeiling: 4,
+};
+
 // The frame readout (core/readout.js) and the benchmark (core/benchmark.js, ?bench=1).
 export const readout = {
   key: 'F3',
@@ -651,8 +738,9 @@ export const capture = {
   // 2500 since rock (Stage 4.4): where it meets the beach, a pixel runs both
   // surfaces' detail. 4000 since the sun's shadows (Stage 5), with the user's
   // leave: every lit pixel reads them, and a pass over the terrain shader's
-  // cost waits (PLAN.md, Known from 5.1).
-  frameBudgetMs: 4000,
+  // cost waits (PLAN.md, Known from 5.1). 6000 since the sea (Stage 6), with
+  // the user's leave: the seabed is back, and the water reads it.
+  frameBudgetMs: 6000,
   // Seconds a capture waits before it fails rather than hang the tool: for the
   // work a frame waits on (core/capture.js; the sky's light after a time
   // change), and for a view, or one of the tool's checks, to be done once its
@@ -661,7 +749,9 @@ export const capture = {
   // at 1600 x 900, longer in proportion for frames of more pixels.
   timeouts: { settleSeconds: 120, viewSeconds: 600 },
   // What the screenshot tool measures per view (tools/measure.js).
-  motion: { frames: 6, stepSeconds: 0.5, threshold: 4 }, // strip at t, t + 0.5 s, ...; threshold in 8-bit levels
+  // A strip at t, t + 2 s, ..., spanning most of a swell (config.water.waves) and
+  // several of the chop's waves; threshold in 8-bit levels.
+  motion: { frames: 6, stepSeconds: 2, threshold: 4 },
   // Frames panned by stepPixels at the centre; see shimmer() in tools/image.js.
   // edge: local contrast (levels) that makes a pixel an edge pixel; edgeLimitPercent: the
   // share of edge pixels the silhouette fixture may have shimmering.
@@ -725,7 +815,7 @@ export const capture = {
   // desktop GPU; a `%` for a floor-mod in the litter's tile, 83% shifted back);
   // shifted by half a tile, a deliberate mistake, it must change more than
   // `mistaken` of them. `tiles`: the tiles it checks.
-  surfaces: { levels: 2, share: 0.01, mistaken: 0.3, tiles: ['grain', 'ripples', 'rock', 'grass', 'litter', 'leaves'] },
+  surfaces: { levels: 2, share: 0.01, mistaken: 0.3, tiles: ['grain', 'ripples', 'rock', 'grass', 'litter', 'leaves', 'seabed'] },
   // The patches fixture (src/fixtures/patches.js): how far the GPU's patches
   // (0 to 1) may land from world/green.js's (floats and an approximate exp on
   // the GPU); points shifted a tenth of a patch, a mistake, must land further.
@@ -772,6 +862,29 @@ export const capture = {
   // hundred or so under a ridge a texel or two away), and at least how many
   // of those it must find. Its deliberate mistakes miss by 0.02 and more.
   shade: { ground: 0.02, around: 0.005, above: 0.03, least: 50 },
+  // The water fixture (src/fixtures/water.js): how far (m) what the bent ray
+  // meets may land from where JS's exact ray meets it, how deep it reads that
+  // (m), and how far the light it works out from that may land from its JS twin
+  // (relative); a ray that didn't bend, and light worked out half a metre too
+  // deep, must land further. `least`: at least how many points it must judge.
+  // `landing` as wide as a pixel of the fixture's seabed is at its farthest: the water
+  // reads what stands under it pixel by pixel, unfiltered, so nothing bleeds.
+  // `ghosts`: how many points, whose ray misses a rock standing in deep water, may read
+  // the rock all the same, as the landing's pixel shows it.
+  water: { landing: 3, depth: 0.2, light: 0.002, unbent: 5, tooDeep: 0.02, least: 1000, ghosts: 0 },
+  // The waves fixture (src/fixtures/waves.js): how far the GPU's fields may land
+  // from the whole sum of their waves in JS (half floats and float phases), and
+  // a mip level from the mean of its four texels, or a time from a loop later;
+  // how far what the sea knows may land from its JS twin, in hundreds of metres
+  // and in shares; how far the surface may land from JS's smaller sum, which
+  // leaves out the small waves (m). Each one's mistake must land further.
+  waves: { fields: 0.01, mips: 0.002, looped: 0.002, map: 0.02, surface: 0.25, least: 100 },
+  // The sea's surface must have no holes: at these times, from `below` of the way
+  // down the air-pass view's frame, well under its horizon, nothing lies on the far plane.
+  seaHoles: { times: [15.5, 120.25], below: 0.35 },
+  // The sea mustn't repeat from high up: how alike the air-sun view's fine detail may
+  // be to itself a wave tile away over the water, at these times.
+  seaRepeats: { view: 'air-sun', times: [12.5, 57.3], limit: 0.06 },
 };
 
 // Frame cost limits per quality preset. tools/screenshot.js measures every view
@@ -794,4 +907,4 @@ export const build = {
   sizeBudgetBytes: 3 * 1024 * 1024, // raw size of dist/index.html; warn above, fail above 2x
 };
 
-export const config = { quality, camera, post, sky, shadows, world, readout, bench, movement, defaults, capture, budget, build };
+export const config = { quality, camera, post, sky, shadows, world, water, readout, bench, movement, defaults, capture, budget, build };

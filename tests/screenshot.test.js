@@ -41,6 +41,9 @@ import {
   rockProblems,
   shadowProblems,
   shadeProblems,
+  waterProblems,
+  seaHoles,
+  wavesProblems,
   sheetFiles,
   summarize,
   teardownLeftovers,
@@ -729,6 +732,61 @@ test('shade problems: off its twin, a mistake the check misses, too few points o
   assert.match(shadeProblems({ ...goodShade, gpu: { ...goodShade.gpu, above: 0.2 } }, shadeLimits).join(), /above the ground: the GPU's off/);
   assert.match(shadeProblems({ ...goodShade, high: 3 }, shadeLimits).join(), /only 3 points under a shade's top/);
   assert.equal(shadeProblems(undefined, shadeLimits).length, 7);
+});
+
+// ---------------------------------------------------------------- water fixture
+
+const goodWater = { points: 8000, landing: 0.1, depth: 0.01, light: 2e-4, unbent: 20, tooDeep: 0.3, reads: 20000, above: 0, ghosts: 0 };
+const waterLimits = { landing: 0.25, depth: 0.05, light: 0.002, unbent: 1, tooDeep: 0.02, least: 1000, ghosts: 0 };
+
+test('water problems: what the water sees on its bent ray, its light on its twin, and mistakes past the limits, pass', () => {
+  assert.deepEqual(waterProblems(goodWater, waterLimits), []);
+});
+
+test('water problems: off the ray or its twin, a mistake the check misses, reading what stands above the water, too few points or no answer fail', () => {
+  assert.match(waterProblems({ ...goodWater, landing: 2 }, waterLimits).join(), /lands 2\.000 m off/);
+  assert.match(waterProblems({ ...goodWater, depth: 0.5 }, waterLimits).join(), /reads how deep/);
+  assert.match(waterProblems({ ...goodWater, light: 0.1 }, waterLimits).join(), /off its JS twin's/);
+  assert.match(waterProblems({ ...goodWater, unbent: 0.2 }, waterLimits).join(), /doesn't bend .* misses it/);
+  assert.match(waterProblems({ ...goodWater, tooDeep: 0.001 }, waterLimits).join(), /too deep .* misses it/);
+  assert.match(waterProblems({ ...goodWater, ghosts: 12 }, waterLimits).join(), /12 points read a rock their ray misses/);
+  assert.match(waterProblems({ ...goodWater, above: 3 }, waterLimits).join(), /3 points read what stands above/);
+  assert.match(waterProblems({ ...goodWater, points: 3 }, waterLimits).join(), /only 3 points/);
+  assert.equal(waterProblems(undefined, waterLimits).length, 8);
+});
+
+// ---------------------------------------------------------------- the sea's surface
+
+test('sea holes: counts what lies on the far plane from the given share of the way down, and nothing above it', () => {
+  const far = 1000;
+  const distances = new Float32Array(4 * 4).fill(10);
+  distances[1] = far; // in the sky's rows
+  distances[2 * 4 + 1] = far;
+  distances[3 * 4 + 3] = 0.95 * far;
+  assert.equal(seaHoles(distances, 4, 4, 0.5, far), 2);
+  assert.equal(seaHoles(new Float32Array(16).fill(0.5 * far), 4, 4, 0, far), 0);
+});
+
+// ---------------------------------------------------------------- waves fixture
+
+const goodWaves = { fields: { points: 432, gpu: 0.002, time: 0.3, texel: 0.5 }, mips: 0.001, looped: 0.0005, map: { points: 1024, gpu: 0.001, off: 0.3 }, surface: { points: 1024, gpu: 0.1, time: 0.6 } };
+const wavesLimits = { fields: 0.01, mips: 0.002, looped: 0.002, map: 0.02, surface: 0.25, least: 100 };
+
+test('waves problems: fields, map and surface on their twins, and mistakes past the limits, pass', () => {
+  assert.deepEqual(wavesProblems(goodWaves, wavesLimits), []);
+});
+
+test('waves problems: anything off its twin, a mistake the check misses, too few points or no answer fail', () => {
+  assert.match(wavesProblems({ ...goodWaves, fields: { ...goodWaves.fields, gpu: 0.5 } }, wavesLimits).join(), /fields are off/);
+  assert.match(wavesProblems({ ...goodWaves, fields: { ...goodWaves.fields, time: 0.001 } }, wavesLimits).join(), /time off .* misses it/);
+  assert.match(wavesProblems({ ...goodWaves, fields: { ...goodWaves.fields, texel: 0.001 } }, wavesLimits).join(), /texel off .* misses it/);
+  assert.match(wavesProblems({ ...goodWaves, mips: 0.1 }, wavesLimits).join(), /mip level/);
+  assert.match(wavesProblems({ ...goodWaves, looped: 0.1 }, wavesLimits).join(), /loop later/);
+  assert.match(wavesProblems({ ...goodWaves, map: { ...goodWaves.map, gpu: 0.5 } }, wavesLimits).join(), /sea knows on the GPU/);
+  assert.match(wavesProblems({ ...goodWaves, map: { ...goodWaves.map, off: 0.001 } }, wavesLimits).join(), /half a texel off .* misses it/);
+  assert.match(wavesProblems({ ...goodWaves, surface: { ...goodWaves.surface, gpu: 1 } }, wavesLimits).join(), /surface is off/);
+  assert.match(wavesProblems({ ...goodWaves, surface: { ...goodWaves.surface, time: 0.1 } }, wavesLimits).join(), /time off .* misses it/);
+  assert.equal(wavesProblems(undefined, wavesLimits).length, 11);
 });
 
 // ---------------------------------------------------------------- surfaces fixture

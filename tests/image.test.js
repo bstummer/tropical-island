@@ -13,6 +13,7 @@ import {
   overdrawImage,
   overdrawStats,
   panShift,
+  seaRepeat,
   shimmer,
   shrink,
   tile,
@@ -194,6 +195,42 @@ test('the banding view shows banding in a single channel', () => {
   const blue = [...Array(64).keys()].map((x) => view.data[4 * (4 * 64 + x) + 2]);
   assert.ok(Math.max(...blue) - Math.min(...blue) > 20, 'blue steps show');
   assert.equal(view.data[4 * (4 * 64 + 16)], 128, 'red stays flat');
+});
+
+// ---------------------------------------------------------------- the sea repeating
+
+test('sea repeat: a pattern repeating over the water is alike at its period and no other, from any camera', () => {
+  // Noise that repeats every `period` m over a level sea, drawn through the view's own camera.
+  const period = 34;
+  const cell = 2.125;
+  const size = Math.round(period / cell);
+  let state = 1;
+  const noise = Array.from({ length: size * size }, () => {
+    state = (state * 16807) % 2147483647;
+    return (state / 2147483647) * 255;
+  });
+  for (const view of [{ position: [10, 200, 30], yaw: 44, pitch: -60, fov: 60 }, { position: [-5, 120, 0], yaw: 200, pitch: -80, fov: 40 }]) {
+    const [width, height] = [320, 180];
+    const rad = Math.PI / 180;
+    const tan = Math.tan((view.fov * rad) / 2);
+    const [sy, cy, sp, cp] = [Math.sin(view.yaw * rad), Math.cos(view.yaw * rad), Math.sin(view.pitch * rad), Math.cos(view.pitch * rad)];
+    const [right, forward, up] = [[cy, 0, -sy], [-sy * cp, sp, -cy * cp], [sy * sp, cp, cy * sp]];
+    const data = new Uint8ClampedArray(4 * width * height);
+    for (let j = 0; j < height; j++) {
+      for (let i = 0; i < width; i++) {
+        const [a, b] = [((2 * (i + 0.5)) / width - 1) * tan * (width / height), (1 - (2 * (j + 0.5)) / height) * tan];
+        const ray = [0, 1, 2].map((c) => forward[c] + a * right[c] + b * up[c]);
+        const along = -view.position[1] / ray[1];
+        const wrap = (v) => ((Math.floor(v / cell) % size) + size) % size;
+        const value = noise[wrap(view.position[2] + along * ray[2]) * size + wrap(view.position[0] + along * ray[0])];
+        data.set([value, value, value, 255], 4 * (j * width + i));
+      }
+    }
+    const image = { width, height, data };
+    assert.ok(seaRepeat(image, view, [period, 0]) > 0.5, `alike at its period: ${seaRepeat(image, view, [period, 0])}`);
+    assert.ok(seaRepeat(image, view, [0, period]) > 0.5, `alike at its period: ${seaRepeat(image, view, [0, period])}`);
+    assert.ok(Math.abs(seaRepeat(image, view, [period * 0.73, 0])) < 0.15, 'not alike at another lag');
+  }
 });
 
 // ---------------------------------------------------------------- shimmer

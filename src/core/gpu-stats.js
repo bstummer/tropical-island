@@ -2,8 +2,9 @@
 // so it sees every pass the game encodes, its own internal ones included. Per
 // frame: draw calls, triangles, render passes (passes that draw or clear),
 // blits (passes that only resolve, and texture copies) and pipelines used.
-// Only render passes and their draw()/drawIndexed() count: compute passes,
-// render bundles and indirect draws need counting here before anything uses them.
+// Only render passes and their draw()/drawIndexed() count, and compute passes
+// apart: render bundles and indirect draws need counting here before anything
+// uses them.
 // Live: the memory of textures (content: uploaded, or drawn once with its mip
 // chain), render targets (what the game draws into as it runs, and the canvas)
 // and buffers, and the objects alive by kind, for teardown checks.
@@ -69,7 +70,7 @@ export function instrument(device) {
       const { pipelines: used, ...counts } = frame;
       last = { ...counts, pipelinesUsed: used.size };
     }
-    frame = { drawCalls: 0, triangles: 0, passes: 0, blits: 0, pipelines: new Set() };
+    frame = { drawCalls: 0, triangles: 0, passes: 0, blits: 0, computePasses: 0, pipelines: new Set() };
     timer?.begin();
   }
 
@@ -149,6 +150,15 @@ export function instrument(device) {
       });
     });
     wrap(encoder, 'copyTextureToTexture', () => frame.blits++);
+    // Compute passes count apart, and take their share of the GPU's time.
+    if (encoder.beginComputePass) {
+      const beginCompute = encoder.beginComputePass;
+      encoder.beginComputePass = function (desc = {}) {
+        const writes = timer?.writes();
+        frame.computePasses++;
+        return beginCompute.call(encoder, writes ? { ...desc, timestampWrites: writes } : desc);
+      };
+    }
   });
 
   beginFrame();

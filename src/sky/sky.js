@@ -57,6 +57,7 @@ export function create(ctx) {
   const mesh = new Mesh(triangle, material);
   mesh.name = 'sky';
   mesh.frustumCulled = false;
+  mesh.pass = 'afterOpaque'; // not in what the water reads of the opaque scene, nor drawn where it covers
   mesh.renderOrder = frame.skyOrder;
   scene.add(mesh);
 

@@ -167,6 +167,47 @@ export function bandedShare({ width, height, data }, { minRun = 16, maxStep = 3 
 // worth on both axes (yaw and pitch) at the centre of the frame: per pixel
 // motion in pixels (dx right, dy down; larger towards the edges), plus that
 // turn in degrees for __CAPTURE__.render({ turn }). `fov` is vertical, in degrees.
+// How alike a frame of the sea is to itself `lag` metres away over the water ([x, z],
+// a level sea at y = 0), seen from `view` (views.js): the correlation of its fine
+// detail, 1 where it repeats exactly at that lag, about 0 where it doesn't. Only
+// pixels of the middle of the frame, whose lag lies in the frame.
+export function seaRepeat({ width, height, data }, { position, yaw, pitch, fov }, [lagX, lagZ], { blur = 12, step = 2, edge = 0.1 } = {}) {
+  const fine = new Float32Array(width * height);
+  const smooth = new Float32Array(width * height);
+  for (let n = 0; n < width * height; n++) fine[n] = 0.2126 * data[4 * n] + 0.7152 * data[4 * n + 1] + 0.0722 * data[4 * n + 2];
+  boxBlur(fine, smooth, new Float32Array(width * height), width, height, blur);
+  for (let n = 0; n < width * height; n++) fine[n] -= smooth[n];
+
+  const rad = Math.PI / 180;
+  const tan = Math.tan((fov * rad) / 2);
+  const aspect = width / height;
+  const [sy, cy, sp, cp] = [Math.sin(yaw * rad), Math.cos(yaw * rad), Math.sin(pitch * rad), Math.cos(pitch * rad)];
+  const right = [cy, 0, -sy];
+  const forward = [-sy * cp, sp, -cy * cp];
+  const up = [sy * sp, cp, cy * sp];
+  let [ab, aa, bb] = [0, 0, 0];
+  for (let j = Math.floor(edge * height); j < height * (1 - edge); j += step) {
+    for (let i = Math.floor(edge * width); i < width * (1 - edge); i += step) {
+      const [a, b] = [((2 * (i + 0.5)) / width - 1) * tan * aspect, (1 - (2 * (j + 0.5)) / height) * tan];
+      const ray = [0, 1, 2].map((c) => forward[c] + a * right[c] + b * up[c]);
+      if (ray[1] >= -1e-3) continue;
+      const along = -position[1] / ray[1];
+      const to = [ray[0] * along + lagX, -position[1], ray[2] * along + lagZ];
+      const dot = (u) => to[0] * u[0] + to[1] * u[1] + to[2] * u[2];
+      const ahead = dot(forward);
+      if (ahead <= 0) continue;
+      const p = Math.round(((dot(right) / ahead / (tan * aspect) + 1) * width) / 2 - 0.5);
+      const q = Math.round(((1 - dot(up) / ahead / tan) * height) / 2 - 0.5);
+      if (p < 0 || q < 0 || p >= width || q >= height) continue;
+      const [one, other] = [fine[j * width + i], fine[q * width + p]];
+      ab += one * other;
+      aa += one * one;
+      bb += other * other;
+    }
+  }
+  return aa > 0 && bb > 0 ? ab / Math.sqrt(aa * bb) : 0;
+}
+
 export function panShift(width, height, fov, step) {
   const f = height / 2 / Math.tan((fov * Math.PI) / 360); // focal length in pixels
   const angle = step / f;

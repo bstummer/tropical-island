@@ -18,9 +18,9 @@ export class Texture {
   // width, height; depth: layers of an array, or the depth of a 3D texture;
   // dimension '2d' or '3d'; array: a 2D array (also with one layer); format;
   // mips: true for a full mip chain, or how many levels; samples; render: drawn into; data: uploaded into
-  // (also when mipmaps are drawn); sampler: { mag, min, mipmap, wrap, anisotropy, compare } (device.js).
-  constructor(gpu, { name = 'texture', width, height = 1, depth = 1, dimension = '2d', array = false, format = 'rgba8unorm', mips = false, samples = 1, render = false, data = false, sampler = {} }) {
-    Object.assign(this, { gpu, name, width, height, depth, dimension, array, format, samples, render, data });
+  // (also when mipmaps are drawn); storage: a compute pass writes it; sampler: { mag, min, mipmap, wrap, anisotropy, compare } (device.js).
+  constructor(gpu, { name = 'texture', width, height = 1, depth = 1, dimension = '2d', array = false, format = 'rgba8unorm', mips = false, samples = 1, render = false, data = false, storage = false, sampler = {} }) {
+    Object.assign(this, { gpu, name, width, height, depth, dimension, array, format, samples, render, data, storage });
     this.uid = nextUid++;
     this.version = 0;
     this.mips = mips;
@@ -42,8 +42,9 @@ export class Texture {
     let usage = U.COPY_SRC;
     if (this.samples === 1) usage |= U.TEXTURE_BINDING;
     if (this.samples > 1 && this.isDepth) usage |= U.TEXTURE_BINDING; // the after-opaque pass reads the opaque scene's depth
-    if (this.render || this.mips) usage |= U.RENDER_ATTACHMENT;
+    if (this.render || (this.mips && !this.storage)) usage |= U.RENDER_ATTACHMENT;
     if (this.data) usage |= U.COPY_DST;
+    if (this.storage) usage |= U.STORAGE_BINDING;
     this.texture = this.gpu.device.createTexture({
       label: this.name,
       size: [this.width, this.height, this.depth],

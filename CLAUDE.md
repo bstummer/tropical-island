@@ -125,10 +125,10 @@ src/
   sky/                the sky and its tables, the light state, the sun's path and the time of day, the sun's shadows
   post/               the frame: HDR target, its passes, the output pass
   world/              the island's shape (island.js), its heightmap, the terrain, rocks, the island's own shade
+  water/              the sea: how it looks by its depth, what it knows of the island, its waves and surface
   textures/           procedural textures made on the GPU at boot: the ground's tiles
   shaders/chunks/     shared WGSL: the frame (group 0), lighting, shadows, terrain, the ground's surfaces, noise, planet
   fixtures/           test scenes (?fixture=) for the screenshot tool's checks; not part of the island
-  world/placeholder*  TEMPORARY stand-in water (flat, coloured by depth). Delete once replaced.
 tools/                the screenshot tool, its measurements and checks, the build check, the map, the Linux container
 tests/                node:test suites and their fixtures
 ```
@@ -136,7 +136,7 @@ tests/                node:test suites and their fixtures
 Each module's header says what it does and what it puts on `ctx`. `world/island.js` is the **single source of
 truth for the height function**: JS evaluates it for placement and collision and uploads it as heightmaps for
 the shaders, so nothing re-implements it in WGSL. Planned folders, each created with its first real system:
-`water/` (the ocean, shoreline, ripples), `plants/` (shared wind and leaves, a file per species), `audio/`
+`plants/` (shared wind and leaves, a file per species), `audio/`
 (procedural WebAudio, never before a user gesture), `player/` (walking, collision; replaces free-fly).
 
 ## 7. Module contract
@@ -151,7 +151,8 @@ systems are listed in `WORLD_SYSTEMS` in `src/main.js`, and update in that order
 `rng(name)`, and what systems put on it, each described in its module's header: `terrain` (the island, its
 heights, the mesh as drawn and its JS twin, the ground's surfaces), `rocks` (placed rocks, read-only, and their
 clearance for later placement), `sky` (the light state; `follow(fn)` for what must land with a time change),
-`shadows` (what casts registers with `cast(fn)` and `from(spheres)`) and `frame` (`post/frame.js`: the drawing
+`shadows` (what casts registers with `cast(fn)` and `from(spheres)`), `water` (where the sea stands, `heightAt(x, z, t)`,
+and what it knows of the island) and `frame` (`post/frame.js`: the drawing
 buffer's size, the uniforms every scene material binds at group 0, `beforeScene()` for passes of a system's
 own, the passes, `translucent()`, `opaque`, `addPost()`). A system that reads one of them in `create()` comes
 after its owner in `WORLD_SYSTEMS`.
@@ -188,7 +189,7 @@ it. A new system's async work goes behind `ready`, or behind `settled()` when it
 - **Every scene material's fragment entry point ends with `return sceneOutput(radiance, alpha);`**
   (`chunks/scene-output.wgsl`: the exposure, and a compression so MSAA averages edges as they look after
   tonemapping); capture mode fails on one that doesn't. The sky is a scene material too, drawn last in the
-  opaque pass on the far plane (`renderOrder = frame.skyOrder`).
+  after-opaque pass on the far plane (`renderOrder = frame.skyOrder`), so the opaque scene holds no sky.
 - **Bindings by name.** Group 0 is the frame's (`chunks/frame.wgsl`): the camera and `ctx.frame.uniforms`, bound
   for every scene material. Group 1 is the material's: its `uniforms` fill its `var<uniform>` structs field by
   field and its textures by name, each texture's sampler at `<name>Sampler` (a `sampler_comparison` compares
@@ -200,7 +201,13 @@ it. A new system's async work goes behind `ready`, or behind `settled()` when it
   scene's colour or depth (`frame.opaque`: water) set `pass = 'afterOpaque'`. **Anything translucent goes
   through `frame.translucent(object)`**, which blends it in linear light; capture mode fails on a material
   that blends anywhere else. Alpha-to-coverage cut-outs are opaque. Post effects are `frame.addPost()`
-  passes on linear HDR before the output.
+  passes on linear HDR before the output. **The water draws the seabed itself** (`water/water-seabed.wgsl`), so no
+  mesh or land shader shows under it, and terrain nodes wholly under the sea aren't drawn. From the opaque scene it
+  takes only what stands on the seabed, by its alpha: so an opaque material's alpha says how much the water should
+  take it as seen under the surface (the ground's fades to 0 just under the sea). What lies under the sea leaves
+  the haze to the water, which adds it for all of it, and has no sheen: the water's surface mirrors.
+- **Compute** goes through `gpu/compute.js`, in a system's own `frame.beforeScene()` pass, its pipelines made
+  ahead through that pass's `compile`.
 - **What casts a shadow adds meshes in pass `'shadow'`**: the same shader and uniforms as its own material,
   so its vertices land where they are drawn, `fragment: null` (or one that only discards, for a cut-out),
   and instances picked through `ctx.shadows.cast()`, also out of view. A mesh whose vertex shader moves it

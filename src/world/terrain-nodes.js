@@ -112,11 +112,19 @@ export function nodeBounds(heightmap, dry, blend) {
         }
       }
     }
-    const room = 1 + CUBIC_OVERSHOOT * (max - min);
+    const room = ROOM + CUBIC_OVERSHOOT * (max - min);
     return [min - room, max + room, surfaces];
   };
 }
 
+// Whether a node topping out at `max` (nodeBounds', with its room) lies too deep
+// under the sea for the ground as drawn to show anywhere on it: all of it is the
+// water's to draw, down from where the ground gives way to it (groundFade).
+export function leftToWater(max, groundFade) {
+  return max - ROOM < -groundFade[1];
+}
+
+const ROOM = 1; // m: nodeBounds' room, past the curve's overshoot
 const TILE = 8; // m: nodeBounds' tiles, no larger than a leaf, where grids blend into each other
 
 // The surface bits of a level's samples r = [i0, i1, j0, j1] (see nodeBounds).

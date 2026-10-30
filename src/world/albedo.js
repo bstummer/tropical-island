@@ -3,8 +3,10 @@
 // groundAlbedo). The surfaces' albedos (config.world.terrain.albedo) mixed as
 // the ground has them (world/island.js groundOf and lushOf) and as
 // world/terrain.wgsl mixes them on average: sand wet below the waves' reach,
-// the green as chunks/green.wgsl averages it; and the sea's albedo over
-// water. Pure.
+// the green as chunks/green.wgsl averages it; and over water the sea's, with
+// what shows of the seabed, so a lagoon over white sand sends up far more than
+// the deep sea (water/optics.js). Pure.
+import { seaAlbedo } from '../water/optics.js';
 import { smoothstep } from './island.js';
 import { GROUND } from './heightmap.js';
 import { greenByBand, greenCover } from './green.js';
@@ -50,12 +52,11 @@ export function greenAlbedo(band, lush, sandy, { albedo, green }, out = [0, 0, 0
 // height above the sea, this lush and sandy, into `out` (linear RGB). The
 // sand darkens with its wetness as chunks/sand.wgsl darkens it.
 export function albedoOf(sand, rock, band, height, lush, sandy, surfaces, out = [0, 0, 0]) {
-  const { albedo, wetness, wetHeight, sea } = surfaces;
+  const { albedo, wetness, wetHeight, sea, water } = surfaces;
   if (height < 0) {
-    out[0] = sea[0];
-    out[1] = sea[1];
-    out[2] = sea[2];
-    return out;
+    // The seabed is sand and rock (world/island.js groundOf).
+    for (let c = 0; c < 3; c++) out[c] = sand * water.seabedSand[c] + (1 - sand) * water.seabedRock[c];
+    return seaAlbedo(-height, out, sea, water, out);
   }
   const dry = 1 - sandDark(sandWetness(height, wetness, wetHeight));
   const green = Math.max(1 - sand - rock, 0);

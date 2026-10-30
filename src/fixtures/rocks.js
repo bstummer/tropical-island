@@ -90,8 +90,7 @@ export function create(ctx) {
         }
       });
 
-      // Seeded rocks that stand out of the sea (rocks.wgsl leaves out what the
-      // placeholder water hides), each moved by the least of its offsets.
+      // Seeded rocks that stand out of the sea, each moved by the least of its offsets.
       const least = (id) => Math.min(...Array.from({ length: 9 }, (_, k) => gpuOffset(id, k)));
       const dry = placed.flatMap((rock, id) => (rock.position[1] + rock.top + least(id) > 0.1 ? [id] : []));
       const drawn = Array.from({ length: DRAWN.rocks }, () => r.pick(dry));

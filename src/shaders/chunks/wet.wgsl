@@ -78,11 +78,13 @@ fn groundWet(xz: vec2f, aboveSea: f32, width: f32) -> Wet {
   }
   let reach = wetReach(xz, width);
   let h = aboveSea - reach;
-  var w = wetAt(wetProfile(h, width));
+  let edge = max(width, 0.005);
+  let overSea = smoothstep(-edge, edge, aboveSea);
+  // Under the sea it is soaked, however tall a pixel far off is.
+  var w = wetAt(max(wetProfile(h, width), 1.0 - overSea));
   w.reach = reach;
   w.washed = 1.0 - smoothstep(wetParams.uWet.y - 0.03 - width, wetParams.uWet.y + 0.06 + width, h);
   // Under the sea, the water's surface mirrors the sky, not the sand's.
-  let edge = max(width, 0.005);
-  w.film *= smoothstep(-edge, edge, aboveSea);
+  w.film *= overSea;
   return w;
 }

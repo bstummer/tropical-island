@@ -36,6 +36,11 @@ struct Terrain {
   uDrySand: vec3f, // linear albedos, as all here
   uWetSand: vec3f,
   uRock: vec3f,
+  uSeabedSand: vec3f,
+  uSeabedRock: vec3f,
+  // m under the sea: the ground gives way to the seabed the water draws (water-seabed.wgsl)
+  // from .x to .y, and no trough between the waves shows it below .z.
+  uUnderSea: vec3f,
 }
 
 @group(1) @binding(0) var<uniform> terrain: Terrain;
@@ -86,10 +91,14 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
 
   let aboveSea = vWorldPos.y + planetDrop(vWorldPos.xz);
   let tall = fwidth(vCentre.y + planetDrop(vCentre.xz)); // how much aboveSea changes across the pixel
-  // TEMPORARY, with world/placeholder.js: its opaque water hides the seabed, so
-  // seabed wholly under it across the pixel needn't be shaded (a fifth of a
-  // SwiftShader frame). Stage 6's water shows the seabed: remove this then.
-  let hidden = aboveSea + 2.0 * tall < -0.1;
+  // Ground the water covers whatever its waves do, across the pixel, needn't be shaded.
+  let hidden = aboveSea + 2.0 * tall < -terrain.uUnderSea.z && frame.cameraPosition.y > 0.0;
+  // How much of the pixel lies above the sea: below it the water's surface
+  // mirrors, and it adds the haze. As soft as the pixel is tall, so the sand's
+  // sheen ends where the water begins without stair-steps.
+  let overSea = smoothstep(-min(tall, 0.03), max(tall, 1e-3), aboveSea);
+  // The sand on the seabed is whiter than the beach's, from just under the sea.
+  let wetSand = mix(terrain.uWetSand, terrain.uSeabedSand, smoothstep(0.0, 0.15, -aboveSea));
 
   var info = vec4f(0.0);
   var cover = vec4f(0.0);
@@ -128,10 +137,10 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
     } else {
       gr.albedo = greenAlbedo(info.z, cover.z, cover.w, terrain.uDrySand);
     }
-    s = sandPlain(w, n, terrain.uDrySand, terrain.uWetSand);
+    s = sandPlain(w, n, terrain.uDrySand, wetSand);
     if (TERRAIN_SAND) {
       if (cover.x > 0.0) {
-        s = sand(vWorldPos, aboveSea, n, w, terrain.uDrySand, terrain.uWetSand, pdx, pdy);
+        s = sand(vWorldPos, aboveSea, n, w, terrain.uDrySand, wetSand, pdx, pdy);
       }
     }
     if (TERRAIN_ROCK) {
@@ -141,6 +150,8 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
     } else {
       r.albedo = rockAlbedo(terrain.uRock, w);
     }
+    // Rock under the sea turns to rubble and algae over its first metres.
+    r.albedo = mix(r.albedo, terrain.uSeabedRock, smoothstep(0.0, 2.0, -aboveSea));
   }
   let soft = 1.0 - cover.y; // sand and green
   if (cover.x > 0.0 && soft > cover.x) {
@@ -167,7 +178,7 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
   n = normalize(n + cover.x * (s.normal - n) + cover.y * (r.normal - n) + rest * (gr.normal - n));
   let kernel = specularKernel(n); // every pixel: it takes derivatives
   if (hidden) {
-    return sceneOutput(vec3f(0.0), 1.0);
+    return sceneOutput(vec3f(0.0), 0.0);
   }
 
   shadeOnce(vWorldPos, n, dx, dy, 0.0); // its shadows, before it lights (chunks/shadows.wgsl)
@@ -176,13 +187,15 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
   var radiance = diffuse / PI * (sunLight(vWorldPos, n) + skyIrradiance(vWorldPos, n));
   if (TERRAIN_SAND || TERRAIN_WET) {
     if (cover.x > 0.0) {
-      radiance += cover.x * sandShine(s, vWorldPos, n, view, kernel);
+      radiance += overSea * cover.x * sandShine(s, vWorldPos, n, view, kernel);
     }
   }
   if (TERRAIN_ROCK) {
     if (cover.y > 0.0) {
-      radiance += cover.y * rockShine(r, vWorldPos, n, view, kernel);
+      radiance += overSea * cover.y * rockShine(r, vWorldPos, n, view, kernel);
     }
   }
-  return sceneOutput(aerialPerspective(radiance, vWorldPos), 1.0);
+  // In alpha, how much of this the water should take as what it sees under its surface.
+  let own = 1.0 - smoothstep(terrain.uUnderSea.x - tall, terrain.uUnderSea.y + tall, -aboveSea);
+  return sceneOutput(mix(radiance, aerialPerspective(radiance, vWorldPos), overSea), own);
 }

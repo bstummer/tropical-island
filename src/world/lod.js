@@ -76,7 +76,7 @@ export function createLod({ origin, levels, leaf, grid }, bounds) {
   }
 
   // Fills `out` with the nodes to draw for a camera at cam = [a, y, o], as
-  // { a, o, spacing, level, quarter, surfaces }: a quarter is drawn with grid / 2 quads.
+  // { a, o, spacing, level, quarter, surfaces, max }: a quarter is drawn with grid / 2 quads.
   // ranges[L]: how far level L reaches. visible(a, o, size, min, max) culls,
   // with the node's heights.
   function select(cam, ranges, visible, out) {
@@ -93,7 +93,7 @@ export function createLod({ origin, levels, leaf, grid }, bounds) {
       if (d2 > ranges[level] ** 2) return false;
       if (!visible(a0, o0, size, min, max)) return true;
       if (level === 0 || d2 > ranges[level - 1] ** 2) {
-        out.push({ a: a0, o: o0, spacing: size / grid, level, quarter: false, surfaces: surfaces[level][n / 2] });
+        out.push({ a: a0, o: o0, spacing: size / grid, level, quarter: false, surfaces: surfaces[level][n / 2], max });
         return true;
       }
       for (const [di, dj] of [[0, 0], [1, 0], [0, 1], [1, 1]]) {
@@ -104,12 +104,12 @@ export function createLod({ origin, levels, leaf, grid }, bounds) {
         const m = cj * 2 * count + ci;
         const [qa, qo] = [a0 + (di * size) / 2, o0 + (dj * size) / 2];
         if (visible(qa, qo, size / 2, below[2 * m], below[2 * m + 1])) {
-          out.push({ a: qa, o: qo, spacing: size / grid, level, quarter: true, surfaces: surfaces[level - 1][m] });
+          out.push({ a: qa, o: qo, spacing: size / grid, level, quarter: true, surfaces: surfaces[level - 1][m], max: below[2 * m + 1] });
         }
       }
       return true;
     }
-    if (!visit(top, 0, 0)) out.push({ a: origin[0], o: origin[1], spacing: rootSize / grid, level: top, quarter: false, surfaces: surfaces[top][0] });
+    if (!visit(top, 0, 0)) out.push({ a: origin[0], o: origin[1], spacing: rootSize / grid, level: top, quarter: false, surfaces: surfaces[top][0], max: heights[top][1] });
     return out;
   }
 

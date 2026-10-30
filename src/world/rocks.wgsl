@@ -23,6 +23,8 @@ struct Rocks {
   uRock: vec3f, // linear albedos
   uDrySand: vec3f,
   uWetSand: vec3f,
+  uSeabedRock: vec3f,
+  uSeabedDeepest: f32, // m: below this the water hides whatever stands on the seabed wholly
 }
 
 @group(1) @binding(0) var<uniform> rocks: Rocks;
@@ -61,10 +63,9 @@ fn vertexMain(in: VertexIn) -> Varyings {
       offset = min(offset, textureLoad(uRockOffsets, block + vec2i(i, j), 0).r);
     }
   }
-  // TEMPORARY, with world/placeholder.js: its opaque water hides a rock wholly
-  // under it, so such a rock isn't drawn: all its corners lie outside the
-  // view. Stage 6's water shows the seabed: remove this then.
-  if (in.aPlace.y + in.aTop + offset < -0.1) {
+  // A rock too deep for the water to show isn't drawn: all its corners lie
+  // outside the view.
+  if (in.aPlace.y + in.aTop + offset < -rocks.uSeabedDeepest) {
     out.position = vec4f(2.0, 2.0, 2.0, 1.0);
     return out;
   }
@@ -108,6 +109,7 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
   let against = (1.0 - smoothstep(drift - footprint, drift + footprint, above)) * (cover.x + rest);
   let lying = (cover.x * sand + rest * green) / max(cover.x + rest, 1e-3);
   r.albedo = mix(r.albedo, lying, against);
+  r.albedo = mix(r.albedo, rocks.uSeabedRock, smoothstep(0.0, 2.0, -aboveSea)); // rubble and algae, as the seabed's rock
   r.normal = normalize(mix(r.normal, vec3f(0.0, 1.0, 0.0), 0.6 * against));
   // Right at the ground, half the sky is ground and rock.
   let low = 1.0 - smoothstep(0.0, 0.15 * in.vSize, above);
@@ -116,6 +118,10 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
   let kernel = specularKernel(r.normal);
   shadeOnce(vWorldPos, normalize(in.vNormal), dx, dy, above); // its shadows, before it lights (chunks/shadows.wgsl)
   var radiance = r.albedo / PI * (sunLight(vWorldPos, r.normal) + (1.0 - 0.4 * low) * skyIrradiance(vWorldPos, r.normal));
-  radiance += (1.0 - against) * rockShine(r, vWorldPos, r.normal, view, kernel);
-  return sceneOutput(aerialPerspective(radiance, vWorldPos), 1.0);
+  // Under the sea the water's surface mirrors, and it adds the haze: soft over
+  // the pixel, so the rock's sheen ends at the water without stair-steps.
+  let tall = fwidth(aboveSea);
+  let overSea = smoothstep(-min(tall, 0.03), max(tall, 1e-3), aboveSea);
+  radiance += overSea * (1.0 - against) * rockShine(r, vWorldPos, r.normal, view, kernel);
+  return sceneOutput(mix(radiance, aerialPerspective(radiance, vWorldPos), overSea), 1.0);
 }

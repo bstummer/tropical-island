@@ -44,7 +44,7 @@ import { sandUniforms } from '../textures/sand.js';
 import { rockUniforms } from '../textures/rock.js';
 import { greenUniforms } from '../textures/green.js';
 import { createLod, createMeshHeight, lodRanges } from './lod.js';
-import { DETAIL, GREEN, gridGeometry, INLAND, nodeBounds, ROCK, SAND, WET } from './terrain-nodes.js';
+import { DETAIL, GREEN, gridGeometry, INLAND, leftToWater, nodeBounds, ROCK, SAND, WET } from './terrain-nodes.js';
 
 const built = new Map(); // seed -> Promise of the heightmap's grids
 const TERRAIN_LEVELS = 2; // chunks/terrain.wgsl's (tests/heightmap.test.js keeps config.world.terrain at it)
@@ -102,7 +102,7 @@ export function create(ctx) {
   const rockSettings = ranged(settings.rock);
   const greenSettings = ranged(settings.green);
   const { albedo } = settings;
-  const looks = { albedo, green: settings.green, wetness: settings.sand.wetness, wetHeight: config.world.island.zones.wetSand, sea: config.sky.atmosphere.groundAlbedo };
+  const looks = { albedo, green: settings.green, wetness: settings.sand.wetness, wetHeight: config.world.island.zones.wetSand, sea: config.sky.atmosphere.groundAlbedo, water: config.water };
   const linear = (rgb) => new Vector3(...rgb);
   const tiles = createSurfaceTiles(ctx.renderer, ctx.rng, 'terrain', settings, quality.surfaceTexture);
   const patchRng = ctx.rng('terrain/green/patches');
@@ -119,6 +119,10 @@ export function create(ctx) {
     uDrySand: { value: linear(albedo.drySand) },
     uWetSand: { value: linear(albedo.wetSand) },
     uRock: { value: linear(albedo.rock) },
+    uSeabedSand: { value: linear(config.water.seabedSand) },
+    uSeabedRock: { value: linear(config.water.seabedRock) },
+    uSeabedDeepest: { value: config.water.seabedFade[1] },
+    uUnderSea: { value: new Vector3(...config.water.groundFade, config.water.troughs) },
     ...tilesUniforms(tiles),
     ...surfaceUniforms({ sand: { grainMean: new Vector3() }, rock: { mean: new Vector4() }, green: { grassMean: new Vector3(), grassCover: 0, litterCover: 0 } }),
   };
@@ -270,10 +274,8 @@ export function create(ctx) {
     const [ca, co] = island.toCove(camera.position.x, camera.position.z);
     const cam = [ca, camera.position.y, co];
     lod.select(cam, ranges, (a0, o0, size, min, max) => {
-      // TEMPORARY, with world/placeholder.js: its opaque water hides ground a
-      // metre and more under it (nodeBounds' room), which would still cost
-      // its whole shader. Stage 6's water shows the seabed: cull it by depth then.
-      if (max < 0 && camera.position.y > 0) return false;
+      // Wholly under the sea, it is the water's to draw (water/water-seabed.wgsl).
+      if (leftToWater(max, config.water.groundFade) && camera.position.y > 0) return false;
       box.makeEmpty();
       let far = 0;
       for (const [a, o] of [[a0, o0], [a0 + size, o0], [a0, o0 + size], [a0 + size, o0 + size]]) {

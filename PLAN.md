@@ -78,8 +78,8 @@ when a choice is about taste or scope rather than engineering (see Open question
 | 4 | Ground surfaces and rocks | The cove | done |
 | 4b | WebGPU port | The cove | done |
 | 4c | Maths of our own | The cove | done |
-| 5 | Shadows | The cove | review |
-| 6 | Ocean | The cove | todo |
+| 5 | Shadows | The cove | done |
+| 6 | Ocean | The cove | in progress |
 | 7 | Shoreline | The cove | todo |
 | 8 | Foliage foundation and coconut palms | The cove | todo |
 | 9 | Cove vegetation | The cove | todo |
@@ -1189,7 +1189,207 @@ Done out of order: 5.3 and 5.4 before 5.2's test scene, which then caught a bug 
   `terrain.wgsl`): the seabed the water shows needs them back, culled by what the water hides instead.
   The after-opaque pass draws on the opaque pass's samples, which resolve into a texture of their own
   for it (`frame.opaque.color`), and it resolves the HDR target itself: no pass of its own for that.
+- Known while planning this stage (2026-10-30):
+  - A shader can count on 16 textures and group 0 takes 11, so the water has 5: the seabed's colour, its
+    depth, the waves, what the sea knows (6.2) and one more, which foam and whatever else the mirror needs
+    have to share. Stage 10's cloud shadows will take one more from every material, in group 0.
+  - Every frame now pays for the after-opaque pass: 2 more passes and their resolves. SwiftShader frames
+    have little room (`sand-edge` 3.76 s of the 4 s budget), and CI's job reached its 30 minutes in Stage 5
+    before it stopped measuring. Taking out the two TEMPORARY culls costs up to a fifth of a frame where
+    water fills it, before the water's own shader. If the views can't stay within budget, ask the user
+    rather than raising it.
+  - The GPU times in `info.json` follow the laptop GPU's clock and swing several-fold between runs (Stage
+    11's notes), so only the benchmark says what the water costs. The last numbers written down here are
+    Stage 4b's, from before the shadows.
 - **Done when** the placeholder water is gone and the lagoon reads as tropical at every time of day.
+
+Sub-steps, in order. Each one ends with `npm run verify` green and `main` shippable, and fixes whatever it
+made untrue in CLAUDE.md. The water turns clear first, while it is still flat, because that changes what
+every frame costs and what the terrain has to draw. Then what the sea knows of the island, and the waves,
+which the user judges in motion before anything is tuned on them. Then the light on the water before its
+colours, and the surf last, as it builds on all of that. The last capture before this stage (`full`,
+2026-10-29; the game's pixels haven't changed since) shows a flat cyan band with no waves, no seabed and no
+surf; the sun's path in `into-the-sun` lying on the wet sand and stopping dead at the water; no headland
+mirrored beside it; `horizon`'s sea a flat brown under an orange sky, with a hard line between them; and
+from the `overview`, a glowing ring round the coast.
+
+- [x] **6.1 Clear water.** `water/` replaces the placeholder, still flat. Light dims and takes on colour
+  with how far it travels through the water, so the lagoon, the channel, the pass, the bommies and the
+  drop-off read by their depth, from the beach and from above. The seabed and the rocks under water are
+  back (both TEMPORARY culls go), drawn only as deep as the water still shows them, in plain albedos for
+  now and at a cost well below the land's. The haze isn't added twice. Past the drawn seabed the sea looks
+  as it does over deep seabed, with no seam where the grids end. The light from below over water follows
+  the depth: the lagoon over white sand sends up more than the deep sea. Check: a new fixture proves
+  `frame.opaque.depth` and the water's dimming against a JS twin at known depths, seen red on a deliberate
+  mistake; the light fixture shows the lagoon's light from below; teardown and the quality change stay
+  clean; the `overview`'s glowing ring is gone; every view within the frame budget, and what taking out
+  the culls cost is recorded.
+- [x] **6.2 What the sea knows of the island.** At every point of the water: how deep it is, how far the
+  shore is in metres on the ground and which way it lies, the same for the reef's crest, and how much of
+  the open sea's swell and of the wind reach it, sheltered by the reef and the island. All of it comes from
+  the ground as drawn, so the waterline it knows is the one on screen (Known from Stage 3), over the whole
+  island, finer where the eye goes. The waves, the surf and Stage 7's run-up, foam and caustics read it on
+  the GPU; walking, swimming and sound read it in JS. It is ready before a capture starts, survives a
+  quality change without being worked out again, and shows on the map. The pictures don't change. Check:
+  invariant tests over seeds 1–20, each seen red once: the distance grows by about a metre a metre and is
+  zero on the drawn waterline, its direction leads to the nearest shore, the lagoon lies sheltered behind
+  the reef, a pass lets more through than the reef beside it, and the open sea on the side the swell comes
+  from is fully exposed; the GPU agrees with JS at sample points, proven on a deliberate offset; boot's
+  time before and after.
+- [x] **6.3 Waves.** The sea moves: a long swell from the open sea that the reef stops and the lagoon barely
+  shows, and wind chop over all of it, lighter in the lee, blowing the way the sand's wind does. No tiling
+  from any view, no visible mesh, nothing popping or swimming as the camera moves, and the surface holds up
+  from a swimmer's eye, 40 cm above it. JS knows the surface's height and movement at any place and time,
+  agreeing with what is drawn, with room for other kinds of wave to join (Stage 7's run-up). It looks as
+  good hours into a session as at the start. Rough walking floats on it, so the user can feel it. Its knobs
+  go in the presets. The motion strip of a water view spans more than a wave (2.5 s today). New views: a
+  swimmer's in the lagoon, and one over the open sea outside the reef. Check: the GPU and JS agree on the
+  surface at sample points and several times, proven on a deliberate mistake; invariant tests that waves
+  die down in shelter; a frame reached by jumping in time matches a fresh load, also hours in; shimmer and
+  cost within their limits. Then the user watches the sea in the running game and runs the benchmark:
+  everything after is tuned on these waves, and the numbers decide how far 6.4 goes.
+- [ ] **6.4 The mirror.** The water mirrors what stands over it. The sky with the sun's glow, as seen from
+  the sea and not from the camera's height (Known from Stage 2). The sun as a path of glitter: separate
+  glints near the camera, held in brightness as the sky's disk is, melting into a smooth band of light
+  with distance, never sparkling or aliasing. The far sea keeps the near sea's average light and dissolves
+  into the horizon with no seam at any hour. The headland, the hills and the rocks lie dark in the water
+  beneath them. The sun's path runs on across the wet sand instead of stopping at the waterline, and the
+  island's shade takes it off the water it falls on. How much land the mirror holds, and in how much detail,
+  is weighed against the benchmark. Check: `horizon` and `beach` at the four named times show no seam,
+  measured across the horizon; a fixture holds the far sea's average light to the near sea's at the same
+  angles, seen red on a deliberate mistake; shimmer turning and moving within its limit at every water view;
+  `into-the-sun`, `shoreline` and `rocks` show the headland mirrored; the runtime time check passes.
+- [ ] **6.5 Seabed and colour.** Under the water the ground has surfaces of its own, which only the water
+  shows: rippled sand on the lagoon floor, rubble and coral on the reef and the bommies, darker patches that
+  break up the turquoise. They waver as the surface moves over them. Colour runs from clear turquoise to
+  deep blue by the depth, at every hour. The seabed leaves room for Stage 7's caustics. Check: the swimmer's
+  view and `beach` hold up with no tiling; the seabed shows no shimmer through the water; what stands above
+  the water (a rock's edge) doesn't bleed into the seabed seen beside it; cost within its limits.
+- [ ] **6.6 Surf on the reef.** The white line. Waves rise, steepen and break along the reef's crest in
+  sets, each line of white drifting shoreward off the crest and fading, thin or gone in the pass and in the
+  lee, as far as the swell reaches them. It reads as a white line from the beach, holds up from 30 m, and
+  shows as a fine line from the overview. Foam is a surface of its own under the shared light, built so that
+  Stage 7's foam lines and lingering foam can join it. JS knows where the surf breaks, for sound (Stage 15).
+  New view: the reef through a telephoto from the beach. Check: invariant tests over seeds: surf only where
+  the reef is shallow and exposed, none in the pass; the reef view's motion strip shows waves breaking and
+  drifting; no flicker in its shimmer score; cost within its limits. Then the taste calls, side by side:
+  the water's colour and clarity, how calm the lagoon lies, how big the surf is, and how strong the glitter,
+  each on every view it changes, at midday and at golden hour.
+- [ ] **6.7 The look, at every hour.** The user's picks go in. Every view at its own time, midday and golden
+  hour, and `beach`, `horizon` and `into-the-sun` at the four named times, against the Done line and the
+  vision's water. An outside review of the pictures and motion strips, and what it finds fixed or listed.
+  Each preset within its frame-cost limits, and the stage's cost in its notes. Check: the Done line; the
+  user watches the sea in the running game and runs the benchmark.
+
+- Known from 6.1–6.3 (2026-10-30), built as one stretch, with one `verify`; the user's look at the motion is
+  still to come. Research behind the choices: Tessendorf 2001 and Horvath 2015 (the spectrum), Bruneton et
+  al. 2010 (the far sea), Maritorena et al. 1994 (clear shallow water), and shipped and open water (Sea of
+  Thieves, Crest, Poseidon's cascades of bands that don't overlap).
+  - The colour (`water/optics.js`): light dims per channel along its way down and back, each way bent by the
+    surface; what the seabed sends back is what is left, and the water's own light makes up the rest. A film
+    of water loses nothing at its surface and a pane its share, or the waterline shows a dark band. The
+    light from below over water follows the same model (`world/albedo.js`).
+  - The bent ray (`water/water-seen.wgsl`): it finds how deep it goes from the sea map's depth, not from the
+    opaque scene, whose depth jumps far off when the eye's line runs nearly along a sloping seabed, then
+    looks the seabed up where it lies on screen. Off the frame's bottom edge it reads the edge (a swimmer's
+    view has the most of this, and a seabed with no detail hides it until 6.5); a filtered read next to what
+    stands above the water takes in a little of it (6.5's check). Anything under the sea has no sheen and no
+    haze, which change over the pixel: at the pixel's centre they stair-stepped the waterline.
+  - What the sea knows (`water/sea-map.js`, 4 m apart over the coarse grid, 1024 x 1024): shore distance and
+    way, depth, reef distance, swell, wind, surf. The swell runs in over a fan of directions, held by the
+    water under it: what the crest takes is the surf, so the surf has no line of its own to lay out, and the
+    pass and the lee follow. Keep `world/heightmap.js`'s grids' lines: reading their samples is what makes
+    it 0.7 s on one core, on the main thread at boot, against 2 s by sampling. It could go to a worker if
+    boot needs it. Its fan's five directions leave faint rays far in the island's lee.
+  - The waves (`water/spectrum.js`, `waves.js`): three cascades of 800, 120 and 17 m, 128 x 128 (64 on low),
+    in one compute pass, 45 dispatches and the mips, only when the time changes: the swell, the chop's long
+    waves and its ripples, each scaled by how much reaches a point, so the sea's character changes with the
+    map without any more transforms. The ripples have a slope of their own, as the chop's height says little
+    about what breaks the sun into glints, and a second, finer read of them near the camera, which moves
+    too slowly for its size: the user's eye decides. JS sums the largest 256 waves a cascade: it is 0.18 m
+    off the GPU at worst (limit 0.25 m), as it leaves out the small waves.
+  - The mirror came forward from 6.4, so the motion is judged nearly as it will look: the mean Fresnel of
+    a surface with slopes it can't resolve, and a sun of two Gaussians over the slopes lost to filtering.
+    A low sun's path is narrow: its width goes with the sun's height. Its ceiling (`glitterCeiling`) flattens
+    its middle; it needs breaking up, which is 6.4's. Rows of far water a pixel tall crawled under a telephoto
+    (5.7% in `horizon`): slopes are read at a level by the pixel's longer side, softer as it stretches (0.09%),
+    which also costs a third less than anisotropic reads on SwiftShader.
+  - Bare rock under rocky shores reads as dark patches with a hard round edge from above (`island.js`'s
+    `beach` share): 6.5's. Bommies read too dark for the same reason. The lagoon is taste: its colours are a
+    first guess, for 6.6's side by side.
+  - Cost on high: 2 more render passes (9), a compute pass, textures 141 to 163 MB (the sea map, with mips,
+    and the waves), render targets 153 to 180 MB, 200 to 400 k more triangles (980 k on `overview`). A GPU
+    fixture each for the bent ray and optics (`water`) and for the waves, map and surface (`waves`).
+    SwiftShader frames, in the Linux container, before and after: `beach` 2.1 to 4.3 s, `horizon` 0.9 to 1.9,
+    `rocks` 4.1 to 5.4; new `open-sea` 4.8. The user gave leave to raise the budget, now 6 s (2026-10-30), as
+    long as things stay as cheap as they can: most of what is left is the seabed being drawn at all, which
+    6.5's cheap surfaces should win back.
+  - Flaws seen so far, kept for the steps after: a thin grey band still lies along the waterline in `beach`,
+    the sky mirrored at a grazing angle over tan wet sand (Stage 7 may own it); near water in the swimmer's
+    view shows little of the seabed; the swell hardly reads from above in stills.
+- Known from the user's first look at the sea (2026-10-30), from the air: blocks under the water, jagged reef
+  edges, ground seeming to stand above the water, white dashes on the sea. Four views were shot from the air
+  to match, and all of it reproduced. The causes, and what took them out, which brings 6.5's first half forward:
+  - The seabed was the land's shaders on the land's mesh: a piece of terrain near the surface drew rock's
+    relief or sand's detail and a piece wholly under it didn't, in blocks; far off, its coarse levels jagged
+    the reef's drop-off, and the crest, 30 cm under the sea, showed in the troughs. Now the water draws the
+    seabed itself, as a function of where each bent ray lands (`water/water-seabed.wgsl`), and terrain nodes
+    wholly under the sea aren't drawn at all, which also takes their triangles out of every frame. The ground
+    gives way to it over its first 5 to 25 cm under the sea; below that its alpha says the water takes nothing
+    from it. Rocks still come from the opaque scene, by that alpha; what stands above the water can't bleed.
+    The sky moved to the after-opaque pass, so it isn't in what the water reads and isn't drawn where the sea
+    covers it.
+  - The depth came from the sea map, 4 m apart, which aliases the reef's roughness into rows and weaves. Near
+    the camera it now comes from the 2 m grid's own samples. A ray's depth takes two steps, so on a drop-off
+    they meet halfway instead of flipping between its top and foot.
+  - The white dashes were holes in the sea's surface: two levels of its mesh read the waves at different mips
+    where they meet. Now the mip morphs with the vertices. The tool's `sea surface` check counts what is left
+    on the far plane under the horizon.
+  - The reef looked like land because it was pale sand at 30 cm. It has its own look now: mottled coral and
+    rubble from the crest back onto the flat and on the bommies, darker beds of weed on the lagoon's floor, sand
+    ripples up close. The mottling is a seventh layer of the surface tiles, read at two sizes that never line
+    up, so far off its mips leave the average; a shader's worth of noise would cost several times as much per
+    pixel. Colours are a first guess, for the side by side. The water now uses all 16 textures a shader can
+    count on, so Stage 10's cloud shadows, one more in group 0, will have to free one.
+  - A rocky shore's rock now runs out under sand a little way off it: it used to reach across the lagoon to the
+    reef, as dark lobes with a hard round edge from above. The bent ray's lookup of what stands on the seabed is
+    unfiltered, so the fixture's landing limit is a far pixel wide (3 m); it stays 0.04 m on how deep.
+  - Cost on high against 6.3: triangles down wherever the sea fills the frame (`overview` 980 k to 777 k), textures 163
+    to 168 MB (the new tile layer), two terrain pipelines fewer. CI's captures take 15 minutes with the two new
+    views and the new check, of its 30. `air-headland` warns of shimmer (0.66%, limit 0.5%): the sun's glints
+    seen from 300 m, for 6.4's glitter to answer.
+  - New view: `air-pass`, and `air-headland` looking straight down; `air-shallows` is kept, disabled. Left as they
+    are, being the island's and not the water's: the pass's straight wall and the reef's sharp ends beside it
+    read as geometry from straight above (Stage 3's layout); the rock of the headland's far side lies almost
+    black in the island's shade (Stage 5's). Rocks cast no shadow on the seabed any more, as the water reads no
+    shadow maps: 6.5's second half, if the `rocks` view shows it needs them.
+- Known from the user's second look at the sea (2026-10-30), who liked the waves' motion: a grid in the sun's
+  reflection as the water moves, a rock's ghost floating over deep water, and the question whether the big reflection
+  from above looks natural. It didn't. Each measured or tried before it was fixed; `air-sun`, `lagoon-sun` and
+  `air-rocks` are new views, `sun-close` is kept, disabled.
+  - The grid: the sea repeated itself. Its fine detail was as alike as 0.19 one ripple tile (17 m) away and 0.13 one
+    chop tile (120 m) away, about 0 at the lags between; nothing was tied to the texels or the mesh over time. The ripples'
+    tile now wanders where the fragment reads it, and from high up the chop softens into what the surface mirrors: at
+    most 0.024. The `sea repeats` check holds it, seen at 0.66 with the wander taken out.
+  - Zigzags in the glitter up close: a bilinear read's corners along the rows of texels wider than a pixel. Those are
+    read as a cubic B-spline now, the swell's waves are kept many of its texels long instead (`swell.shortest`).
+  - The ghost: the water took whatever the pixel its ray lands on shows, and a pixel can show a rock far nearer the eye than
+    the ray ever comes. The ray now walks over the opaque scene and takes only what it goes behind on the way down. The
+    water fixture has a deep, level seabed for it, seen wrong on the old ray (lands 15 m off, 7 points read the rock).
+  - The reflection from above: a flat grey with dark cracks. The diamond in it is not a fault of the drawing: the same
+    shape comes from the waves summed in plain JS, the chop's directions making two crossing families of crests at the
+    patch's top and bottom, near the world's axes only by the wind's chance; averaged over time the patch is a smooth oval.
+    It softens with the chop from high up, and the sun's light in the water may reach 4, not 1.5, so it stays white.
+  - Found on the way: the second read of the ripples was never finer than mip level 2.4 (its level came from one already
+    held at 0), so it never added its fine detail: what made close glints look out of focus. A crest's squeeze
+    also worked axis by axis, doubling it for waves along an axis; little to see, but it now favours no way.
+  - Tried and dropped: a mirror sharp up close (`fineSlopes` 0.0001) and a ceiling of 6 cut the sun's path short at low
+    sun and left a flat white patch in `swimmer`; a mip level softer ripples from high up, half a level now, fogged the sparkle.
+  - Cost on one desktop GPU, old and new side by side at 1600x900: 2.2 to 2.9 ms on `lagoon-sun`, where it reads most;
+    the other water views differ by at most 0.3 ms, about what they vary by run to run. CI's captures take 18 minutes of its 30. Up to 14 reads of the waves
+    per pixel right by the camera, 4 far off, and at most 5 of the opaque depth. The benchmark on a mid-range laptop still has to say.
+  - Left: `swimmer` still has a white patch near the camera at this `t`, smooth where calm water holds few ripples (6.4's
+    glints, moved up from a thin streak); from under about 40 m the crossing crests still show faintly at the patch's ends, as a real sea's would.
 
 ### 7. Shoreline (the hero)
 
@@ -1211,6 +1411,12 @@ Done out of order: 5.3 and 5.4 before 5.2's test scene, which then caught a bug 
   there, and keep `washed`, where the waves reach, which the ripples and swash marks follow, so drying
   sand doesn't grow ripples. Spray darkens rock to 2 m above the sea (`chunks/rock.wgsl`): waves
   breaking on it should drive that too.
+- Known from planning Stage 6 (2026-10-30), which builds for this stage: what the sea knows of the island
+  (6.2), with the distance to the shore in metres on the drawn ground, which answers Stage 3's note above;
+  a surface in JS and on the GPU that other kinds of wave can join (6.3); foam that the shore's foam lines
+  and lingering foam can join (6.6); and room on the seabed for caustics, which should dance with the waves
+  drawn above them (6.5). Stage 6 leaves the waterline where the still sea meets the ground, give or take
+  the lagoon's small waves: running up the beach, and all that the sand does about it, is this stage's.
 - **Done when** the low beach view is a wallpaper, its motion strip shows waves running up and draining
   back naturally (the strip spans 2.5 s today, less than one wave), and the user finds the motion natural
   in the running game.

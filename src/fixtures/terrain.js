@@ -212,7 +212,7 @@ async function bounceCheck(ctx, r) {
   const { bounceReach, albedo, green, sand } = config.world.terrain;
   const coarsest = heightmap.levels.at(-1);
   const { origin, texel, samples } = coarsest;
-  const looks = { albedo, green, wetness: sand.wetness, wetHeight: config.world.island.zones.wetSand, sea: config.sky.atmosphere.groundAlbedo };
+  const looks = { albedo, green, wetness: sand.wetness, wetHeight: config.world.island.zones.wetSand, sea: config.sky.atmosphere.groundAlbedo, water: config.water };
   const lod = Math.log2(bounceReach / texel);
   const mips = halfMips(albedoMap(coarsest, looks), samples, Math.floor(lod) + 2);
   const corner = [origin[0] - texel / 2, origin[1] - texel / 2];

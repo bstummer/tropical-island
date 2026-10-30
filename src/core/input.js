@@ -98,7 +98,11 @@ export function create(ctx) {
         }
       }
       const ground = walking ? ctx.terrain?.heightAt(camera.position.x, camera.position.z) : undefined;
-      if (ground !== undefined) camera.position.y = Math.max(ground + movement.walk.eye, movement.walk.float);
+      if (ground !== undefined) {
+        // Over deep water the eye floats on the waves (water/surface.js).
+        const sea = ctx.water?.heightAt(camera.position.x, camera.position.z) ?? 0;
+        camera.position.y = Math.max(ground + movement.walk.eye, sea + movement.walk.float);
+      }
     },
     dispose() {
       overlay.removeEventListener('click', lock);

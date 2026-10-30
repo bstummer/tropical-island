@@ -20,6 +20,10 @@ function fakeDevice() {
         for (const name of ['draw', 'drawIndexed', 'setPipeline', 'end']) pass[name] = (...args) => calls.push([name, ...args]);
         return pass;
       },
+      beginComputePass: (desc) => {
+        calls.push(['compute', desc]);
+        return { end: () => {} };
+      },
       copyTextureToTexture: () => calls.push(['copy']),
     }),
   };
@@ -56,11 +60,20 @@ test('draw calls and triangles are counted per frame, and calls still reach the 
   pass.setPipeline('b');
   pass.setPipeline('a');
   pass.end();
-  assert.deepEqual(stats.frame(), { drawCalls: 2, triangles: 10 + 2000, passes: 1, blits: 0, pipelinesUsed: 2 });
+  assert.deepEqual(stats.frame(), { drawCalls: 2, triangles: 10 + 2000, passes: 1, blits: 0, computePasses: 0, pipelinesUsed: 2 });
   assert.equal(device.calls.filter(([name]) => name.startsWith('draw')).length, 2);
   stats.beginFrame();
-  assert.deepEqual(stats.frame(), { drawCalls: 0, triangles: 0, passes: 0, blits: 0, pipelinesUsed: 0 });
+  assert.deepEqual(stats.frame(), { drawCalls: 0, triangles: 0, passes: 0, blits: 0, computePasses: 0, pipelinesUsed: 0 });
   assert.equal(stats.lastFrame().drawCalls, 2);
+});
+
+test('a compute pass counts apart from render passes, and still reaches the device', () => {
+  const device = fakeDevice();
+  const stats = instrument(device);
+  device.createCommandEncoder().beginComputePass({ label: 'waves' }).end();
+  assert.equal(stats.frame().computePasses, 1);
+  assert.equal(stats.frame().passes, 0);
+  assert.deepEqual(device.calls.at(-1), ['compute', { label: 'waves' }]);
 });
 
 test('a pass counts when it draws or clears; one that only resolves, and a copy, are blits', () => {

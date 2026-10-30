@@ -7,6 +7,7 @@
 //   2 rock               textures/rock.js
 //   3 grass, 4 litter,   textures/green.js
 //   5 leaves
+//   6 seabed             textures/seabed.js
 // Each tile is `size` texels across (quality.surfaceTexture), mipmapped and
 // repeating; `shift`: tiles to shift them by, which leaves them as they are if
 // they truly repeat (fixtures/surfaces.js checks). Each module's own numbers
@@ -20,8 +21,9 @@ import { createTarget } from '../gpu/texture.js';
 import { makeSandTiles } from './sand.js';
 import { makeRockTile } from './rock.js';
 import { makeGreenTiles } from './green.js';
+import { makeSeabedTile } from './seabed.js';
 
-export const LAYERS = { grain: 0, ripples: 1, rock: 2, grass: 3, litter: 4, leaves: 5 };
+export const LAYERS = { grain: 0, ripples: 1, rock: 2, grass: 3, litter: 4, leaves: 5, seabed: 6 };
 
 // renderer: ctx.renderer; settings: config.world.terrain; rng(name): a stream
 // per module, as ctx.rng, under `prefix`.
@@ -41,6 +43,7 @@ export function createSurfaceTiles(renderer, rng, prefix, settings, size, shift 
   const sand = makeSandTiles(into, rng(`${prefix}/sand`), settings.sand);
   const rock = makeRockTile(into, rng(`${prefix}/rock`), settings.rock);
   const green = makeGreenTiles(into, rng(`${prefix}/green`), settings.green);
+  makeSeabedTile(into, rng(`${prefix}/seabed`));
   // The mip chain, once every layer is drawn (the read-backs above are of
   // level 0 and already queued). The litter's layers are still blank here:
   // textures/green.js writes them with their own mip levels once read back.

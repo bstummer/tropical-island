@@ -23,6 +23,7 @@ import { views } from '../src/views.js';
 import { createRandom } from '../src/core/random.js';
 import { createIsland } from '../src/world/island.js';
 import { buildHeightmap } from '../src/world/heightmap.js';
+import { buildSeaMap } from '../src/water/sea-map.js';
 import { encodePng } from './png.js';
 import { labelName } from './labels.js';
 
@@ -66,11 +67,14 @@ async function main(argv) {
   // The whole island with its reef and the deep water round it, whatever its size.
   const { minA, maxA, minO, maxO } = island.coveBounds;
   const side = settings.cove.headlandSide;
+  const whole = { u: [Math.min(side * minA, side * maxA), Math.max(side * minA, side * maxA)], o: [minO, maxO] };
   const panels = [
-    { name: 'island', u: [Math.min(side * minA, side * maxA), Math.max(side * minA, side * maxA)], o: [minO, maxO] },
+    { name: 'island', ...whole },
     { name: 'cove', u: [-560, 560], o: [-760, 560] },
     { name: 'bay', u: [-300, 300], o: [-200, 400] },
   ].map((p) => drawPanel(island, heightmap, p));
+  const sea = buildSeaMap(heightmap, config.water.map, side, config.world.terrain.blend);
+  panels.push(drawSeaPanel(island, sea, { name: 'what the sea knows', ...whole }), drawSeaPanel(island, sea, { name: 'what the sea knows, the bay', u: [-400, 400], o: [-100, 700] }));
   const ms = performance.now() - started;
   const samples = panels.reduce((n, p) => n + p.width * p.height, 0);
 
@@ -185,6 +189,35 @@ function drawPanel(island, heightmap, { name, u: [u0, u1], o: [o0, o1] }) {
   return { name, width, height, scale, u0, o1, png: encodePng({ width, height, data }) };
 }
 
+// What the sea knows of the island (water/sea-map.js): blue, how much swell
+// arrives; green, how much chop the wind has raised; white, where the surf
+// breaks; orange, the reef's crest; lines every 50 m from the shore; land grey.
+function drawSeaPanel(island, map, { name, u: [u0, u1], o: [o0, o1] }) {
+  const scale = PANEL / Math.max(u1 - u0, o1 - o0);
+  const width = Math.round((u1 - u0) * scale);
+  const height = Math.round((o1 - o0) * scale);
+  const side = island.settings.cove.headlandSide;
+  const data = new Uint8Array(width * height * 4);
+  const here = {};
+  const metres = 1 / scale;
+  for (let py = 0; py < height; py++) {
+    for (let px = 0; px < width; px++) {
+      map.at(side * (u0 + (px + 0.5) / scale), o1 - (py + 0.5) / scale, here);
+      let colour = [90, 90, 90];
+      if (here.shore > 0) {
+        colour = [0, 40 + 170 * here.wind, 60 + 195 * here.swell];
+        const band = ((here.shore % 50) + 50) % 50;
+        if (band < metres) colour = colour.map((c) => c * 0.65);
+        if (Math.abs(here.reef) < metres) colour = [255, 150, 40];
+        const surf = Math.min(here.surf * 3, 1);
+        colour = colour.map((c) => c + (255 - c) * surf);
+      }
+      data.set([...colour.map(Math.round), 255], 4 * (py * width + px));
+    }
+  }
+  return { name, width, height, scale, u0, o1, marks: false, png: encodePng({ width, height, data }) };
+}
+
 // How dark a contour line through this pixel is: 0 none, up to 0.55. A line
 // is drawn on the high side of where the height crosses its level, towards
 // any of the four neighbours, so it is one pixel wide and runs round every shore.
@@ -287,7 +320,7 @@ function page({ seed, label, settings, panels, island, facts, timing }) {
       const [a, o] = island.toCove(x, z);
       return [(side * a - p.u0) * p.scale, (p.o1 - o) * p.scale];
     };
-    const marks = views.map((v) => {
+    const marks = (p.marks === false ? [] : views).map((v) => {
       const [x, , z] = v.position;
       const [px, py] = toPx(x, z);
       const yaw = (v.yaw * Math.PI) / 180;
@@ -303,7 +336,7 @@ function page({ seed, label, settings, panels, island, facts, timing }) {
         <circle cx="${px}" cy="${py}" r="4" fill="#ff5a36" stroke="#fff"/>
         <text x="${px + 7}" y="${py - 7}">${v.name}</text>`;
     });
-    const metres = { island: 500, cove: 100, bay: 50 }[p.name];
+    const metres = { island: 500, cove: 100, bay: 50 }[p.name] ?? (p.width / p.scale > 1000 ? 500 : 100);
     return `<svg width="${p.width}" height="${p.height}">
       ${marks.join('')}
       <g transform="translate(${p.width / 2},18)"><text text-anchor="middle">▲ the setting sun</text></g>
@@ -319,7 +352,7 @@ function page({ seed, label, settings, panels, island, facts, timing }) {
   return `<!doctype html><meta charset="utf-8"><style>
     body { margin: 0; padding: 20px; background: #15171a; color: #e8e4dc; font: 14px/1.4 system-ui, 'Segoe UI', sans-serif; width: max-content; }
     h1 { margin: 0 0 4px; font-size: 20px; font-weight: 600; } .meta { color: #9aa0a8; margin-bottom: 12px; }
-    .row { display: flex; gap: 20px; align-items: flex-start; } figure { margin: 0; position: relative; }
+    .row { display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start; max-width: 2340px; } figure { margin: 0; position: relative; }
     figure img, figure svg { display: block; } figure svg { position: absolute; inset: 0; }
     svg text { fill: #fff; font-size: 13px; paint-order: stroke; stroke: rgba(0,0,0,0.7); stroke-width: 3px; }
     figcaption { margin-top: 6px; color: #9aa0a8; } .legend span { margin-right: 14px; white-space: nowrap; }
@@ -330,7 +363,8 @@ function page({ seed, label, settings, panels, island, facts, timing }) {
   <div class="row">${panels
     .map((p) => `<figure><img src="data:image/png;base64,${Buffer.from(p.png).toString('base64')}">${svgFor(p)}<figcaption>${p.name}: facing the sea from the cove's beach</figcaption></figure>`)
     .join('')}</div>
-  <p class="legend">${legend}</p><p class="legend">depth: ${depths} · contours every ${LAND_CONTOUR} m on land (100 m bold), at ${SEA_CONTOURS.join(', ')} m under water</p>`;
+  <p class="legend">${legend}</p><p class="legend">depth: ${depths} · contours every ${LAND_CONTOUR} m on land (100 m bold), at ${SEA_CONTOURS.join(', ')} m under water</p>
+  <p class="legend">what the sea knows: blue, how much swell arrives; green, how much chop the wind has raised; white, where the surf breaks; orange, the reef's crest; lines every 50 m from the shore</p>`;
 }
 
 const invokedPath = process.argv[1] && existsSync(process.argv[1]) ? realpathSync.native(process.argv[1]) : null;

@@ -13,14 +13,23 @@ import { buildHeightmap, GROUND } from '../src/world/heightmap.js';
 import { albedoMap, albedoOf, greenAlbedo, sandWetness } from '../src/world/albedo.js';
 
 const { albedo, green } = config.world.terrain;
-const surfaces = { albedo, green, wetness: config.world.terrain.sand.wetness, wetHeight: config.world.island.zones.wetSand, sea: config.sky.atmosphere.groundAlbedo };
+const surfaces = { albedo, green, wetness: config.world.terrain.sand.wetness, wetHeight: config.world.island.zones.wetSand, sea: config.sky.atmosphere.groundAlbedo, water: config.water };
 
-test("over water the albedo is the sea's, on sand above the waves the dry sand's, below them the wet sand's", () => {
-  assert.deepEqual(albedoOf(1, 0, 0, -0.5, 0, 0, surfaces), surfaces.sea);
+test("over deep water the albedo is the sea's, on sand above the waves the dry sand's, below them the wet sand's", () => {
+  assert.deepEqual(albedoOf(1, 0, 0, -config.water.seabedFade[1] - 1, 0, 0, surfaces), surfaces.sea);
   assert.deepEqual(albedoOf(1, 0, 0, surfaces.wetness.dry + 0.1, 0, 0, surfaces), albedo.drySand);
   assert.deepEqual(albedoOf(1, 0, 0, 0.01, 0, 0, surfaces), albedo.wetSand);
   assert.deepEqual(albedoOf(0, 1, 2, 30, 0, 0, surfaces), albedo.rock);
   assert.deepEqual(albedoOf(0, 0, 3, 30, 0.6, 0.2, surfaces), greenAlbedo(3, 0.6, 0.2, surfaces));
+});
+
+test('over shallow water the albedo follows the seabed: more than the sea over sand, more the shallower, and less over rock', () => {
+  const at = (sand, depth) => albedoOf(sand, 1 - sand, 0, -depth, 0, 0, surfaces);
+  surfaces.sea.forEach((sea, c) => {
+    assert.ok(at(1, 1)[c] > sea + 0.1, `channel ${c} over sand at 1 m: ${at(1, 1)[c]}`);
+    assert.ok(at(1, 1)[c] > at(1, 5)[c] && at(1, 5)[c] >= at(1, 40)[c]);
+    assert.ok(at(0, 1)[c] < at(1, 1)[c], `channel ${c} over rock at 1 m: ${at(0, 1)[c]}`);
+  });
 });
 
 test('the green is its living green where all of it is green, grass on open ground and the leafy understory on lush; its bare ground where none is, sand, soil or litter as its shares say', () => {
@@ -95,7 +104,7 @@ test("the map reads each sample as the grid lays it out: sand, rock, lush and sa
     [[0, 0, 0, 255], 3, 10, albedo.grass], // open
     [[0, 0, 255, 0], 0, 10, albedo.soil], // the scrub: bare soil
     [[0, 0, 0, 255], 0, 10, albedo.drySand], // behind a beach: bare sand
-    [[255, 0, 255, 255], 3, -2, surfaces.sea],
+    [[255, 0, 255, 255], 3, -100, surfaces.sea],
     [[51, 102, 255, 0], 3, 10, mix([0.2, albedo.drySand], [0.4, albedo.rock], [0.4, albedo.leafy])],
   ];
   const n = cases.length;
@@ -114,7 +123,9 @@ test("the map reads each sample as the grid lays it out: sand, rock, lush and sa
 });
 
 test('any mix of the ground reflects no more and no less than its surfaces do', () => {
-  const all = [...Object.values(albedo), surfaces.sea];
+  const { water } = surfaces;
+  // The sea over a white seabed right at the surface sends up the most it can.
+  const all = [...Object.values(albedo), surfaces.sea, surfaces.sea.map((v, c) => v + water.through * water.seabedSand[c])];
   const r = createRandom(1)('test/albedo');
   for (let n = 0; n < 10_000; n++) {
     const sand = r.range(0, 1);
@@ -126,7 +137,7 @@ test('any mix of the ground reflects no more and no less than its surfaces do', 
   }
 });
 
-test("the map over a grid: the sea's albedo under water, sand on the cove's beach, green behind it", () => {
+test("the map over a grid: the sea's albedo over deep water, more over shallows, sand on the cove's beach, green behind it", () => {
   const layout = { samples: 96, blend: 4, levels: [8, 16, 32, 64].map((texel) => ({ texel, centre: [0, -300] })) };
   const island = createIsland(createRandom(1));
   const heightmap = buildHeightmap(island, layout);
@@ -139,7 +150,8 @@ test("the map over a grid: the sea's albedo under water, sand on the cove's beac
     return { rgb: Array.from(map.slice(4 * n, 4 * n + 3)), height: level.heights[n] };
   };
   for (let n = 0; n < layout.samples * layout.samples; n++) {
-    if (level.heights[n] < 0) assert.deepEqual(Array.from(map.slice(4 * n, 4 * n + 3)), surfaces.sea.map(Math.fround));
+    if (level.heights[n] < -config.water.seabedFade[1]) assert.deepEqual(Array.from(map.slice(4 * n, 4 * n + 3)), surfaces.sea.map(Math.fround));
+    else if (level.heights[n] < 0) surfaces.sea.forEach((sea, c) => assert.ok(map[4 * n + c] >= Math.fround(sea)));
     assert.equal(map[4 * n + 3], 1);
   }
   // The beach's middle, 16 m up from the water, is dry sand; 120 m behind it green.

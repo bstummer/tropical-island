@@ -11,7 +11,7 @@ struct VertexIn {
 
 struct Varyings {
   @builtin(position) position: vec4f,
-  @location(0) @interpolate(perspective, centroid) vWorldPos: vec3f, // see world/placeholder-water.wgsl
+  @location(0) @interpolate(perspective, centroid) vWorldPos: vec3f, // see water/water.wgsl
   @location(1) vNormal: vec3f,
 }
 

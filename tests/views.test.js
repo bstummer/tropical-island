@@ -66,8 +66,10 @@ test('every view is above the ground and the sea, with room for an eye', () => {
   const island = createIsland(createRandom(config.defaults.seed));
   for (const view of views) {
     const [x, y, z] = view.position;
-    const ground = Math.max(island.height(x, z), SEA_LEVEL);
-    assert.ok(y >= ground + 1, `${view.name}: ${(y - ground).toFixed(2)} m above the ground or the sea`);
+    const ground = island.height(x, z);
+    // Over water, a swimmer's eye will do; the waves are small where one swims.
+    const least = Math.max(ground + 1, SEA_LEVEL + config.movement.walk.float);
+    assert.ok(y >= least, `${view.name}: ${(y - Math.max(ground, SEA_LEVEL)).toFixed(2)} m above the ground or the sea`);
   }
 });
 

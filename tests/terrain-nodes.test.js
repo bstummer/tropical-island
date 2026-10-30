@@ -11,7 +11,7 @@ import { createRandom } from '../src/core/random.js';
 import { sandWetness } from '../src/world/albedo.js';
 import { createIsland } from '../src/world/island.js';
 import { buildHeightmap, createHeightmap, GROUND } from '../src/world/heightmap.js';
-import { GREEN, INLAND, nodeBounds, ROCK, SAND, WET } from '../src/world/terrain-nodes.js';
+import { GREEN, INLAND, leftToWater, nodeBounds, ROCK, SAND, WET } from '../src/world/terrain-nodes.js';
 
 const settings = config.world.terrain;
 const { leaf } = settings;
@@ -88,6 +88,19 @@ test('a node takes its surfaces from the grids drawn over it: a finer one that c
 // Round the cove, the game's grids but smaller (as tests/heightmap.test.js's):
 // 2 m apart over the beach, the bay and the headland, where sand meets rock.
 const cove = { samples: 256, blend: 8, levels: settings.levels.map(({ texel }) => ({ texel, centre: [55, 0] })) };
+
+test('a node is left to the water only if none of the ground drawn on it reaches where the ground still shows', () => {
+  const { groundFade } = config.water;
+  const samples = 17;
+  const level = (height) => ({ origin: [0, 0], texel: 2, samples, heights: new Float32Array(samples * samples).fill(height), ground: new Uint8Array(GROUND * samples * samples) });
+  const top = (height) => nodeBounds({ levels: [level(height)] }, 1, 0)(8, 8, 8)[1];
+  assert.equal(leftToWater(top(-groundFade[1] - 0.01), groundFade), true, 'just deeper than the ground shows');
+  assert.equal(leftToWater(top(-groundFade[1] + 0.01), groundFade), false, 'just shallower');
+  assert.equal(leftToWater(top(5), groundFade), false, 'above the sea');
+  const peak = level(-10);
+  peak.heights[8 * samples + 8] = 0.5;
+  assert.equal(leftToWater(nodeBounds({ levels: [peak] }, 1, 0)(8, 8, 8)[1], groundFade), false, 'one sample above the sea keeps it');
+});
 
 test('every height the grids draw over a node lies within its bounds, and every surface they draw is among its surfaces', () => {
   const ground = {};

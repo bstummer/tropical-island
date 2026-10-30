@@ -4,12 +4,12 @@
 //   1. beforeScene passes: the systems' own (the sun's shadow maps: meshes in
 //      pass 'shadow', drawn by sky/shadows.js; lookup tables)
 //   2. opaque pass: meshes in pass 'opaque' (every mesh's default) into the
-//      HDR target. The sky draws last in it (renderOrder skyOrder), only where
-//      nothing else did.
+//      HDR target.
 //   3. after-opaque pass: meshes in pass 'afterOpaque' into the same target.
-//      They may read the opaque scene through `opaque` (water: the seabed's
-//      colour, the depth below the surface): the opaque pass then resolves
-//      into a texture of its own, and this one into the HDR target's colour.
+//      They may read the opaque scene through `opaque` (water: what stands
+//      under the surface, and how deep): the opaque pass then resolves into a
+//      texture of its own, and this one into the HDR target's colour. The sky
+//      draws last in it (renderOrder skyOrder), only where nothing else did.
 //   4. translucent pass: meshes marked with translucent() into a layer of their
 //      own, in linear light, depth-tested against everything above.
 //   5. composite: scene x the layer's transmittance + the layer, in linear light
@@ -42,13 +42,14 @@
 //                     if given, makes their pipelines ahead (compile() below) and
 //                     resolves to the problems; returns a remover
 //   passes            the frame's passes, in the order they draw: a mesh's `pass` is one
-//   skyOrder          the sky's renderOrder: after every other opaque mesh
+//   skyOrder          the sky's renderOrder: after every other after-opaque mesh
 //   translucent(node) puts the meshes under node in the translucent pass and sets up
 //                     their materials: blending, no depth writes, and sceneOutput()
 //                     writing linear, premultiplied colour. Returns node.
 //   opaque            { color, depth }: the opaque scene, resolved, compressed like the HDR target
 //                     (sceneRadiance() reads the colour back as radiance times the
-//                     exposure, as sceneOutput() takes it) and its depth (one sample
+//                     exposure, as sceneOutput() takes it), with no sky in it and alpha
+//                     0 where nothing drew, and its depth (one sample
 //                     a pixel, texture_depth_2d), for materials of meshes in pass
 //                     'afterOpaque' only: a pass can't read what it draws into, so no
 //                     other material may bind them.
@@ -284,7 +285,7 @@ export function createFrame(ctx, display) {
       // The after-opaque pass draws on the opaque pass's samples and depth, and
       // reads the opaque scene resolved into a texture of its own.
       const opaque = use.afterOpaque ? { resolveInto: sizedTarget(opaqueTarget).color } : { keepSamples: false, keepDepth: depthAfter };
-      renderer.render(scene, camera, sceneTarget, { pass: 'opaque', clearColor: [0, 0, 0, 1], clearDepth: 0, ...opaque });
+      renderer.render(scene, camera, sceneTarget, { pass: 'opaque', clearColor: [0, 0, 0, 0], clearDepth: 0, ...opaque });
       if (use.afterOpaque) {
         resolveDepth();
         renderer.render(scene, camera, sceneTarget, { pass: 'afterOpaque', keepSamples: false, keepDepth: depthAfter });
