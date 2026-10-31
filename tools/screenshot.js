@@ -876,8 +876,11 @@ async function checkErrors(context, fileUrl, params) {
   try {
     await page.evaluate(async () => {
       const { device } = document.getElementById('view').getContext('webgpu').getConfiguration();
+      // The error arrives on its own, later under load: the device lost before it, it never would.
+      const reported = new Promise((resolve) => device.addEventListener('uncapturederror', resolve, { once: true }));
       device.createBuffer({ size: 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.MAP_WRITE }); // not allowed together
-      await new Promise((resolve) => setTimeout(resolve, 100)); // the error arrives on its own
+      await Promise.race([reported, new Promise((resolve) => setTimeout(resolve, 10000))]);
+      await new Promise((resolve) => setTimeout(resolve, 100)); // for the browser's own warning of it
       device.destroy();
       await device.lost;
     });
