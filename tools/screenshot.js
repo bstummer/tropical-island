@@ -40,7 +40,7 @@ import { parseParams } from '../src/core/params.js';
 import { sunPath } from '../src/sky/sun.js';
 import { measureCost, measureMove, measureShimmer, measureView, renderFrame, stopAnalysis } from './measure.js';
 import { decodeDataUrl, decodePng, encodePng } from './png.js';
-import { bandedShare, bandingView, brightestNear, meanColor, overdrawImage, seaRepeat, seaSeam } from './image.js';
+import { bandedShare, bandingView, brightestNear, horizonRow, meanColor, overdrawImage, seaRepeat, seaSeam } from './image.js';
 import { labelName } from './labels.js';
 import { blendLayout, cardSpan } from '../src/fixtures/blend-layout.js';
 import { coefficients, directions, texels } from '../src/fixtures/maths-cases.js';
@@ -632,16 +632,17 @@ function toolCheckTasks(context, fileUrl, query, outDir) {
         `${w.points} points: lands ${w.landing.toFixed(3)} m off the bent ray (limit ${landing}), ${w.unbent.toFixed(1)} m if it didn't bend; ` +
         `reads how deep ${w.depth.toFixed(3)} m off (limit ${depth}); its light off its twin by ${w.light.toExponential(1)} (limit ${light}), ${w.tooDeep.toFixed(2)} half a metre too deep; ` +
         `${w.above} of ${w.reads} points read what stands above the water, ${w.ghosts} a rock their ray misses; ` +
-        `what it mirrors: ${w.mirror.cells} cells off where JS mirrors them by ${w.mirror.off.toFixed(2)} (limit ${config.capture.water.mirror.off}), ${w.mirror.mistaken.toFixed(1)} half a metre off the sea; ` +
+        `what it mirrors, at ${w.mirror.strides?.join(', ')} pixels a cell: ${w.mirror.cells} cells off where JS mirrors them by ${w.mirror.off.toFixed(2)} (limit ${config.capture.water.mirror.off}), ${w.mirror.mistaken.toFixed(1)} half a metre off the sea; ` +
         `${w.mirror.holes} of ${w.mirror.inside} rays onto the block find nothing, ${w.mirror.strays} of ${w.mirror.outside} that miss it find something; ` +
         `the water reads it at all but ${w.mirror.unseen} of ${w.mirror.seen} points that mirror it, and at ${w.mirror.ghosts} of ${w.mirror.behind} behind it`
       );
     }),
     // The sea's surface has no holes: where its levels of detail meet, the sky would
     // show through (water/water.wgsl), the whole way from under the camera to the far sea.
-    () => checkFixture(context, fileUrl, { ...query, name: 'sea surface', view: 'air-pass' }, async (page, info, problems) => {
-      const { times, below } = config.capture.seaHoles;
+    () => checkFixture(context, fileUrl, { ...query, name: 'sea surface', view: config.capture.seaHoles.view }, async (page, info, problems) => {
+      const { times, below, view } = config.capture.seaHoles;
       const [width, height] = info.drawingBuffer;
+      const from = Math.ceil(horizonRow(findView(view), config.sky.atmosphere.groundRadius, height) + below);
       let holes = 0;
       for (const t of times) {
         const base64 = await page.evaluate(async (at) => {
@@ -649,10 +650,10 @@ function toolCheckTasks(context, fileUrl, query, outDir) {
           return window.__CAPTURE__.depth();
         }, t);
         const bytes = Buffer.from(base64, 'base64');
-        holes += seaHoles(new Float32Array(bytes.buffer, bytes.byteOffset, bytes.length / 4), width, height, below, config.camera.far);
+        holes += seaHoles(new Float32Array(bytes.buffer, bytes.byteOffset, bytes.length / 4), width, height, from, config.camera.far);
       }
       if (holes) problems.push({ kind: 'tool check', text: `sea surface: ${holes} pixels below the horizon show nothing drawn` });
-      return `${holes} pixels below the horizon show nothing drawn, at ${times.length} times`;
+      return `${holes} pixels from ${below} rows below the horizon (row ${from} of ${height}) show nothing drawn, at ${times.length} times`;
     }),
     // The sea doesn't repeat from high up: its tiles would show as a lattice in the
     // sun's glitter, above all as the water moves (water/water.wgsl).
@@ -669,6 +670,7 @@ function toolCheckTasks(context, fileUrl, query, outDir) {
         const image = decodeDataUrl(url);
         for (const lag of lags) worst = Math.max(worst, seaRepeat(image, view, lag));
       }
+      // NaN where no pixel's lag lies in the frame: it can't tell, which fails too.
       if (!(worst <= limit)) problems.push({ kind: 'tool check', text: `sea repeats: as alike as ${worst.toFixed(3)} a wave tile away (limit ${limit})` });
       return `as alike as ${worst.toFixed(3)} a wave tile away (limit ${limit}), at ${times.length} times`;
     }),
@@ -729,7 +731,7 @@ function toolCheckTasks(context, fileUrl, query, outDir) {
         `${w.fields.points} texels off the waves' sum by ${w.fields.gpu.toExponential(1)}, ${w.fields.time.toFixed(2)} at a time off, ${w.fields.texel.toFixed(2)} a texel off; ` +
         `a mip off its texels by ${w.mips.toExponential(1)}, a loop later by ${w.looped.toExponential(1)}; ` +
         `the sea's map at ${w.map.points} points off its twin by ${w.map.gpu.toExponential(1)}, ${w.map.off.toFixed(2)} half a texel off; ` +
-        `the surface off JS's by ${w.surface.gpu.toFixed(3)} m, ${w.surface.time.toFixed(2)} m at a time off; ` +
+        `the surface off the whole sum of its waves by ${w.surface.gpu.toFixed(3)} m, ${w.surface.time.toFixed(2)} m at a time off, ${w.surface.texel.toFixed(3)} m half a texel off; off the game's sum by ${w.surface.inJs.toFixed(3)} m; ` +
         `the surf at ${w.surf.points} points off its twin by ${w.surf.foam.toFixed(4)} in foam, ${w.surf.height.toFixed(4)} m high, ${w.surf.slope.toFixed(4)} in slope, ${w.surf.time.toFixed(2)} at a time off, its foam from far off jumping ${w.surf.seam.toFixed(4)} across the crest`
       );
     }),
@@ -1123,11 +1125,11 @@ export function seaLightProblems(s, { limit, mistaken }) {
   return problems;
 }
 
-// How many pixels from `below` of the way down a frame of distances (rows from the
-// top, as __CAPTURE__.depth gives them) lie on the far plane: where nothing was drawn.
-export function seaHoles(distances, width, height, below, far) {
+// How many pixels from row `from` down a frame of distances (rows from the top, as
+// __CAPTURE__.depth gives them) lie on the far plane: where nothing was drawn.
+export function seaHoles(distances, width, height, from, far) {
   let holes = 0;
-  for (let n = Math.ceil(below * height) * width; n < width * height; n++) {
+  for (let n = Math.max(from, 0) * width; n < width * height; n++) {
     if (distances[n] >= 0.9 * far) holes++;
   }
   return holes;
@@ -1136,7 +1138,7 @@ export function seaHoles(distances, width, height, below, far) {
 // The waves fixture's results (src/fixtures/waves.js): the GPU's fields, a mip
 // and a loop later; what the sea knows; the surface: each within its limit and
 // each mistake beyond it.
-export function wavesProblems(w, { fields, mips, looped, map, surface, least, surf }) {
+export function wavesProblems(w, { fields, mips, looped, map, surface, inJs, least, surf }) {
   const problems = [];
   if (!(w?.fields?.gpu <= fields)) problems.push(`the GPU's fields are off the waves' sum in JS by ${w?.fields?.gpu} (limit ${fields})`);
   if (!(w?.fields?.time > fields)) problems.push(`the fields at a time off are only ${w?.fields?.time} off: the check misses it`);
@@ -1147,8 +1149,10 @@ export function wavesProblems(w, { fields, mips, looped, map, surface, least, su
   if (!(w?.map?.gpu <= map)) problems.push(`what the sea knows on the GPU is off its JS twin by ${w?.map?.gpu} (limit ${map})`);
   if (!(w?.map?.off > map)) problems.push(`what the sea knows half a texel off is only ${w?.map?.off} off: the check misses it`);
   if (!(w?.map?.points >= least)) problems.push(`only ${w?.map?.points} points of the sea judged (at least ${least})`);
-  if (!(w?.surface?.gpu <= surface)) problems.push(`the surface is off JS's by ${w?.surface?.gpu} m (limit ${surface})`);
+  if (!(w?.surface?.gpu <= surface)) problems.push(`the surface is off the whole sum of its waves by ${w?.surface?.gpu} m (limit ${surface})`);
+  if (!(w?.surface?.inJs <= inJs)) problems.push(`the surface is off what the game's JS sums by ${w?.surface?.inJs} m (limit ${inJs})`);
   if (!(w?.surface?.time > surface)) problems.push(`the surface at a time off is only ${w?.surface?.time} m off: the check misses it`);
+  if (!(w?.surface?.texel > surface)) problems.push(`the surface read half a texel off is only ${w?.surface?.texel} m off: the check misses it`);
   if (!(w?.surf?.points >= least)) problems.push(`only ${w?.surf?.points} points of the surf judged (at least ${least})`);
   if (!(w?.surf?.foam <= surf.foam)) problems.push(`the surf's foam is off its JS twin by ${w?.surf?.foam} (limit ${surf.foam})`);
   if (!(w?.surf?.height <= surf.height)) problems.push(`the surf's height is off its JS twin by ${w?.surf?.height} m (limit ${surf.height})`);

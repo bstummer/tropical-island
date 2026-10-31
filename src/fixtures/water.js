@@ -14,8 +14,9 @@
 // ray lands on shows it. And what the water mirrors of the block (water/mirror.js):
 // where each cell's key says its image came from is where JS mirrors that point of
 // the block to, a mistake half a metre off the sea showing how far that would be, and
-// a ray JS mirrors onto the block finds it there, one that JS has miss it nothing.
-// window.__WATER__ holds them for tools/screenshot.js. Not part of the island.
+// a ray JS mirrors onto the block finds it there, one that JS has miss it nothing; at
+// every preset's cells (quality.waterMirror). window.__WATER__ holds them for
+// tools/screenshot.js. Not part of the island.
 import { Matrix4, Vector3, Vector4, degToRad } from '../maths/index.js';
 import shader from './water.wgsl';
 import plateShader from './water-plate.wgsl';
@@ -57,7 +58,7 @@ const BLOCK = { z: -9, halfWidth: 1.2, top: 1.2, depth: 2 };
 const SUN = { cos: 0.8, light: [0.5, 0.48, 0.42], sky: [0.06, 0.09, 0.14] };
 const MISTAKE = { deeper: 0.5 };
 const ABOVE = 1000; // what stands above the water reads as this, no point of the seabed
-const MIRROR = { stride: 2, indexBits: 22, margin: 0.3, cells: 2 }; // indexBits as mirror-project.wgsl; how far inside or outside the block (m), and how many cells from the frame's sides, a ray has to be, to tell
+const MIRROR = { indexBits: 22, margin: 0.3, cells: 2 }; // indexBits as mirror-project.wgsl; how far inside or outside the block (m), and how many cells from the frame's sides, a ray has to be, to tell
 
 export function create(ctx) {
   const { renderer, gpu, config } = ctx;
@@ -79,11 +80,12 @@ export function create(ctx) {
     const meshes = [seabedMesh, face, top];
 
     const surface = new Mesh(flat(2 * SEABED.width, 2 * SEABED.width, 8, 8), null);
-    const mirror = createMirror(gpu, config.sky.atmosphere.groundRadius, MIRROR.stride);
-    const problems = await mirror.compiled;
+    const strides = [...new Set(Object.values(config.quality.presets).map((preset) => preset.waterMirror))].sort((a, b) => a - b);
+    const mirrors = strides.map((stride) => createMirror(gpu, config.sky.atmosphere.groundRadius, stride));
+    const problems = (await Promise.all(mirrors.map((mirror) => mirror.compiled))).flat();
     if (problems.length) throw new Error(problems.join('; '));
     const uMirror = { value: null };
-    const uMirrorCells = new Vector4(1, 1, MIRROR.stride, 1e-3);
+    const uMirrorCells = new Vector4(1, 1, strides[0], 1e-3);
     const modes = [0, 1, 2].map(
       (mode) =>
         new Material({
@@ -109,7 +111,7 @@ export function create(ctx) {
       mesh.updateMatrixWorld();
     }
 
-    const result = { points: 0, landing: 0, depth: 0, light: 0, unbent: 0, tooDeep: 0, reads: 0, above: 0, ghosts: 0, mirror: { cells: 0, off: 0, mistaken: 0, inside: 0, holes: 0, outside: 0, strays: 0, wrong: 0, seen: 0, unseen: 0, behind: 0, ghosts: 0 } };
+    const result = { points: 0, landing: 0, depth: 0, light: 0, unbent: 0, tooDeep: 0, reads: 0, above: 0, ghosts: 0, mirror: { strides, cells: 0, off: 0, mistaken: 0, inside: 0, holes: 0, outside: 0, strays: 0, wrong: 0, seen: 0, unseen: 0, behind: 0, ghosts: 0 } };
     const camera = new Camera(60, 1, config.camera.near, config.camera.far);
     for (const scene of SCENES) {
       for (const material of [plateMaterial, blockMaterial, ...modes]) material.uniforms.uSeabed.value.set(scene.from, scene.slope, SEABED.reach);
@@ -120,23 +122,24 @@ export function create(ctx) {
         camera.updateProjectionMatrix();
         camera.updateMatrixWorld();
         renderer.render(meshes, camera, opaque, { clearColor: [0, 0, 0, 0], clearDepth: 0 });
-        mirror.project(opaque.depth, camera);
-        uMirror.value = mirror.cells;
-        uMirrorCells.x = mirror.across;
-        uMirrorCells.y = mirror.down;
-        const reads = [];
-        for (const material of modes) {
+        const read = async (material) => {
           surface.material = material;
           renderer.render([surface], camera, output, { clearColor: [0, 0, 0, 0] });
-          reads.push(await output.color.read());
+          return output.color.read();
+        };
+        for (const mirror of mirrors) {
+          mirror.project(opaque.depth, camera);
+          uMirror.value = mirror.cells;
+          uMirrorCells.set(mirror.across, mirror.down, mirror.stride, uMirrorCells.w);
+          // What it sees under the surface doesn't depend on the mirror, but every mode binds it.
+          if (mirror === mirrors[0]) judge(await read(modes[0]), await read(modes[1]), { height, pitch, fov, camera, water: config.water, scene }, result);
+          judgeMirror(await readKeys(gpu, mirror), { height, pitch, fov, camera, across: mirror.across, down: mirror.down, stride: mirror.stride }, result.mirror);
+          judgeMirrored(await read(modes[2]), { height, pitch, fov, camera }, result.mirror);
         }
-        judge(reads[0], reads[1], { height, pitch, fov, camera, water: config.water, scene }, result);
-        judgeMirror(await readKeys(gpu, mirror), { height, pitch, fov, camera, across: mirror.across, down: mirror.down }, result.mirror);
-        judgeMirrored(reads[2], { height, pitch, fov, camera }, result.mirror);
       }
     }
     window.__WATER__ = result;
-    mirror.dispose();
+    for (const mirror of mirrors) mirror.dispose();
     opaque.dispose();
     output.dispose();
     for (const mesh of [...meshes, surface]) mesh.geometry.dispose();
@@ -256,7 +259,7 @@ function onBlock(from, [dx, dy, dz]) {
 
 // Each cell's key against where JS says the image lies, and each cell's ray, mirrored
 // by a level sea, against the block.
-function judgeMirror(keys, { height, pitch, fov, camera, across, down }, out) {
+function judgeMirror(keys, { height, pitch, fov, camera, across, down, stride }, out) {
   const tan = Math.tan(degToRad(fov) / 2);
   const [cp, sp] = [Math.cos(degToRad(pitch)), Math.sin(degToRad(pitch))];
   const mask = 2 ** MIRROR.indexBits - 1;
@@ -272,9 +275,11 @@ function judgeMirror(keys, { height, pitch, fov, camera, across, down }, out) {
         const [si, sj] = [index % across, Math.floor(index / across)];
         // The last columns run on to the frame's sides, on purpose.
         if (si > 0 && si < across - 1) {
-          const hit = onBlock([0, height, 0], cellRay(si, sj, across, down, tan, cp, sp));
+          // Through the pixel the cell was read at (mirror-project.wgsl), as cells needn't tile the frame.
+          const sourceRay = (a, b) => cellRay(Math.min(a * stride + (stride >> 1), SIZE - 1), Math.min(b * stride + (stride >> 1), SIZE - 1), SIZE, SIZE, tan, cp, sp);
+          const hit = onBlock([0, height, 0], sourceRay(si, sj));
           // The next ray along may be the one that met it, its edge lying between them.
-          const near = hit ?? [[1, 0], [-1, 0], [0, 1], [0, -1]].map(([a, b]) => onBlock([0, height, 0], cellRay(si + a, sj + b, across, down, tan, cp, sp))).find(Boolean);
+          const near = hit ?? [[1, 0], [-1, 0], [0, 1], [0, -1]].map(([a, b]) => onBlock([0, height, 0], sourceRay(si + a, sj + b))).find(Boolean);
           if (!near) {
             out.wrong++;
           } else {

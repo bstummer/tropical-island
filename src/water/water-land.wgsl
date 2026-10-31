@@ -30,8 +30,9 @@ fn landCell(cell: vec2i, eyeW: f32) -> vec4f {
   let source = vec2u(index % across, index / across);
   let stride = u32(water.uMirrorCells.z);
   let stored = textureLoad(uOpaque, min(source * stride + stride / 2u, vec2u(textureDimensions(uOpaque)) - 1u), 0);
-  // At an edge MSAA has averaged it with what wasn't drawn: what it covers, and how much.
-  return vec4f(stored.rgb / max(stored.a, 0.25), stored.a * smoothstep(0.0, water.uMirrorCells.w, f32(source.y) / water.uMirrorCells.y));
+  // At an edge its samples are weighted by alpha (post/opaque-resolve.wgsl), so what
+  // wasn't drawn, or was left to the water, adds nothing: what it covers, and how much.
+  return vec4f(stored.rgb / max(stored.a, 1e-3), stored.a * smoothstep(0.0, water.uMirrorCells.w, f32(source.y) / water.uMirrorCells.y));
 }
 
 // How far past the point the first thing in the image at this pixel stands (m), below 0 where nothing does.

@@ -6,7 +6,7 @@
 //
 //   shore  m to the nearest waterline, across the ground: + out at sea, - on land
 //   depth  m of water over the ground as drawn: - on land
-//   toShoreA, toShoreO  the way there, a unit vector (a, o), or 0 where no sea is
+//   toShoreA, toShoreO  the way there, a unit vector (a, o), on land as at sea
 //   reef   m to the nearest line of the reef's crest under the sea: + seaward of it, - inside
 //   swell  how much of the open sea's swell reaches here, 0 to 1
 //   wind   how much of the wind's chop has grown here, 0 to 1
@@ -25,6 +25,12 @@
 // slows over shallow water, so it bends round what is shallow and bunches up over it:
 // when it reaches each place is worked out as light's would be, through water whose
 // speed goes by its depth. config.water.map holds the numbers.
+//
+// Past the map's square the open sea goes on: at() and the GPU read its edge, and
+// over `open.over` m beyond it (as far as a sample is past the square) what
+// the island held back there gives way to the open sea's: all the swell and the
+// wind, no surf, the reef `open.reef` m off, so nothing the island did runs on to
+// the horizon in a straight lane (water/sea-map.wgsl seaKept is the twin).
 
 const G = 9.81;
 const SHALLOWEST = 0.1; // m: what a wave runs over on land and at the waterline, so it gets round them
@@ -36,6 +42,11 @@ export function waveSpeed(depth, period) {
   if (depth === Infinity) return inDeep;
   const x = ((2 * Math.PI) / period) * Math.sqrt(Math.max(depth, SHALLOWEST) / G);
   return inDeep * Math.tanh(x ** 1.5) ** (2 / 3);
+}
+
+function smoothstep(from, to, x) {
+  const t = Math.min(Math.max((x - from) / (to - from), 0), 1);
+  return t * t * (3 - 2 * t);
 }
 
 // How far a wave's swell is held by the water under it, as a share of the open
@@ -160,8 +171,10 @@ export function buildSeaMap(heightmap, settings, side, blend = 0) {
     // The map at a, o in the cove's frame, into `out`, bilinear as the GPU filters it.
     at(a, o, out = {}) {
       const last = samples - 1;
-      const fx = Math.min(Math.max((a - origin[0]) / texel, 0), last);
-      const fy = Math.min(Math.max((o - origin[1]) / texel, 0), last);
+      const ua = (a - origin[0]) / texel;
+      const uo = (o - origin[1]) / texel;
+      const fx = Math.min(Math.max(ua, 0), last);
+      const fy = Math.min(Math.max(uo, 0), last);
       const i = Math.min(Math.floor(fx), last - 1);
       const j = Math.min(Math.floor(fy), last - 1);
       const tx = fx - i;
@@ -185,6 +198,15 @@ export function buildSeaMap(heightmap, settings, side, blend = 0) {
       out.wayA = mix(wayA);
       out.wayO = mix(wayO);
       out.speed = mix(speed);
+      // Past the edge, the open sea.
+      const kept = 1 - smoothstep(0, settings.open.over, texel * Math.hypot(ua - fx, uo - fy));
+      if (kept < 1) {
+        out.swell = 1 + (out.swell - 1) * kept;
+        out.wind = 1 + (out.wind - 1) * kept;
+        out.surf *= kept;
+        out.breaks *= kept;
+        out.reef = settings.open.reef + (out.reef - settings.open.reef) * kept;
+      }
       return out;
     },
   };
@@ -193,26 +215,60 @@ export function buildSeaMap(heightmap, settings, side, blend = 0) {
 // The three layers of half floats the GPU reads (water/sea-map.wgsl): shore, depth,
 // swell, wind, which every pixel of water needs; the way to the shore, breaks, reef;
 // the swell's waves. `late` stays small where they break, so half floats hold it finely.
-export function seaMapLayers({ shore, depth, reef, swell, wind, toShoreA, toShoreO, breaks, late, wayA, wayO, speed }, half) {
-  const count = shore.length;
-  const first = new Uint16Array(4 * count);
-  const second = new Uint16Array(4 * count);
-  const third = new Uint16Array(4 * count);
-  for (let n = 0; n < count; n++) {
-    first[4 * n] = half(shore[n]);
-    first[4 * n + 1] = half(depth[n]);
-    first[4 * n + 2] = half(swell[n]);
-    first[4 * n + 3] = half(wind[n]);
-    second[4 * n] = half(toShoreA[n]);
-    second[4 * n + 1] = half(toShoreO[n]);
-    second[4 * n + 2] = half(breaks[n]);
-    second[4 * n + 3] = half(reef[n]);
-    third[4 * n] = half(late[n]);
-    third[4 * n + 1] = half(wayA[n]);
-    third[4 * n + 2] = half(wayO[n]);
-    third[4 * n + 3] = half(speed[n]);
+export function seaMapLayers(map, half) {
+  return seaMapLevels(map, half, 1)[0];
+}
+
+const LAYERS = [
+  ['shore', 'depth', 'swell', 'wind'],
+  ['toShoreA', 'toShoreO', 'breaks', 'reef'],
+  ['late', 'wayA', 'wayO', 'speed'],
+];
+
+// The same at each of `levels` mip levels, [level][layer], each texel the mean of the
+// four under it, but for how deep the water is: the mean over the water under it alone,
+// as a ray that lands in the water there goes through only that (water-seen.wgsl), and
+// land counted in, its depth below 0, would make a steep shore's water read shallow
+// from afar. Over land alone, the land's. The map's side halves `levels - 1` times.
+export function seaMapLevels(map, half, levels) {
+  let size = Math.round(Math.sqrt(map.shore.length));
+  let values = LAYERS.map((names) => names.map((name) => Float32Array.from(map[name])));
+  let water = Float32Array.from(map.depth, (d) => (d > 0 ? 1 : 0)); // how much of each is water
+  const out = [];
+  for (let level = 0; level < levels; level++) {
+    if (level) {
+      if (size % 2) throw new Error(`sea map: ${Math.sqrt(map.shore.length)} samples don't halve ${levels - 1} times`);
+      const next = size / 2;
+      const mean = (v, weights) => {
+        const to = new Float32Array(next * next);
+        for (let j = 0; j < next; j++) {
+          for (let i = 0; i < next; i++) {
+            const n = 2 * j * size + 2 * i;
+            const four = [n, n + 1, n + size, n + size + 1];
+            if (!weights) {
+              to[j * next + i] = 0.25 * (v[four[0]] + v[four[1]] + v[four[2]] + v[four[3]]);
+              continue;
+            }
+            const w = weights[four[0]] + weights[four[1]] + weights[four[2]] + weights[four[3]];
+            const sum = weights[four[0]] * v[four[0]] + weights[four[1]] * v[four[1]] + weights[four[2]] * v[four[2]] + weights[four[3]] * v[four[3]];
+            to[j * next + i] = w > 0 ? sum / w : 0.25 * (v[four[0]] + v[four[1]] + v[four[2]] + v[four[3]]);
+          }
+        }
+        return to;
+      };
+      values = values.map((layer, l) => layer.map((v, c) => mean(v, l === 0 && c === 1 ? water : null)));
+      water = mean(water, null);
+      size = next;
+    }
+    out.push(
+      values.map((layer) => {
+        const texels = new Uint16Array(4 * size * size);
+        for (let n = 0; n < size * size; n++) for (let c = 0; c < 4; c++) texels[4 * n + c] = half(layer[c][n]);
+        return texels;
+      }),
+    );
   }
-  return [first, second, third];
+  return out;
 }
 
 // The drawn height and the crest's offset on the map's sample lines, read from
@@ -414,7 +470,8 @@ function signedDistance(values, samples, texel, inside, where = () => true) {
   return signed;
 }
 
-// The unit way down a distance field at each sample, from its neighbours.
+// The unit way to where a signed distance field is 0 at each sample, from its
+// neighbours: down it where it is +, up it where it is -.
 function downhill(field, samples, outA, outO) {
   const last = samples - 1;
   for (let j = 0, n = 0; j < samples; j++) {
@@ -423,8 +480,9 @@ function downhill(field, samples, outA, outO) {
       const dO = field[Math.min(j + 1, last) * samples + i] - field[Math.max(j - 1, 0) * samples + i];
       const length = Math.hypot(da, dO);
       if (length > 1e-6) {
-        outA[n] = -da / length;
-        outO[n] = -dO / length;
+        const way = field[n] < 0 ? 1 : -1;
+        outA[n] = (way * da) / length;
+        outO[n] = (way * dO) / length;
       }
     }
   }

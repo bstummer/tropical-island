@@ -50,7 +50,7 @@ const SEEN_NEAR_SHARE = 0.25;
 struct SeenBelow {
   xz: vec2f, // where the ray meets the seabed
   depth: f32, // how deep what it sees lies, m
-  on: vec4f, // what stands there: its colour as the opaque scene stores it, and how much of the pixel it covers
+  on: vec4f, // what stands there: its colour as the opaque scene stores it, unweighted, and how much of the pixel it covers
 }
 
 // From a point of the surface along `bent` (unit, down), from the depth under the
@@ -90,7 +90,8 @@ fn seenBelow(surface: vec3f, bent: vec3f, size: vec2f, deepest: f32, guess: f32,
         let met = opaqueDepthBelow(back, size);
         let stored = textureLoad(uOpaque, back, 0);
         if (stored.a > 0.0 && abs(met - shown) < max(SEEN_NEAR, SEEN_NEAR_SHARE * shown)) {
-          out.on = vec4f(stored.rgb, stored.a * smoothstep(-0.3, -0.1, met));
+          // Its samples weighted by alpha (post/opaque-resolve.wgsl): what they hold, by how much of the pixel counts.
+          out.on = vec4f(stored.rgb / stored.a, stored.a * smoothstep(-0.3, -0.1, met));
           out.depth = mix(seabed, clamp(met, 0.0, seabed), out.on.a);
           break;
         }

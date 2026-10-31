@@ -625,6 +625,7 @@ export const world = {
 // ground as drawn gives way to the seabed the water draws over `groundFade` m under
 // the sea, and needs its shading no further down than the deepest trough, `troughs` m.
 const surfPeriod = 11.25; // s between the waves of the swell that reach the reef
+const swellFrom = 15; // degrees to the right of straight out to sea the swell comes from: the map's and the waves' alike
 export const water = {
   ior: 1.33,
   dimming: [0.4, 0.04, 0.028],
@@ -649,9 +650,12 @@ export const water = {
   // they slow over the shallows. The wind blows the way the sand's does, over a fan of gusts; its chop
   // grows over `fetch` m of open water, and is held to the water under it from
   // `depth` m deep up; `grows`: how far (m) over water a metre deep it can have grown, by the square of the depth.
+  // Past the map's square the open sea goes on: what the island held back gives way to it
+  // over `open.over` m, and the reef's crest is taken to lie `open.reef` m off, past any surf's fade.
   map: {
     texel: 4,
-    swell: { from: 15, spread: [[-40, 0.1], [-20, 0.2], [0, 0.4], [20, 0.2], [40, 0.1]], breaks: 1.6, spreading: 0.08, surf: 6, round: 20, full: 0.08, period: surfPeriod },
+    open: { over: 2000, reef: 2000 },
+    swell: { from: swellFrom, spread: [[-40, 0.1], [-20, 0.2], [0, 0.4], [20, 0.2], [40, 0.1]], breaks: 1.6, spreading: 0.08, surf: 6, round: 20, full: 0.08, period: surfPeriod },
     wind: { blows: world.terrain.sand.wind, gusts: [[-15, 0.25], [0, 0.5], [15, 0.25]], fetch: 400, depth: 1, grows: 30 },
   },
   // The waves (water/spectrum.js). Three cascades, the sides of their patches in
@@ -670,10 +674,11 @@ export const water = {
   // strong; `capillaries`: how strong a third is, as much finer again, right by the eye. `wander`: how far the ripples' tile wanders where it is read (m), its
   // `reach`, `across` how far (m), so it never lines up with itself; `chopWander`: the same of the
   // chop's, in shape as well, so its tile doesn't show from high up; `highUp`: from and
-  // to what `heights` of the eye (m) the chop's crests soften into what the surface
-  // mirrors, down to a share of `chop`, and the ripples are read `ripples` mip levels softer. `gusts`:
+  // to what `heights` of the eye (m) the ripples are read `ripples` mip levels softer, so
+  // ripples a pixel wide don't crawl (the chop stays, the user's pick, PLAN.md 6.6). `gusts`:
   // patches the wind roughens and leaves smooth, moving with it: the sides (m) of the two reads of
-  // the tile they're told from, how fast they go (m/s), how much they say. `chop.spreadLeast`: how
+  // the tile they're told from, how fast they go (m/s), how much they say, and the time (s) they
+  // come round in, long enough for whole tiles in it to keep their speed and way. `chop.spreadLeast`: how
   // wide the shortest of the chop's waves spread, as its `spread` holds at its peak: the shorter a
   // wave the wider, or the ripples lie in parallel rows. `inJs`: what water/surface.js sums of each: all
   // but `rest` of its power, at most `most` waves.
@@ -686,17 +691,20 @@ export const water = {
     finest: { scale: 5.3, strength: 0.6, capillaries: 0.3 },
     wander: { reach: 6, across: 160 },
     chopWander: { reach: 40, across: 1130 },
-    highUp: { heights: [40, 250], chop: 1, ripples: 0.5 },
-    gusts: { sizes: [1700, 2300], speed: 3, strength: 1.6 },
-    swell: { height: 1.1, period: 11, gamma: 3.3, spread: 30, from: 15, choppy: 0.5, shortest: 50 },
+    highUp: { heights: [40, 250], ripples: 0.5 },
+    gusts: { sizes: [1700, 2300], speed: 3, strength: 1.6, loop: 7200 },
+    swell: { height: 1.1, period: 11, gamma: 3.3, spread: 30, from: swellFrom, choppy: 0.5, shortest: 50 },
     chop: { height: 0.55, period: 3.8, gamma: 2, spread: 6, spreadLeast: 1.5, blows: world.terrain.sand.wind, split: 2.5, choppy: 0.65, rippleSlope: 0.09 },
     inJs: { rest: 0.02, most: 400 },
   },
   // The surface's mesh: a quadtree (water/water-nodes.js) with leaves `leaf` m
-  // across, reaching `reach` m from side to side, past the horizon from any view;
+  // across, reaching `reach` m from side to side, centred on the world's origin: past
+  // the far plane (camera.far) from anywhere the island can be seen from, and so past the
+  // horizon from any eye under about 800 m, where the far plane cuts it first;
   // its nodes morph over their band's last `morph`; `tallest`: m, the most the
-  // waves move a point any way, for culling.
-  mesh: { leaf: 8, reach: 120000, morph: 0.3, tallest: 6 },
+  // waves move a point any way, for culling; `over`: m over the surface as JS sums it
+  // a point has to stand to be surely over the surface drawn (config.capture.waves.surface, with room).
+  mesh: { leaf: 8, reach: 240000, morph: 0.3, tallest: 6, over: 0.3 },
   // The variance per axis of the slopes of waves too small for any cascade,
   // which a mirror of the sun always spreads by. `glitterCeiling`: the most the
   // sun's light in the water may reach once exposed, so it keeps its colour.
@@ -731,7 +739,10 @@ export const water = {
   // wide a pixel has it soft through and through (`softOver`, m); `stands`: how high
   // whitewater stands off the water (m), how much ground that may hide at most (m), and
   // from what distance it does, to what in full (m), as nearer it's seen as it is;
-  // `facing`: how much of the sun's light it takes with the sun on the horizon.
+  // `facing`: how much of the sun's light it takes with the sun on the horizon. A set's
+  // rhythm: a wave's size beats over `sets` waves (whole sets in the loop), each beat
+  // moving it by `beat`; along its crest it varies per beat at `along` [rad/m, turns over
+  // the beat's waves]; its front `wander`s, [m, rad/m along x and z] per term.
   surf: {
     period: surfPeriod,
     height: 0.42,
@@ -755,6 +766,10 @@ export const water = {
     softOver: 0.4,
     stands: [0.5, 40, 60, 200],
     facing: 0.4,
+    sets: [8, 5],
+    beat: 0.35,
+    along: [[0.031, 3], [0.0127, 2]],
+    wander: [[3, 0.021, 0.013], [2, -0.017, 0.037], [0.5, 0.21, 0.13], [0.4, 0.71, 0.43], [0.2, -0.93, 1.37]],
   },
   // Degrees above the rim of the sea by which it has gone 63% of the way over into the sky just above it.
   horizonFade: 0.5,
@@ -947,12 +962,14 @@ export const capture = {
   // from its twin where it breaks (`surf`), which must move further at a time off; and
   // a mip level from the mean of its four texels, or a time from a loop later;
   // how far what the sea knows may land from its JS twin, in hundreds of metres
-  // and in shares; how far the surface may land from JS's smaller sum, which
-  // leaves out the small waves (m). Each one's mistake must land further.
-  waves: { fields: 0.01, mips: 0.002, looped: 0.002, map: 0.02, surface: 0.25, least: 100, surf: { foam: 0.05, height: 0.05, slope: 0.05, seam: 0.02, time: 0.2 } },
-  // The sea's surface must have no holes: at these times, from `below` of the way
-  // down the air-pass view's frame, well under its horizon, nothing lies on the far plane.
-  seaHoles: { times: [15.5, 120.25], below: 0.35 },
+  // and in shares; how far the surface may land from the whole sum of its waves
+  // in JS (m: 0.031 on SwiftShader, the texels' bilinear read; 0.137 half a texel
+  // off), and from the game's smaller sum, which leaves out the small waves (`inJs`:
+  // 0.157, 2% of the swell's power). Each one's mistake must land further.
+  waves: { fields: 0.01, mips: 0.002, looped: 0.002, map: 0.02, surface: 0.06, inJs: 0.25, least: 100, surf: { foam: 0.05, height: 0.05, slope: 0.05, seam: 0.02, time: 0.2 } },
+  // The sea's surface must have no holes: at these times, in `view`'s frame from `below`
+  // rows under the rim of the sea down, the far sea's levels of detail too, nothing lies on the far plane.
+  seaHoles: { view: 'air-pass', times: [15.5, 120.25], below: 2 },
   // The sea mustn't repeat from high up: how alike the air-sun view's fine detail may
   // be to itself a wave tile away over the water, at these times.
   seaRepeats: { view: 'air-sun', times: [12.5, 57.3], limit: 0.06 },

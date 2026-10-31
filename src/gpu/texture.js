@@ -41,7 +41,7 @@ export class Texture {
     const U = USAGE();
     let usage = U.COPY_SRC;
     if (this.samples === 1) usage |= U.TEXTURE_BINDING;
-    if (this.samples > 1 && this.isDepth) usage |= U.TEXTURE_BINDING; // the after-opaque pass reads the opaque scene's depth
+    if (this.samples > 1) usage |= U.TEXTURE_BINDING; // the opaque scene's samples resolve by a pass of their own (post/frame.js)
     if (this.render || (this.mips && !this.storage)) usage |= U.RENDER_ATTACHMENT;
     if (this.data) usage |= U.COPY_DST;
     if (this.storage) usage |= U.STORAGE_BINDING;
@@ -64,14 +64,15 @@ export class Texture {
   }
 
   // Uploads `data` (a typed array of the format's texels, tightly packed) into
-  // `layers` layers from `layer`, at mip level 0. Half floats come as Uint16Array.
-  upload(data, { layer = 0, layers = this.depth } = {}) {
-    const bytesPerRow = this.width * bytesPerTexel(this.format);
+  // `layers` layers from `layer`, at mip level `level`. Half floats come as Uint16Array.
+  upload(data, { layer = 0, layers = this.depth, level = 0 } = {}) {
+    const [width, height] = [Math.max(this.width >> level, 1), Math.max(this.height >> level, 1)];
+    const bytesPerRow = width * bytesPerTexel(this.format);
     this.gpu.queue.writeTexture(
-      { texture: this.texture, origin: [0, 0, layer] },
+      { texture: this.texture, origin: [0, 0, layer], mipLevel: level },
       data,
-      { bytesPerRow, rowsPerImage: this.height },
-      [this.width, this.height, layers],
+      { bytesPerRow, rowsPerImage: height },
+      [width, height, layers],
     );
     return this;
   }

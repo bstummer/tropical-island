@@ -1,122 +1,138 @@
 // What the sea knows of the island (water/sea-map.js): invariants over seeds
-// 1-20, on grids 8 m apart, the coarsest the reef's crest still shows on. The
-// GPU's side is the water fixture's to check.
+// 1-20, on grids 8 m apart, the coarsest the reef's crest still shows on, and
+// on the game's own grids and map for its seed. The GPU's side is the water
+// fixture's to check.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { config } from '../src/config.js';
 import { createRandom } from '../src/core/random.js';
 import { createIsland } from '../src/world/island.js';
 import { buildHeightmap } from '../src/world/heightmap.js';
-import { buildSeaMap, seaMapLayers, waveSpeed } from '../src/water/sea-map.js';
+import { fromHalfFloat, toHalfFloatNearest } from '../src/maths/index.js';
+import { buildSeaMap, seaMapLayers, seaMapLevels, waveSpeed } from '../src/water/sea-map.js';
 import { createSurface } from '../src/water/surface.js';
 import { createSurf } from '../src/water/surf.js';
 
 const side = config.world.island.cove.headlandSide;
-const terrain = { ...config.world.terrain, levels: [{ texel: 8 }] };
-const settings = { ...config.water.map, texel: 8 };
 const SEEDS = Array.from({ length: 20 }, (_, i) => i + 1);
+// The waves in one whole set of the surf: its two beats come round together (water/surf.js).
+const gcd = (a, b) => (b ? gcd(b, a % b) : a);
+const SET = (config.water.surf.sets[0] * config.water.surf.sets[1]) / gcd(...config.water.surf.sets);
 
-const built = new Map();
-function seaOf(seed) {
-  if (!built.has(seed)) {
-    const island = createIsland(createRandom(seed));
-    const heightmap = buildHeightmap(island, terrain);
-    built.set(seed, { island, heightmap, map: buildSeaMap(heightmap, settings, side, terrain.blend) });
-  }
-  return built.get(seed);
+// The way the swell runs in the world, as water/water.js has it: in from where the waves come from.
+function swellWay(island) {
+  const t = (config.water.waves.swell.from * Math.PI) / 180;
+  return island.fromCove(side * Math.sin(t), Math.cos(t)).map((v) => -v);
 }
-const heightOf = (heightmap, map, i, j) => {
-  const level = heightmap.levels[0];
-  return level.heights[j * level.samples + i];
-};
+const gameWay = swellWay(createIsland(createRandom(config.defaults.seed))); // for the surf at made-up places
 
-test('the map covers the coarsest grid, its samples on the lines of the grid, and at() reads a sample as it is', () => {
-  const { map, heightmap } = seaOf(1);
-  assert.deepEqual(map.origin, heightmap.levels[0].origin);
-  const r = createRandom(1)('test/sea-map');
+// A seed's sea map, from its grids laid out by `terrain`; `ground`: the height
+// as drawn on each of the map's lines; `surf`, as the game makes it.
+function seaFor(seed, name, terrain, settings) {
+  const island = createIsland(createRandom(seed));
+  const heightmap = buildHeightmap(island, terrain);
+  const map = buildSeaMap(heightmap, settings, side, terrain.blend);
+  const ground = new Float32Array(map.samples * map.samples);
+  for (let j = 0, k = 0; j < map.samples; j++) {
+    for (let i = 0; i < map.samples; i++, k++) ground[k] = heightmap.heightAtCove(map.origin[0] + i * map.texel, map.origin[1] + j * map.texel);
+  }
+  return { seed, name, island, heightmap, map, ground, surf: createSurf(config.water.surf, swellWay(island)) };
+}
+
+// Each seed on one grid 8 m apart, a second or so to build. The game's own, 2 m
+// round the island and its map 4 m, takes ten times that: its seed alone.
+const cheap = new Map();
+let game = null;
+function seaOf(seed) {
+  if (!cheap.has(seed)) cheap.set(seed, seaFor(seed, `seed ${seed}`, { ...config.world.terrain, levels: [{ texel: 8 }] }, { ...config.water.map, texel: 8 }));
+  return cheap.get(seed);
+}
+function eachSea(check) {
+  for (const seed of SEEDS) check(seaOf(seed));
+  game ??= seaFor(config.defaults.seed, `the game's map (seed ${config.defaults.seed})`, config.world.terrain, config.water.map);
+  check(game);
+}
+
+test('the map covers the coarsest grid, its samples on the lines of the grid, and at() reads a sample as it is', () => eachSea(({ seed, name, map, heightmap }) => {
+  const coarsest = heightmap.levels.at(-1);
+  assert.deepEqual(map.origin, coarsest.origin);
+  assert.ok(Number.isInteger(coarsest.texel / map.texel) && (map.samples - 1) * map.texel >= (coarsest.samples - 1) * coarsest.texel, `${name}: ${map.samples} samples ${map.texel} m apart over ${coarsest.samples} ${coarsest.texel} m apart`);
+  const r = createRandom(seed)('test/sea-map');
   for (let n = 0; n < 1000; n++) {
     const i = r.int(1, map.samples - 2);
     const j = r.int(1, map.samples - 2);
     const k = j * map.samples + i;
     const at = map.at(map.origin[0] + i * map.texel, map.origin[1] + j * map.texel);
-    for (const name of ['shore', 'depth', 'reef', 'swell', 'wind', 'surf', 'late', 'wayA', 'wayO', 'speed']) assert.ok(Math.abs(at[name] - map[name][k]) < 1e-5, `${name} at ${i}, ${j}: ${at[name]}, not ${map[name][k]}`);
+    for (const key of ['shore', 'depth', 'reef', 'swell', 'wind', 'surf', 'breaks', 'late', 'wayA', 'wayO', 'speed']) assert.ok(Math.abs(at[key] - map[key][k]) < 1e-5, `${name}: ${key} at ${i}, ${j}: ${at[key]}, not ${map[key][k]}`);
   }
-});
+}));
 
-test('the shore: zero on the drawn waterline, + at sea, - on land, growing by a metre a metre, its way leading to the nearest waterline', () => {
-  for (const seed of SEEDS) {
-    const { map, heightmap } = seaOf(seed);
-    const n = map.samples;
-    let sloped = 0;
-    let judged = 0;
-    let arrived = 0;
-    let walked = 0;
-    for (let j = 1; j < n - 1; j++) {
-      for (let i = 1; i < n - 1; i++) {
-        const k = j * n + i;
-        const d = map.shore[k];
-        const h = heightOf(heightmap, map, i, j);
-        assert.equal(d > 0, h < 0, `seed ${seed} at ${i}, ${j}: height ${h}, shore ${d}`);
-        if (h < 0 !== heightOf(heightmap, map, i + 1, j) < 0) assert.ok(Math.abs(d) <= map.texel, `seed ${seed} at ${i}, ${j}: the waterline lies next to it, ${d} m by the map`);
-        const grad = Math.hypot(map.shore[k + 1] - map.shore[k - 1], map.shore[k + n] - map.shore[k - n]) / (2 * map.texel);
-        judged++;
-        if (grad > 0.8 && grad < 1.15) sloped++;
-        if ((i + j) % 7 === 0 && d > 20 && d < 400) {
-          walked++;
-          const a = map.origin[0] + i * map.texel;
-          const o = map.origin[1] + j * map.texel;
-          const there = map.at(a + map.toShoreA[k] * d, o + map.toShoreO[k] * d).shore;
-          if (Math.abs(there) < 1.5 * map.texel) arrived++;
-        }
+test('the shore: zero on the drawn waterline, + at sea, - on land, growing by a metre a metre, its way leading to the nearest waterline from either side', () => eachSea(({ name, map, ground }) => {
+  const n = map.samples;
+  let sloped = 0;
+  let judged = 0;
+  const walks = { 'at sea': { walked: 0, arrived: 0 }, 'on land': { walked: 0, arrived: 0 } };
+  for (let j = 1; j < n - 1; j++) {
+    for (let i = 1; i < n - 1; i++) {
+      const k = j * n + i;
+      const d = map.shore[k];
+      const h = ground[k];
+      assert.equal(d > 0, h < 0, `${name} at ${i}, ${j}: height ${h}, shore ${d}`);
+      if (h < 0 !== ground[k + 1] < 0) assert.ok(Math.abs(d) <= map.texel, `${name} at ${i}, ${j}: the waterline lies next to it, ${d} m by the map`);
+      const grad = Math.hypot(map.shore[k + 1] - map.shore[k - 1], map.shore[k + n] - map.shore[k - n]) / (2 * map.texel);
+      judged++;
+      if (grad > 0.8 && grad < 1.15) sloped++;
+      if ((i + j) % 7 === 0 && Math.abs(d) > 20 && Math.abs(d) < 400) {
+        const walk = walks[d > 0 ? 'at sea' : 'on land'];
+        walk.walked++;
+        const a = map.origin[0] + i * map.texel;
+        const o = map.origin[1] + j * map.texel;
+        const there = map.at(a + map.toShoreA[k] * Math.abs(d), o + map.toShoreO[k] * Math.abs(d)).shore;
+        if (Math.abs(there) < 1.5 * map.texel) walk.arrived++;
       }
     }
-    // Ridges of the field, midway between shores, are few.
-    assert.ok(sloped / judged > 0.93, `seed ${seed}: the distance grows by a metre a metre at only ${((100 * sloped) / judged).toFixed(1)}% of samples`);
-    assert.ok(walked > 100 && arrived / walked > 0.95, `seed ${seed}: following the way to the shore reaches it from only ${((100 * arrived) / walked).toFixed(1)}% of ${walked} points`);
   }
-});
+  // Ridges of the field, midway between shores, are few.
+  assert.ok(sloped / judged > 0.93, `${name}: the distance grows by a metre a metre at only ${((100 * sloped) / judged).toFixed(1)}% of samples`);
+  for (const [where, { walked, arrived }] of Object.entries(walks)) {
+    assert.ok(walked > 100 && arrived / walked > 0.95, `${name}: following the way to the shore reaches it from only ${((100 * arrived) / walked).toFixed(1)}% of ${walked} points ${where}`);
+  }
+}));
 
-test('the swell: full over the open sea on the side it comes from, none over land, small in the lagoon behind the reef, and never more than the water allows', () => {
-  const { from, breaks } = settings.swell;
-  for (const seed of SEEDS) {
-    const { map, heightmap } = seaOf(seed);
-    const n = map.samples;
-    // Straight in from the open sea, along the middle of its fan, to the cove.
-    const t = (from * Math.PI) / 180;
-    const [da, dO] = [side * Math.sin(t), Math.cos(t)];
-    const out = map.at(da * 800, dO * 800);
-    assert.ok(out.reef > 0 && out.swell > 0.97, `seed ${seed}: 800 m out on the swell's side it reaches ${out.swell}`);
-    for (let j = 0; j < n; j++) {
-      for (let i = 0; i < n; i++) {
-        const k = j * n + i;
-        const h = heightOf(heightmap, map, i, j);
-        if (h >= 0) assert.equal(map.swell[k], 0, `seed ${seed}: swell ${map.swell[k]} over land at ${i}, ${j}`);
-        assert.ok(map.swell[k] <= Math.min(Math.max(-h, 0) / breaks, 1) + 1e-5, `seed ${seed}: swell ${map.swell[k]} over ${-h} m at ${i}, ${j}`);
-      }
-    }
-    // Inside the crest, behind the reef straight out from the beach but for the
-    // pass, the swell is a fraction of what stands outside it.
-    let inside = 0;
-    let count = 0;
-    for (let a = 40; a < 140; a += 8) {
-      for (let o = 60; o < 300; o += 8) {
-        const s = map.at(a, o);
-        if (s.reef < -20 && s.shore > 15) {
-          inside += s.swell;
-          count++;
-        }
-      }
-    }
-    assert.ok(count > 20 && inside / count < 0.5, `seed ${seed}: in the lagoon the swell reaches ${(inside / count).toFixed(2)} on average over ${count} points`);
+test('the swell: full over the open sea on the side it comes from, none over land, small in the lagoon behind the reef, and never more than the water allows', () => eachSea(({ name, map, ground }) => {
+  const { from, breaks } = config.water.map.swell;
+  const n = map.samples;
+  // Straight in from the open sea, along the middle of its fan, to the cove.
+  const t = (from * Math.PI) / 180;
+  const [da, dO] = [side * Math.sin(t), Math.cos(t)];
+  const out = map.at(da * 800, dO * 800);
+  assert.ok(out.reef > 0 && out.swell > 0.97, `${name}: 800 m out on the swell's side it reaches ${out.swell}`);
+  for (let k = 0; k < n * n; k++) {
+    const h = ground[k];
+    if (h >= 0) assert.equal(map.swell[k], 0, `${name}: swell ${map.swell[k]} over land at ${k % n}, ${Math.floor(k / n)}`);
+    assert.ok(map.swell[k] <= Math.min(Math.max(-h, 0) / breaks, 1) + 1e-5, `${name}: swell ${map.swell[k]} over ${-h} m at ${k % n}, ${Math.floor(k / n)}`);
   }
-});
+  // Inside the crest, behind the reef straight out from the beach but for the
+  // pass, the swell is a fraction of what stands outside it.
+  let inside = 0;
+  let count = 0;
+  for (let a = 40; a < 140; a += 8) {
+    for (let o = 60; o < 300; o += 8) {
+      const s = map.at(a, o);
+      if (s.reef < -20 && s.shore > 15) {
+        inside += s.swell;
+        count++;
+      }
+    }
+  }
+  assert.ok(count > 20 && inside / count < 0.5, `${name}: in the lagoon the swell reaches ${(inside / count).toFixed(2)} on average over ${count} points`);
+}));
 
 test('a pass lets through more swell than the reef beside it, and the surf breaks on the reef and not in the pass', () => {
   const { pass } = config.world.island.seabed;
   const [a0, o0] = pass.from;
   const [a1, o1] = pass.to;
-  for (const seed of SEEDS) {
-    const { map } = seaOf(seed);
+  eachSea(({ name, map }) => {
     // Along the pass, the deepest it gets: where it runs through the crest.
     let through = null;
     for (let t = 0; t <= 1; t += 0.02) {
@@ -124,7 +140,7 @@ test('a pass lets through more swell than the reef beside it, and the surf break
       const s = map.at(...at);
       if (!through || Math.abs(s.reef) < Math.abs(through.s.reef)) through = { at, s };
     }
-    assert.ok(through.s.surf < 0.05, `seed ${seed}: surf ${through.s.surf} in the pass`);
+    assert.ok(through.s.surf < 0.05, `${name}: surf ${through.s.surf} in the pass`);
     // Just inside it, against the same place behind the reef 120 m along the crest.
     const inside = (a, o) => {
       for (let step = 0; step < 200; step += 2) {
@@ -135,24 +151,21 @@ test('a pass lets through more swell than the reef beside it, and the surf break
     };
     const behindPass = inside(...through.at);
     const behindReef = inside(through.at[0] + 120, through.at[1]);
-    assert.ok(behindPass && behindReef, `seed ${seed}: the crest not found`);
-    assert.ok(behindPass.swell > behindReef.swell + 0.05, `seed ${seed}: behind the pass ${behindPass.swell.toFixed(2)}, behind the reef ${behindReef.swell.toFixed(2)}`);
+    assert.ok(behindPass && behindReef, `${name}: the crest not found`);
+    assert.ok(behindPass.swell > behindReef.swell + 0.05, `${name}: behind the pass ${behindPass.swell.toFixed(2)}, behind the reef ${behindReef.swell.toFixed(2)}`);
     // On the crest straight out from the beach, it breaks.
     let most = 0;
     for (let o = 200; o < 330; o += 2) most = Math.max(most, map.at(through.at[0] + 120, o).surf);
-    assert.ok(most > 0.1, `seed ${seed}: surf at most ${most} on the crest beside the pass`);
-  }
+    assert.ok(most > 0.1, `${name}: surf at most ${most} on the crest beside the pass`);
+  });
 });
 
 test('the surf whitens only near the shallows it breaks on, none in the pass, and none out at sea', () => {
-  const surf = createSurf(config.water.surf, [0, -1]);
   const { pass } = config.world.island.seabed;
   const [a0, o0] = pass.from;
   const [a1, o1] = pass.to;
-  const { ahead, fades } = config.water.surf;
-  const { period } = config.water.surf;
-  for (const seed of SEEDS) {
-    const { map } = seaOf(seed);
+  const { ahead, fades, period } = config.water.surf;
+  eachSea(({ name, map, island, surf }) => {
     let foamed = 0;
     const here = {};
     for (let j = 0; j < map.samples; j += 3) {
@@ -160,72 +173,71 @@ test('the surf whitens only near the shallows it breaks on, none in the pass, an
         const [a, o] = [map.origin[0] + i * map.texel, map.origin[1] + j * map.texel];
         map.at(a, o, here);
         if (here.swell <= 0) continue;
+        const [x, z] = island.fromCove(a, o);
         for (const t of [3, 40, 3 + period / 2]) {
-          const { foam, height } = surf(here, a, o, t);
+          const { foam, height } = surf(here, x, z, t);
           if (foam > 0.01) {
             foamed++;
-            assert.ok(here.reef < ahead + 1e-3, `seed ${seed}: foam ${foam} ${here.reef} m seaward of the crest`);
+            assert.ok(here.reef < ahead + 1e-3, `${name}: foam ${foam} ${here.reef} m seaward of the crest`);
           }
-          if (Math.abs(height) > 1e-3) assert.ok(here.reef < fades[1] + 1e-3, `seed ${seed}: a wave ${height} m high ${here.reef} m seaward of the crest`);
+          if (Math.abs(height) > 1e-3) assert.ok(here.reef < fades[1] + 1e-3, `${name}: a wave ${height} m high ${here.reef} m seaward of the crest`);
         }
       }
     }
-    assert.ok(foamed > 20, `seed ${seed}: only ${foamed} points foam`);
+    assert.ok(foamed > 20, `${name}: only ${foamed} points foam`);
     // In the pass, where it runs through the crest, it hardly breaks at all.
     let through = null;
     for (let t = 0; t <= 1; t += 0.02) {
       const s = map.at(a0 + (a1 - a0) * t, o0 + (o1 - o0) * t);
       if (!through || Math.abs(s.reef) < Math.abs(through.reef)) through = s;
     }
-    assert.ok(through.breaks < 0.2, `seed ${seed}: the surf breaks ${through.breaks} in the pass`);
+    assert.ok(through.breaks < 0.2, `${name}: the surf breaks ${through.breaks} in the pass`);
     // On the crest beside it, it does.
     let most = 0;
     for (let o = 200; o < 330; o += 2) most = Math.max(most, map.at(a1 + 240, o).breaks);
-    assert.ok(most > 0.5, `seed ${seed}: it breaks at most ${most} on the crest beside the pass`);
+    assert.ok(most > 0.5, `${name}: it breaks at most ${most} on the crest beside the pass`);
     // Away from the shallows it doesn't: the deep sea outside.
-    assert.ok(map.at(a1 + 240, 500).breaks < 0.01, `seed ${seed}: it breaks ${map.at(a1 + 240, 500).breaks} out at sea`);
-  }
+    assert.ok(map.at(a1 + 240, 500).breaks < 0.01, `${name}: it breaks ${map.at(a1 + 240, 500).breaks} out at sea`);
+  });
 });
 
 test('a wave comes in from the open sea: seen hundreds of metres out, rising as it slows, tallest near the crest, gone over the flat', () => {
-  const surf = createSurf(config.water.surf, [0, -1]);
   const { period, fades } = config.water.surf;
   const { pass } = config.world.island.seabed;
   const a = pass.to[0] + 240;
-  for (const seed of SEEDS) {
-    const { map } = seaOf(seed);
+  eachSea(({ name, map, island, surf }) => {
     // The tallest it stands at a point over a set of waves.
     const tallest = (s) => {
       let most = 0;
-      for (let t = 0; t < 40 * period; t += period / 16) most = Math.max(most, surf(s, a, s.o, t).height);
+      for (let t = 0; t < SET * period; t += period / 16) most = Math.max(most, surf(s, s.x, s.z, t).height);
       return most;
     };
     const line = [];
     for (let o = 700; o > 0; o -= 8) {
       const s = map.at(a, o);
-      s.o = o;
+      [s.x, s.z] = island.fromCove(a, o);
       if (s.swell > 0 && s.reef > -60) line.push(s);
     }
     const out = line.find((s) => s.reef < fades[0] && s.reef > 200);
     const crest = line.reduce((best, s) => (Math.abs(s.reef) < Math.abs(best.reef) ? s : best));
     const near = Math.max(...line.filter((s) => Math.abs(s.reef) < 40).map(tallest));
-    assert.ok(out, `seed ${seed}: no water 200 m and more seaward of the crest`);
-    assert.ok(tallest(out) > 0.1, `seed ${seed}: ${out.reef} m out it stands ${tallest(out)} m`);
-    assert.ok(near > 1.3 * tallest(out), `seed ${seed}: ${tallest(out)} m out at sea, ${near} m near the crest`);
-    assert.ok(crest.speed < 0.5 * map.at(a, 700).speed, `seed ${seed}: on the crest it runs at ${crest.speed} m/s`);
+    assert.ok(out, `${name}: no water 200 m and more seaward of the crest`);
+    assert.ok(tallest(out) > 0.1, `${name}: ${out.reef} m out it stands ${tallest(out)} m`);
+    assert.ok(near > 1.3 * tallest(out), `${name}: ${tallest(out)} m out at sea, ${near} m near the crest`);
+    assert.ok(crest.speed < 0.5 * map.at(a, 700).speed, `${name}: on the crest it runs at ${crest.speed} m/s`);
     const flat = line.at(-1);
-    assert.ok(tallest(flat) < 0.5 * near, `seed ${seed}: ${tallest(flat)} m high ${-flat.reef} m inside the crest, ${near} m near it`);
-  }
+    assert.ok(tallest(flat) < 0.5 * near, `${name}: ${tallest(flat)} m high ${-flat.reef} m inside the crest, ${near} m near it`);
+  });
 });
 
 test('how a wave breaks goes by its size: the big ones of a set seaward of the crest, the small on it alone, in less white', () => {
   const settings = config.water.surf;
-  const surf = createSurf(settings, [0, -1]);
+  const surf = createSurf(settings, gameWay);
   const seaward = { swell: 0.64, depth: 4, breaks: 1, reef: 4, late: 0, speed: 6 };
   const onCrest = { swell: 0.2, depth: 0.8, breaks: 1, reef: -2, late: 0, speed: 3 };
   // What each of a set's waves brings just as it passes, over what lies there in a lull.
   const whiteOf = (here) => {
-    const foam = Array.from({ length: 40 }, (_, n) => surf(here, 0, 0, (n + 0.002) * settings.period).foam);
+    const foam = Array.from({ length: SET }, (_, n) => surf(here, 0, 0, (n + 0.002) * settings.period).foam);
     const lull = Math.min(...foam);
     return foam.map((v) => v - lull);
   };
@@ -239,24 +251,24 @@ test('how a wave breaks goes by its size: the big ones of a set seaward of the c
 
 test('a wave stands taller as it slows, as settings.shoals says, as long as the water and the swell allow', () => {
   const settings = config.water.surf;
-  const surf = createSurf(settings, [0, -1]);
+  const surf = createSurf(settings, gameWay);
   // Slow enough for both to be full peaks, deep enough for neither to be held: the rest stands the same.
   const tallest = (speed) => {
     const here = { swell: 1, depth: 100, breaks: 0, reef: 0, late: 0, speed };
     let most = 0;
-    for (let t = 0; t < 40 * settings.period; t += settings.period / 64) most = Math.max(most, surf(here, 0, 0, t).height);
+    for (let t = 0; t < SET * settings.period; t += settings.period / 64) most = Math.max(most, surf(here, 0, 0, t).height);
     return most;
   };
   const ratio = tallest(2) / tallest(4);
   assert.ok(Math.abs(ratio - 2 ** settings.shoals) < 0.05, `twice as slow, ${ratio} times as tall`);
   // Over water that won't carry it, it is held to that, however slow.
   const shallow = { swell: 1, depth: 0.5, breaks: 0, reef: 0, late: 0, speed: 2 };
-  for (let t = 0; t < 40 * settings.period; t += settings.period / 64) assert.ok(surf(shallow, 0, 0, t).height <= settings.limit * 0.5 + 1e-6);
+  for (let t = 0; t < SET * settings.period; t += settings.period / 64) assert.ok(surf(shallow, 0, 0, t).height <= settings.limit * 0.5 + 1e-6);
 });
 
 test('a wave of the surf runs in: its foam\'s front lies further inside the crest as time goes on, and the whole of it comes back a set later', () => {
   const settings = config.water.surf;
-  const surf = createSurf(settings, [0, -1]);
+  const surf = createSurf(settings, gameWay);
   const speed = 4;
   // Over the flat, where it comes later the further in.
   const here = (reef) => ({ swell: reef < 0 ? 0.2 : 1, depth: 2, breaks: 1, reef, late: -reef / speed, speed });
@@ -271,30 +283,47 @@ test('a wave of the surf runs in: its foam\'s front lies further inside the cres
   assert.ok(at < -2 && at > -14, `no wave found running in: its front at ${at} m`);
   assert.ok(Math.abs(later - (at - 1.5 * speed)) < 2, `from ${at} to ${later} m in 1.5 s at ${speed} m/s`);
   // A set of waves later it all stands as it did.
-  const [now, set] = [surf(here(-4), 0, 0, t), surf(here(-4), 0, 0, t + 40 * settings.period)];
+  const [now, set] = [surf(here(-4), 0, 0, t), surf(here(-4), 0, 0, t + SET * settings.period)];
   assert.ok(Math.abs(now.foam - set.foam) < 1e-6 && Math.abs(now.height - set.height) < 1e-6, `a set later: ${JSON.stringify([now, set])}`);
-  // Far off the crest either way there is no foam.
-  assert.equal(surf(here(settings.ahead + 1), 0, 0, t).foam, 0);
+  // Far inside the crest there is no foam; seaward of it, it thins out to none
+  // `ahead` m out, with no edge where it stops.
   assert.ok(surf(here(-80), 0, 0, t).foam < 0.01);
-  // No swell, no surf.
-  assert.deepEqual(surf({ ...here(-1), swell: 0 }, 0, 0, t), { foam: 0, height: 0, slope: 0 });
+  for (const when of [t, t + 3, t + 7]) {
+    let last = surf(here(1), 0, 0, when).foam;
+    let most = last;
+    for (let reef = 1; reef < settings.ahead + 2; reef += 0.02) {
+      const { foam } = surf(here(reef), 0, 0, when);
+      assert.ok(Math.abs(foam - last) < 0.02, `foam jumps from ${last} to ${foam} ${reef.toFixed(2)} m seaward of the crest`);
+      [last, most] = [foam, Math.max(most, foam)];
+    }
+    const edge = surf(here(settings.ahead - 0.1), 0, 0, when).foam;
+    assert.ok(most > 0.1 && edge < 0.01, `seaward of the crest at most ${most} foam, ${edge} 0.1 m short of ${settings.ahead} m out`);
+  }
 });
 
-test('foam fades out where the swell runs out, with no edge where it stops', () => {
+test('foam fades out where the swell runs out, and the wave with it, with no edge where they stop', () => {
   const settings = config.water.surf;
-  const surf = createSurf(settings, [0, -1]);
-  const at = (swell, t) => surf({ swell, depth: 0.5, breaks: 1, reef: -2, late: 0, speed: 3 }, 0, 0, t).foam;
+  const surf = createSurf(settings, gameWay);
+  const place = (swell) => ({ swell, depth: 0.5, breaks: 1, reef: -2, late: 0, speed: 3 });
+  const at = (swell, t) => surf(place(swell), 0, 0, t).foam;
   for (let n = 0; n < 40; n++) {
     const t = (n + 0.002) * settings.period;
-    assert.equal(at(0, t), 0);
     assert.ok(at(0.002, t) < 0.02, `${at(0.002, t)} foam with hardly any swell`);
     for (let swell = 0; swell < 0.1; swell += 0.002) assert.ok(Math.abs(at(swell + 0.002, t) - at(swell, t)) < 0.08, `foam jumps from swell ${swell}`);
   }
+  // The tallest a wave stands over a set, up or down, shrinks to nothing with the swell.
+  const tallest = (swell) => {
+    let most = 0;
+    for (let t = 0; t < SET * settings.period; t += settings.period / 16) most = Math.max(most, Math.abs(surf(place(swell), 0, 0, t).height));
+    return most;
+  };
+  const heights = [1e-2, 1e-4, 1e-6].map(tallest);
+  assert.ok(heights[0] > heights[1] && heights[1] > heights[2] && heights[2] < 0.005, `as the swell runs out a wave stands ${heights.join(', ')} m`);
 });
 
 test('a wave stays within what the water lets it, and its slope is how its height rises along the way it runs', () => {
   const settings = config.water.surf;
-  const surf = createSurf(settings, [0, -1]);
+  const surf = createSurf(settings, gameWay);
   const r = createRandom(1)('test/surf');
   for (let n = 0; n < 2000; n++) {
     const depth = r.range(0.05, 40);
@@ -313,13 +342,19 @@ test('a wave stays within what the water lets it, and its slope is how its heigh
 
 test('the surf and what drifts over the water go on across the waves\' loop: whole sets in it, whole tiles', () => {
   const { loop } = config.water.waves;
-  const sets = loop / (40 * config.water.surf.period);
+  const sets = loop / (SET * config.water.surf.period);
   assert.ok(Number.isInteger(sets), `${sets} sets of the surf in the waves' loop`);
+  // Along a crest a wave goes on into the next set as it was: whole turns over each beat.
+  for (const [, turns] of config.water.surf.along) assert.ok(Number.isInteger(turns), `${turns} turns along a crest over a beat`);
   for (const drift of config.water.glints.drift) for (const tiles of drift) assert.ok(Number.isInteger(tiles), `glints drift ${tiles} tiles in the loop`);
 });
 
+test('the sea map\'s swell comes from where the waves\' does: the surf times its waves by the one and runs them by the other', () => {
+  assert.equal(config.water.map.swell.from, config.water.waves.swell.from);
+});
+
 test('how fast a wave runs: as over deep water where it is deep, by the root of the depth where it is shallow', () => {
-  const { period } = settings.swell;
+  const { period } = config.water.map.swell;
   const inDeep = waveSpeed(Infinity, period);
   assert.ok(Math.abs(inDeep - (9.81 * period) / (2 * Math.PI)) < 1e-9);
   assert.ok(Math.abs(waveSpeed(1000, period) / inDeep - 1) < 0.01, `${waveSpeed(1000, period)} m/s over 1000 m`);
@@ -359,13 +394,12 @@ test('the swell\'s waves get to each place later the further along their way, sl
   const right = shoal.at(middle + 200, middle - 300);
   assert.ok(left.wayA > 0.01 && right.wayA < -0.01, `behind the flanks it runs ${left.wayA} and ${right.wayA}`);
   // The island: it arrives later along its way, everywhere on the water.
-  for (const seed of [1, 7, 13]) {
-    const { map } = seaOf(seed);
+  const inDeep = waveSpeed(Infinity, config.water.map.swell.period);
+  const t = (config.water.map.swell.from * Math.PI) / 180;
+  const way = [-side * Math.sin(t), -Math.cos(t)];
+  const arrives = (a, o, s) => s.late + (a * way[0] + o * way[1]) / inDeep;
+  eachSea(({ seed, name, map }) => {
     const r = createRandom(seed)('test/sea-map/arrivals');
-    const inDeep = waveSpeed(Infinity, settings.swell.period);
-    const t = (settings.swell.from * Math.PI) / 180;
-    const way = [-side * Math.sin(t), -Math.cos(t)];
-    const arrives = (a, o, s) => s.late + (a * way[0] + o * way[1]) / inDeep;
     let judged = 0;
     let later = 0;
     for (let n = 0; n < 4000; n++) {
@@ -377,21 +411,21 @@ test('the swell\'s waves get to each place later the further along their way, sl
       judged++;
       if (arrives(a + s.wayA * step, o + s.wayO * step, map.at(a + s.wayA * step, o + s.wayO * step)) > arrives(a, o, s)) later++;
     }
-    assert.ok(judged > 500 && later / judged > 0.97, `seed ${seed}: later along its way at ${later} of ${judged} points`);
+    assert.ok(judged > 500 && later / judged > 0.97, `${name}: later along its way at ${later} of ${judged} points`);
     const far = map.at(side * Math.sin(t) * 1200, Math.cos(t) * 1200);
-    assert.ok(far.wayA * way[0] + far.wayO * way[1] > 0.95, `seed ${seed}: 1200 m out on its side it runs ${far.wayA}, ${far.wayO}`);
-  }
+    assert.ok(far.wayA * way[0] + far.wayO * way[1] > 0.95, `${name}: 1200 m out on its side it runs ${far.wayA}, ${far.wayO}`);
+  });
 });
 
 test('the lagoon lies calmer than the open sea: the reef stops the open sea\'s chop as it stops the swell', () => {
-  const spectrum = { loop: 900, cascades: [] };
-  for (const seed of SEEDS) {
-    const { map, island } = seaOf(seed);
-    const { reachInto } = createSurface(spectrum, map, island.toCove, config.water.waves.inJs, config.water.waves.ripplesLeast, config.water.waves.ripplesDepth);
-    const t = (settings.swell.from * Math.PI) / 180;
+  const waves = config.water.waves;
+  const spectrum = { loop: waves.loop, cascades: [] };
+  eachSea(({ name, map, island, surf }) => {
+    const { reachInto } = createSurface(spectrum, map, island.toCove, waves.inJs, waves.ripplesLeast, waves.ripplesDepth, surf, waves.chopWander);
+    const t = (config.water.map.swell.from * Math.PI) / 180;
     const [x, z] = island.fromCove(side * Math.sin(t) * 800, Math.cos(t) * 800);
     const out = reachInto(x, z, [0, 0, 0]);
-    assert.ok(out[1] > 0.9 && out[2] > 0.9, `seed ${seed}: 800 m out the chop reaches ${out[1]}, the ripples ${out[2]}`);
+    assert.ok(out[1] > 0.9 && out[2] > 0.9, `${name}: 800 m out the chop reaches ${out[1]}, the ripples ${out[2]}`);
     let [chop, ripples, count] = [0, 0, 0];
     for (let a = 40; a < 140; a += 8) {
       for (let o = 60; o < 300; o += 8) {
@@ -403,9 +437,9 @@ test('the lagoon lies calmer than the open sea: the reef stops the open sea\'s c
         count++;
       }
     }
-    assert.ok(count > 20, `seed ${seed}: only ${count} points of lagoon`);
-    assert.ok(chop / count < 0.4 * out[1], `seed ${seed}: chop in the lagoon ${chop / count}, out at sea ${out[1]}`);
-    assert.ok(ripples / count < 0.85 * out[2], `seed ${seed}: ripples in the lagoon ${ripples / count}, out at sea ${out[2]}`);
+    assert.ok(count > 20, `${name}: only ${count} points of lagoon`);
+    assert.ok(chop / count < 0.4 * out[1], `${name}: chop in the lagoon ${chop / count}, out at sea ${out[1]}`);
+    assert.ok(ripples / count < 0.85 * out[2], `${name}: ripples in the lagoon ${ripples / count}, out at sea ${out[2]}`);
     // All round the island: where the wind blows in over a reef, the crest breaks its chop and it starts over.
     const here = {};
     let [lagoon, rough] = [0, 0];
@@ -417,39 +451,65 @@ test('the lagoon lies calmer than the open sea: the reef stops the open sea\'s c
         if (Math.max(here.wind * here.wind, here.swell * here.swell) > 0.5) rough++;
       }
     }
-    assert.ok(lagoon > 200 && rough / lagoon < 0.35, `seed ${seed}: ${rough} of ${lagoon} points behind a reef as rough as the sea`);
-  }
+    assert.ok(lagoon > 200 && rough / lagoon < 0.35, `${name}: ${rough} of ${lagoon} points behind a reef as rough as the sea`);
+  });
 });
 
 test('surf only where the water is shallow, and only where swell arrives', () => {
-  const { breaks } = settings.swell;
-  for (const seed of SEEDS) {
-    const { map, heightmap } = seaOf(seed);
-    const n = map.samples;
-    for (let j = 1; j < n - 1; j++) {
-      for (let i = 1; i < n - 1; i++) {
-        const k = j * n + i;
-        if (map.surf[k] <= 0.01) continue;
-        assert.ok(heightOf(heightmap, map, i, j) > -breaks - 1e-3, `seed ${seed}: surf ${map.surf[k]} over ${-heightOf(heightmap, map, i, j)} m at ${i}, ${j}`);
-      }
+  const { breaks } = config.water.map.swell;
+  eachSea(({ name, map, heightmap }) => {
+    for (let k = 0; k < map.surf.length; k++) {
+      if (map.surf[k] <= 0.01) continue;
+      // The shallowest round it, half a sample each way: a crest between the lines breaks the swell on both.
+      const [i, j] = [k % map.samples, Math.floor(k / map.samples)];
+      let top = -Infinity;
+      for (const da of [-0.5, 0, 0.5]) for (const dO of [-0.5, 0, 0.5]) top = Math.max(top, heightmap.heightAtCove(map.origin[0] + (i + da) * map.texel, map.origin[1] + (j + dO) * map.texel));
+      assert.ok(top > -breaks - 1e-3, `${name}: surf ${map.surf[k]} over ${-top} m at ${i}, ${j}`);
     }
-  }
+  });
 });
 
-test('the wind: nothing on land, calm close under the lee of the island, grown by a kilometre of open water', () => {
-  for (const seed of SEEDS) {
-    const { map, heightmap } = seaOf(seed);
-    const n = map.samples;
-    for (let j = 0; j < n; j++) {
-      for (let i = 0; i < n; i++) {
-        if (heightOf(heightmap, map, i, j) >= 0) assert.equal(map.wind[j * n + i], 0);
+test('the wind: nothing on land, calm close under the lee of the island, grown by a kilometre of open water', () => eachSea(({ name, map, ground }) => {
+  for (let k = 0; k < map.wind.length; k++) if (ground[k] >= 0) assert.equal(map.wind[k], 0, `${name}: chop ${map.wind[k]} on land at ${k % map.samples}, ${Math.floor(k / map.samples)}`);
+  const near = map.at(0, 30);
+  const far = map.at(0, 1200);
+  assert.ok(near.wind < 0.3, `${name}: 30 m off the beach, with the wind off the land, chop ${near.wind}`);
+  assert.ok(far.wind > 0.8, `${name}: 1200 m out, chop only ${far.wind}`);
+}));
+
+test('past the map\'s square the open sea takes over, from its edge on and wholly by open.over m out: all the swell and the wind, no surf, the reef\'s crest far off', () => {
+  const { over, reef } = config.water.map.open;
+  const open = { swell: 1, wind: 1, surf: 0, breaks: 0, reef };
+  eachSea(({ name, map }) => {
+    const last = map.samples - 1;
+    // Straight out from samples along each edge, and from each corner.
+    const starts = [];
+    for (const along of [0.1, 0.3, 0.5, 0.7, 0.9]) {
+      const m = Math.round(along * last);
+      starts.push([0, m, [-1, 0]], [last, m, [1, 0]], [m, 0, [0, -1]], [m, last, [0, 1]]);
+    }
+    for (const [i, j] of [[0, 0], [last, 0], [0, last], [last, last]]) starts.push([i, j, [Math.sign(i - 0.5) * Math.SQRT1_2, Math.sign(j - 0.5) * Math.SQRT1_2]]);
+    for (const [i, j, [da, dO]] of starts) {
+      const [a, o] = [map.origin[0] + i * map.texel, map.origin[1] + j * map.texel];
+      const k = j * map.samples + i;
+      let before = map.at(a, o);
+      for (const key of Object.keys(open)) {
+        assert.ok(Math.abs(before[key] - map[key][k]) < 1e-5, `${name}: ${key} ${before[key]} on the edge at ${i}, ${j}, the sample there ${map[key][k]}`);
+      }
+      for (const past of [1, 500, 1000, over, 1.5 * over]) {
+        const now = map.at(a + da * past, o + dO * past);
+        for (const [key, value] of Object.entries(open)) {
+          const [was, is, edge] = [before[key] - value, now[key] - value, map[key][k] - value];
+          const at = `${name}: ${key} ${past} m past the edge at ${i}, ${j}`;
+          // Ever nearer the open sea's, never past it; a metre out still as on the edge, with no step where the square ends.
+          assert.ok(Math.abs(is) <= Math.abs(was) + 1e-6 && is * edge >= 0, `${at}: ${now[key]}, ${before[key]} nearer it`);
+          if (past === 1) assert.ok(Math.abs(is - edge) <= 1e-3 * Math.abs(edge) + 1e-6, `${at}: ${now[key]}, ${map[key][k]} on it`);
+          if (past >= over) assert.ok(Math.abs(is) <= 1e-4 * Math.max(Math.abs(value), 1), `${at}: ${now[key]}, not the open sea's ${value}`);
+        }
+        before = now;
       }
     }
-    const near = map.at(0, 30);
-    const far = map.at(0, 1200);
-    assert.ok(near.wind < 0.3, `seed ${seed}: 30 m off the beach, with the wind off the land, chop ${near.wind}`);
-    assert.ok(far.wind > 0.8, `seed ${seed}: 1200 m out, chop only ${far.wind}`);
-  }
+  });
 });
 
 test('a crest narrower than the samples are apart still holds the swell back', () => {
@@ -464,6 +524,43 @@ test('a crest narrower than the samples are apart still holds the swell back', (
   assert.equal(map.depth[k], 10, 'the map\'s own line lies in deep water');
   assert.ok(map.swell[k] <= 0.3 / config.water.map.swell.breaks + 1e-5, `the swell reaches ${map.swell[k]} beside a crest 0.3 m deep`);
   assert.ok(map.wind[k] <= 0.3 / config.water.map.wind.depth + 1e-5, `the chop reaches ${map.wind[k]} beside a crest 0.3 m deep`);
+});
+
+test('the map\'s mip levels: each texel the mean of the four under it, but how deep the water is the mean over the water alone, and over land alone the land\'s', () => {
+  const { map } = seaOf(1);
+  // As the GPU gets them, back to numbers: each within a half float's step of what it should be.
+  const levels = seaMapLevels(map, toHalfFloatNearest, 3).map((layers) => layers.map((texels) => Float32Array.from(texels, fromHalfFloat)));
+  assert.equal(levels.length, 3);
+  const near = (a, b) => Math.abs(a - b) <= 2e-3 * Math.max(Math.abs(a), Math.abs(b), 1);
+  const size = (level) => map.samples >> level;
+  let [shore, deep, all] = [0, 0, 0];
+  for (let level = 1; level < 3; level++) {
+    const [above, here] = [levels[level - 1][0], levels[level][0]];
+    const [n0, n1] = [size(level - 1), size(level)];
+    for (let j = 0; j < n1; j++) {
+      for (let i = 0; i < n1; i++) {
+        const four = [0, 1, n0, n0 + 1].map((d) => 2 * j * n0 + 2 * i + d);
+        const depths = four.map((k) => above[4 * k + 1]);
+        const at = 4 * (j * n1 + i);
+        const mean = (c) => four.reduce((sum, k) => sum + above[4 * k + c], 0) / 4;
+        assert.ok(near(here[at], mean(0)) && near(here[at + 2], mean(2)), `level ${level} at ${i}, ${j}: not the mean`);
+        if (depths.every((d) => d <= 0)) {
+          all++;
+          assert.ok(near(here[at + 1], mean(1)), `level ${level} at ${i}, ${j}: over land ${here[at + 1]}, not ${mean(1)}`);
+        } else if (depths.some((d) => d <= 0) && level === 1) {
+          // On a shore, no shallower than the water there alone: land doesn't pull it down.
+          shore++;
+          const water = depths.filter((d) => d > 0);
+          assert.ok(near(here[at + 1], water.reduce((a, b) => a + b, 0) / water.length), `on a shore at ${i}, ${j}: ${here[at + 1]} from ${depths}`);
+        } else if (depths.every((d) => d > 0)) {
+          deep++;
+        }
+      }
+    }
+  }
+  assert.ok(shore > 50 && deep > 1000 && all > 1000, `${shore} shore texels, ${deep} under water, ${all} over land`);
+  // The finest is the map itself.
+  for (let k = 0; k < map.samples * map.samples; k += 997) assert.ok(near(levels[0][0][4 * k + 1], map.depth[k]), `depth ${levels[0][0][4 * k + 1]}, not ${map.depth[k]}`);
 });
 
 test('the layers the GPU reads hold each value where water/sea-map.wgsl looks for it', () => {

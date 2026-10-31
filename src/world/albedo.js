@@ -25,6 +25,9 @@ export function sandWetness(height, { film, dry, step }, wetHeight) {
 
 // m: how soft the step at the waves' reach is, at its sharpest (chunks/wet.wgsl wetProfile).
 const SHARP = 0.004;
+// m under the sea over which sand whitens and rock turns to rubble (world/terrain.wgsl).
+const SEABED_SAND = 0.15;
+const SEABED_ROCK = 2;
 
 // How much darker wet sand is, 0 dry to 1 as dark as wet sand, at this
 // wetness (chunks/sand.wgsl sandDark).
@@ -50,13 +53,28 @@ export function greenAlbedo(band, lush, sandy, { albedo, green }, out = [0, 0, 0
 
 // The albedo of ground with these shares of sand and rock, this band, this
 // height above the sea, this lush and sandy, into `out` (linear RGB). The
-// sand darkens with its wetness as chunks/sand.wgsl darkens it.
+// sand darkens with its wetness as chunks/sand.wgsl darkens it. Under the sea
+// the ground gives way to the water's over the depths it does on screen
+// (config.water.groundFade, world/terrain.wgsl), with no step at the waterline.
 export function albedoOf(sand, rock, band, height, lush, sandy, surfaces, out = [0, 0, 0]) {
   const { albedo, wetness, wetHeight, sea, water } = surfaces;
   if (height < 0) {
-    // The seabed is sand and rock (world/island.js groundOf).
-    for (let c = 0; c < 3; c++) out[c] = sand * water.seabedSand[c] + (1 - sand) * water.seabedRock[c];
-    return seaAlbedo(-height, out, sea, water, out);
+    const depth = -height;
+    // The seabed is sand and rock (world/island.js groundOf), its sand whitening and its
+    // rock turning to rubble just under the sea as world/terrain.wgsl has them.
+    const [whiter, rubble] = [smoothstep(0, SEABED_SAND, depth), smoothstep(0, SEABED_ROCK, depth)];
+    for (let c = 0; c < 3; c++) {
+      const sandC = albedo.wetSand[c] + (water.seabedSand[c] - albedo.wetSand[c]) * whiter;
+      const rockC = albedo.rock[c] + (water.seabedRock[c] - albedo.rock[c]) * rubble;
+      out[c] = sand * sandC + (1 - sand) * rockC;
+    }
+    seaAlbedo(depth, out, sea, water, out);
+    const under = smoothstep(...water.groundFade, depth);
+    if (under < 1) {
+      const shore = albedoOf(sand, rock, band, 0, lush, sandy, surfaces, [0, 0, 0]);
+      for (let c = 0; c < 3; c++) out[c] = shore[c] + (out[c] - shore[c]) * under;
+    }
+    return out;
   }
   const dry = 1 - sandDark(sandWetness(height, wetness, wetHeight));
   const green = Math.max(1 - sand - rock, 0);

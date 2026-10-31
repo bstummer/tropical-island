@@ -167,15 +167,23 @@ export function bandedShare({ width, height, data }, { minRun = 16, maxStep = 3 
 // worth on both axes (yaw and pitch) at the centre of the frame: per pixel
 // motion in pixels (dx right, dy down; larger towards the edges), plus that
 // turn in degrees for __CAPTURE__.render({ turn }). `fov` is vertical, in degrees.
+// The row (from the top, a fraction of rows) where the planet's horizon lies in a frame
+// `height` rows tall from `view` (views.js: its height, pitch and vertical fov), with
+// `groundRadius` in km: where the rim of the sea lies.
+export function horizonRow({ position, pitch, fov }, groundRadius, height) {
+  const up = position[1] * 0.001;
+  const dip = Math.asin(Math.sqrt(up * (2 * groundRadius + up)) / (groundRadius + up));
+  const rad = Math.PI / 180;
+  return ((1 + Math.tan(pitch * rad + dip) / Math.tan((fov * rad) / 2)) * height) / 2;
+}
+
 // The jump in colour across the rim of the sea, at each of `blocks` blocks across
 // the frame that show nothing but sky and sea there (`from`, a share of the width
 // on): the largest, in levels of any channel, between the mean of `rows` rows `gap`
 // rows above the rim and as many below. The rim is where the planet's horizon lies
 // from the view's height (`groundRadius`, km).
-export function seaSeam({ width, height, data }, { position, pitch, fov }, groundRadius, { rows = 2, gap = 1, blocks = 8, from = 0 } = {}) {
-  const dip = Math.asin(Math.sqrt(position[1] * 0.001 * (2 * groundRadius + position[1] * 0.001)) / (groundRadius + position[1] * 0.001));
-  const rad = Math.PI / 180;
-  const row = ((1 + Math.tan(pitch * rad + dip) / Math.tan((fov * rad) / 2)) * height) / 2;
+export function seaSeam({ width, height, data }, view, groundRadius, { rows = 2, gap = 1, blocks = 8, from = 0 } = {}) {
+  const row = horizonRow(view, groundRadius, height);
   const mean = (x0, x1, y0, y1) => {
     const sum = [0, 0, 0];
     for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) for (let c = 0; c < 3; c++) sum[c] += data[4 * (y * width + x) + c];
@@ -196,7 +204,8 @@ export function seaSeam({ width, height, data }, { position, pitch, fov }, groun
 // How alike a frame of the sea is to itself `lag` metres away over the water ([x, z],
 // a level sea at y = 0), seen from `view` (views.js): the correlation of its fine
 // detail, 1 where it repeats exactly at that lag, about 0 where it doesn't. Only
-// pixels of the middle of the frame, whose lag lies in the frame.
+// pixels of the middle of the frame, whose lag lies in the frame: NaN where none do,
+// or where there is no detail to compare, as then it can't tell.
 export function seaRepeat({ width, height, data }, { position, yaw, pitch, fov }, [lagX, lagZ], { blur = 12, step = 2, edge = 0.1 } = {}) {
   const fine = new Float32Array(width * height);
   const smooth = new Float32Array(width * height);
@@ -231,7 +240,7 @@ export function seaRepeat({ width, height, data }, { position, yaw, pitch, fov }
       bb += other * other;
     }
   }
-  return aa > 0 && bb > 0 ? ab / Math.sqrt(aa * bb) : 0;
+  return aa > 0 && bb > 0 ? ab / Math.sqrt(aa * bb) : NaN;
 }
 
 export function panShift(width, height, fov, step) {

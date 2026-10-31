@@ -18,7 +18,8 @@
 //                                lies along the view's axis, in metres (the far plane where
 //                                nothing is), as base64 32-bit floats, rows from the top
 //   stats()                      the last frame's GPU counts and live memory (gpu-stats.js)
-//   gpuTime(frames)              median GPU milliseconds per frame, or null without timestamp queries
+//   gpuTime(frames)              median GPU milliseconds per frame, or null without timestamp queries,
+//                                over frames whose time moves on as the game's do
 //   overdraw()                   fragments shaded per pixel (overdraw.js), base64, one byte each
 //   rebuild(quality)             tears down the frame and the world and builds them again with
 //                                another preset, as a quality change in the game would; then renders
@@ -90,10 +91,15 @@ export async function runCapture(ctx, display, app, frame) {
       const stop = ctx.stats.onGpuTime((ms) => times.length < frames && times.push(ms));
       if (!stop) return null;
       // Results arrive a few frames late, and disjoint ones are dropped: render until enough came in.
+      // Each frame a 60th of a second on, as the game's are, so what runs only as time
+      // moves (the waves, water/waves.js) is timed too; then back to where it stood.
+      const at = ctx.clock.elapsed;
       for (let i = 0; times.length < frames && i < 4 * frames; i++) {
         await nextFrame();
+        ctx.clock.seek(at + (i + 1) / 60);
         frame();
       }
+      ctx.clock.seek(at);
       stop();
       times.sort((a, b) => a - b);
       return times.length ? times[Math.floor(times.length / 2)] : null;

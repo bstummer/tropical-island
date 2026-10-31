@@ -11,7 +11,7 @@
 // difference there moves rocks, culling and texels (PLAN.md Stage 4c).
 // tests/maths.test.js holds every function to three.js's answers.
 export { DEG2RAD, clamp, degToRad, radToDeg } from './scalar.js';
-export { fromHalfFloat, toHalfFloat } from './half-float.js';
+export { fromHalfFloat, toHalfFloat, toHalfFloatNearest } from './half-float.js';
 export { Vector2, Vector3, Vector4 } from './vector.js';
 export { Quaternion } from './quaternion.js';
 export { Euler } from './euler.js';

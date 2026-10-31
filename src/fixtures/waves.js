@@ -3,20 +3,24 @@
 // against the whole sum of its waves in JS (water/spectrum.js), at seeded texels
 // and a few times, hours in among them; its deliberate mistakes: a time off, and a
 // texel off. A mip level, the mean of the four texels over it, as far as half
-// floats hold. A time and the same time a loop later, the same. What the sea knows
+// floats hold. A time and the same time a loop later, given to the GPU as it is, the
+// same: the waves turn whole times in the loop. What the sea knows
 // on the GPU (water/sea-map.wgsl) against water/sea-map.js at seeded points; its
 // mistake half a texel off. And the water's displacement at seeded points, as its
-// vertex shader adds it up, against what JS's own smaller sum says
-// (water/surface.js), which only has to be near; its mistake a time well off. And the
-// surf, its foam and its height, where it breaks, against water/surf.js; its mistake a time off.
+// vertex shader adds it up, against the whole sum of its waves in JS (water/surface.js
+// with nothing left out); its mistakes a time well off, and the waves read half a texel
+// off, where the texels' corners lie; and against the game's own smaller sum, which
+// only has to be near. And the surf, its foam and its height, where it breaks, against
+// water/surf.js; its mistake a time off.
 // window.__WAVES__ holds the worst differences for tools/screenshot.js. The island
 // and the sea draw as usual meanwhile. Not part of the island.
 import shader from './waves-check.wgsl';
-import { Vector2 } from '../maths/index.js';
 import { Material } from '../gpu/material.js';
 import { createTarget, Texture } from '../gpu/texture.js';
 import { wave } from '../water/spectrum.js';
-import { surfUniforms } from '../water/water.js';
+import { createSurface } from '../water/surface.js';
+import { createSurf } from '../water/surf.js';
+import { seaUniforms, surfUniforms } from '../water/water.js';
 
 const TIMES = [0, 7.3, 3 * 3600 + 1.1];
 const POINTS = 48; // texels per cascade per time
@@ -31,7 +35,7 @@ export function create(ctx) {
     const { island } = ctx.terrain;
     const r = ctx.rng('fixtures/waves');
     const { size, cascades, loop } = spectrum;
-    const result = { fields: { points: 0, gpu: 0, time: 0, texel: 0 }, mips: 0, looped: 0, map: { points: 0, gpu: 0, off: 0 }, surface: { points: 0, gpu: 0, time: 0 } };
+    const result = { fields: { points: 0, gpu: 0, time: 0, texel: 0 }, mips: 0, looped: 0, map: { points: 0, gpu: 0, off: 0 }, surface: { points: 0, gpu: 0, time: 0, texel: 0, inJs: 0 } };
 
     const readLayer = (layer, level = 0) => waves.texture.read({ layer, level });
     // The eight fields' expected values at a texel: the sum by its definition.
@@ -103,10 +107,10 @@ export function create(ctx) {
       }
     }
 
-    // A loop later, the same.
+    // A loop later, the same: the time as the GPU is given it, not wrapped first.
     waves.compute(7.3);
     const once = await readLayer(1);
-    waves.compute(7.3 + loop);
+    waves.compute(7.3 + loop, { wrap: false });
     const again = await readLayer(1);
     for (let n = 0; n < once.length; n++) result.looped = Math.max(result.looped, Math.abs(once[n] - again[n]));
 
@@ -126,7 +130,7 @@ export function create(ctx) {
     const material = new Material({
       name: 'fixture-waves',
       shader,
-      uniforms: { uPoints: { value: input }, uSeaMap: { value: ctx.water.seaTexture }, uSeaLayout: { value: layout }, uRipplesDepth: { value: ctx.config.water.waves.ripplesDepth }, uChopWander: { value: new Vector2(ctx.config.water.waves.chopWander.reach, (2 * Math.PI) / ctx.config.water.waves.chopWander.across) }, ...surfUniforms(ctx.config.water.surf, ctx.water.swellWay), uSeconds: { value: SURFACE_TIME }, uMode: { value: 0 }, uPatches: { value: ctx.water.patches }, uWaves: { value: waves.texture } },
+      uniforms: { uPoints: { value: input }, uSeaMap: { value: ctx.water.seaTexture }, uSeaLayout: { value: layout }, ...seaUniforms(ctx.config.water), ...surfUniforms(ctx.config.water.surf, ctx.water.swellWay), uSeconds: { value: SURFACE_TIME }, uMode: { value: 0 }, uPatches: { value: ctx.water.patches }, uWaveTexels: { value: size }, uWaves: { value: waves.texture } },
     });
     const pass = renderer.fullscreen(material);
     const run = async (mode, offset = 0) => {
@@ -156,17 +160,25 @@ export function create(ctx) {
       }
     });
 
-    // The surface as its vertex shader adds it up, and as JS sums it.
+    // The surface as its vertex shader adds it up, against the whole sum of every wave in
+    // JS, which leaves nothing out; and against what the game's JS sums (water/surface.js),
+    // its largest waves, which only has to be near.
     const t = SURFACE_TIME;
     waves.compute(t);
     const moved = await run(1);
-    const inJs = [0, 0, 0];
+    const cornered = await run(4);
+    const { waves: waveSettings } = config.water;
+    const whole = createSurface(spectrum, map, island.toCove, { rest: 0, most: Infinity }, waveSettings.ripplesLeast, waveSettings.ripplesDepth, createSurf(config.water.surf, ctx.water.swellWay), waveSettings.chopWander);
+    const [all, later, inJs] = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
     points.forEach(({ xz }, n) => {
+      whole.displacement(xz[0], xz[1], t, all);
+      whole.displacement(xz[0], xz[1], t + MISTAKE.surfaceTime, later);
       surface.displacement(xz[0], xz[1], t, inJs);
       result.surface.points++;
-      result.surface.gpu = Math.max(result.surface.gpu, Math.abs(moved[4 * n + 1] - inJs[1]));
-      surface.displacement(xz[0], xz[1], t + MISTAKE.surfaceTime, inJs);
-      result.surface.time = Math.max(result.surface.time, Math.abs(moved[4 * n + 1] - inJs[1]));
+      result.surface.gpu = Math.max(result.surface.gpu, Math.abs(moved[4 * n + 1] - all[1]));
+      result.surface.texel = Math.max(result.surface.texel, Math.abs(cornered[4 * n + 1] - all[1]));
+      result.surface.time = Math.max(result.surface.time, Math.abs(moved[4 * n + 1] - later[1]));
+      result.surface.inJs = Math.max(result.surface.inJs, Math.abs(moved[4 * n + 1] - inJs[1]));
     });
 
     // The surf, at points where it breaks: its twin to a little, as both read the map.

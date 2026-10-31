@@ -782,20 +782,21 @@ test('sea light problems: the far sea on the near sea\'s light, and a mistake th
 
 // ---------------------------------------------------------------- the sea's surface
 
-test('sea holes: counts what lies on the far plane from the given share of the way down, and nothing above it', () => {
+test('sea holes: counts what lies on the far plane from the given row down, and nothing above it', () => {
   const far = 1000;
   const distances = new Float32Array(4 * 4).fill(10);
   distances[1] = far; // in the sky's rows
   distances[2 * 4 + 1] = far;
   distances[3 * 4 + 3] = 0.95 * far;
-  assert.equal(seaHoles(distances, 4, 4, 0.5, far), 2);
+  assert.equal(seaHoles(distances, 4, 4, 2, far), 2);
+  assert.equal(seaHoles(distances, 4, 4, 0, far), 3);
   assert.equal(seaHoles(new Float32Array(16).fill(0.5 * far), 4, 4, 0, far), 0);
 });
 
 // ---------------------------------------------------------------- waves fixture
 
-const goodWaves = { fields: { points: 432, gpu: 0.002, time: 0.3, texel: 0.5 }, mips: 0.001, looped: 0.0005, map: { points: 1024, gpu: 0.001, off: 0.3 }, surface: { points: 1024, gpu: 0.1, time: 0.6 }, surf: { points: 400, foam: 0.01, height: 0.01, slope: 0.01, seam: 0.005, time: 0.6 } };
-const wavesLimits = { fields: 0.01, mips: 0.002, looped: 0.002, map: 0.02, surface: 0.25, least: 100, surf: { foam: 0.05, height: 0.05, slope: 0.05, seam: 0.02, time: 0.2 } };
+const goodWaves = { fields: { points: 432, gpu: 0.002, time: 0.3, texel: 0.5 }, mips: 0.001, looped: 0.0005, map: { points: 1024, gpu: 0.001, off: 0.3 }, surface: { points: 1024, gpu: 0.03, time: 0.6, texel: 0.3, inJs: 0.15 }, surf: { points: 400, foam: 0.01, height: 0.01, slope: 0.01, seam: 0.005, time: 0.6 } };
+const wavesLimits = { fields: 0.01, mips: 0.002, looped: 0.002, map: 0.02, surface: 0.06, inJs: 0.25, least: 100, surf: { foam: 0.05, height: 0.05, slope: 0.05, seam: 0.02, time: 0.2 } };
 
 test('waves problems: fields, map and surface on their twins, and mistakes past the limits, pass', () => {
   assert.deepEqual(wavesProblems(goodWaves, wavesLimits), []);
@@ -809,15 +810,17 @@ test('waves problems: anything off its twin, a mistake the check misses, too few
   assert.match(wavesProblems({ ...goodWaves, looped: 0.1 }, wavesLimits).join(), /loop later/);
   assert.match(wavesProblems({ ...goodWaves, map: { ...goodWaves.map, gpu: 0.5 } }, wavesLimits).join(), /sea knows on the GPU/);
   assert.match(wavesProblems({ ...goodWaves, map: { ...goodWaves.map, off: 0.001 } }, wavesLimits).join(), /half a texel off .* misses it/);
-  assert.match(wavesProblems({ ...goodWaves, surface: { ...goodWaves.surface, gpu: 1 } }, wavesLimits).join(), /surface is off/);
-  assert.match(wavesProblems({ ...goodWaves, surface: { ...goodWaves.surface, time: 0.1 } }, wavesLimits).join(), /time off .* misses it/);
+  assert.match(wavesProblems({ ...goodWaves, surface: { ...goodWaves.surface, gpu: 1 } }, wavesLimits).join(), /surface is off the whole sum/);
+  assert.match(wavesProblems({ ...goodWaves, surface: { ...goodWaves.surface, inJs: 1 } }, wavesLimits).join(), /off what the game's JS sums/);
+  assert.match(wavesProblems({ ...goodWaves, surface: { ...goodWaves.surface, time: 0.04 } }, wavesLimits).join(), /time off .* misses it/);
+  assert.match(wavesProblems({ ...goodWaves, surface: { ...goodWaves.surface, texel: 0.04 } }, wavesLimits).join(), /half a texel off .* misses it/);
   assert.match(wavesProblems({ ...goodWaves, surf: { ...goodWaves.surf, foam: 0.5 } }, wavesLimits).join(), /foam is off its JS twin/);
   assert.match(wavesProblems({ ...goodWaves, surf: { ...goodWaves.surf, height: 0.5 } }, wavesLimits).join(), /height is off its JS twin/);
   assert.match(wavesProblems({ ...goodWaves, surf: { ...goodWaves.surf, slope: 0.5 } }, wavesLimits).join(), /slope is off its JS twin/);
   assert.match(wavesProblems({ ...goodWaves, surf: { ...goodWaves.surf, seam: 0.5 } }, wavesLimits).join(), /jumps by 0.5 across the crest/);
   assert.match(wavesProblems({ ...goodWaves, surf: { ...goodWaves.surf, time: 0.01 } }, wavesLimits).join(), /foam at a time off .* misses it/);
   assert.match(wavesProblems({ ...goodWaves, surf: { ...goodWaves.surf, points: 3 } }, wavesLimits).join(), /only 3 points of the surf/);
-  assert.equal(wavesProblems(undefined, wavesLimits).length, 17);
+  assert.equal(wavesProblems(undefined, wavesLimits).length, 19);
 });
 
 // ---------------------------------------------------------------- surfaces fixture

@@ -59,3 +59,15 @@ export function fromHalfFloat(bits) {
   asBits[0] = mantissa[offset[e] + (bits & 0x3ff)] + exponent[e];
   return asFloat[0];
 }
+
+// A half float's bits for `value`, rounded to the nearest half float rather than
+// cut down: for data a JS twin holds to (water/sea-map.js), where cutting would
+// shift every value one way.
+export function toHalfFloatNearest(value) {
+  const down = toHalfFloat(value);
+  // A normal half float: up a step where the highest bit cut off is set (asBits holds the 32-bit float).
+  if (shift[(asBits[0] >> 23) & 0x1ff] === 13) return (down & 0x7fff) < 0x7bff ? down + ((asBits[0] >> 12) & 1) : down;
+  if (!Number.isFinite(value) || Math.abs(value) >= MAX || (down & 0x7fff) >= 0x7bff) return down;
+  const up = down + 1; // the next half float away from zero, of the same sign
+  return Math.abs(fromHalfFloat(up) - value) < Math.abs(fromHalfFloat(down) - value) ? up : down;
+}

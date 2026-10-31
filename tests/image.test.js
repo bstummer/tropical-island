@@ -15,6 +15,7 @@ import {
   panShift,
   seaRepeat,
   seaSeam,
+  horizonRow,
   shimmer,
   shrink,
   tile,
@@ -231,6 +232,8 @@ test('sea repeat: a pattern repeating over the water is alike at its period and 
     assert.ok(seaRepeat(image, view, [period, 0]) > 0.5, `alike at its period: ${seaRepeat(image, view, [period, 0])}`);
     assert.ok(seaRepeat(image, view, [0, period]) > 0.5, `alike at its period: ${seaRepeat(image, view, [0, period])}`);
     assert.ok(Math.abs(seaRepeat(image, view, [period * 0.73, 0])) < 0.15, 'not alike at another lag');
+    // Looking up, no pixel is sea: it can't tell, and says so rather than 0.
+    assert.ok(Number.isNaN(seaRepeat(image, { ...view, pitch: 30 }, [period, 0])), 'no sea, yet a likeness');
   }
 });
 
@@ -250,6 +253,15 @@ test('sea seam: the jump across where the rim of the sea lies from the view, in 
   assert.equal(seaSeam(half, view, groundRadius, { rows: 2, gap: 1, from: 0.5 }), 100);
   assert.equal(seaSeam(greyImage(160, 90, (x, y) => (x < 80 && y >= rim ? 100 : 200)), view, groundRadius, { rows: 2, gap: 1, from: 0.5 }), 0);
   assert.throws(() => seaSeam(line, { ...view, pitch: 30 }, groundRadius), /off the frame/);
+});
+
+test('the horizon row: the middle of the frame looking at it, lower as the eye climbs, higher as it looks down', () => {
+  const groundRadius = 6371;
+  const dip = (h) => Math.asin(Math.sqrt(h * 0.001 * (2 * groundRadius + h * 0.001)) / (groundRadius + h * 0.001)) * (180 / Math.PI);
+  assert.ok(Math.abs(horizonRow({ position: [0, 50, 0], pitch: -dip(50), fov: 60 }, groundRadius, 900) - 450) < 1e-6);
+  const at = (h, pitch) => horizonRow({ position: [0, h, 0], pitch, fov: 60 }, groundRadius, 900);
+  assert.ok(at(500, 0) > at(2, 0), 'climbing, the horizon drops');
+  assert.ok(at(2, -20) < at(2, 0) && at(2, -20) > 0, 'looking down, it rises up the frame');
 });
 
 // ---------------------------------------------------------------- shimmer
