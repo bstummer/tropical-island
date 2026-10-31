@@ -69,12 +69,22 @@ fn skyIrradiance(position: vec3f, n: vec3f) -> vec3f {
   return shIrradiance(n) + groundAlbedo(position) * groundLight(position) * (0.5 - 0.5 * n.y);
 }
 
-// The sky's radiance towards dir, as the sky draws it: for reflections.
-fn skyRadiance(dir: vec3f) -> vec3f {
+// The sky's radiance towards dir, from height h km, in that height's layer of the table.
+fn skyTable(h: f32, layer: i32, dir: vec3f) -> vec3f {
   let across = dir.xz;
   let sunAcross = frame.uSunDirection.xz;
   let cosAzimuth = dot(across, sunAcross) / max(length(across) * length(sunAcross), 1e-6);
-  return textureSampleLevel(uSkyView, uSkyViewSampler, skyViewUv(frame.uSkyViewHeight, dir.y, cosAzimuth, frame.uSkyViewSize), 0.0).rgb;
+  return textureSampleLevel(uSkyView, uSkyViewSampler, skyViewUv(h, dir.y, cosAzimuth, frame.uSkyViewSize), layer, 0.0).rgb;
+}
+
+// The sky's radiance towards dir, as the sky draws it: for reflections.
+fn skyRadiance(dir: vec3f) -> vec3f {
+  return skyTable(frame.uSkyViewHeight, 0, dir);
+}
+
+// The same as seen from the sea, however high the eye: what the water mirrors.
+fn seaSkyRadiance(dir: vec3f) -> vec3f {
+  return skyTable(0.0, 1, dir);
 }
 
 // The share of light a surface with reflectance f0 at normal incidence
@@ -134,9 +144,20 @@ fn specularLight(position: vec3f, n: vec3f, view: vec3f, roughness: f32, f0: f32
 // adds the light it scatters towards the camera. Distant land and sea fade
 // into the same haze the sky shows at the horizon.
 fn aerialPerspective(radiance: vec3f, position: vec3f) -> vec3f {
+  let air = aerialAt(position);
+  return radiance * air.through + air.added;
+}
+
+struct Aerial {
+  through: vec3f, // the share of the point's light that gets through
+  added: vec3f, // the light the air adds on the way
+}
+
+// What the air between the camera and position does to the light from it.
+fn aerialAt(position: vec3f) -> Aerial {
   let ray = position - frame.cameraPosition;
   let d = length(ray);
   let uvw = aerialUvw(ray / max(d, 1e-4), d * 0.001, frame.uSunDirection);
   // The tables have one level: sampled at it, as WebGL sampled them.
-  return radiance * textureSampleLevel(uAerialTransmittance, uAerialTransmittanceSampler, uvw.yz, 0.0).rgb + textureSampleLevel(uAerial, uAerialSampler, uvw, 0.0).rgb;
+  return Aerial(textureSampleLevel(uAerialTransmittance, uAerialTransmittanceSampler, uvw.yz, 0.0).rgb, textureSampleLevel(uAerial, uAerialSampler, uvw, 0.0).rgb);
 }

@@ -58,7 +58,7 @@ fn seabedRadiance(xz: vec2f, depth: f32, dx: vec2f, dy: vec2f, sharp: f32, sun: 
   // Coral from the reef's crest back onto the flat, its edge wandering, and on what rises from the floor.
   let reef = smoothstep(-38.0, -8.0, info.w + 16.0 * beds + 6.0 * clumps);
   let coral = max(reef, smoothstep(0.3, 1.2, rises)) * smoothstep(0.05, 0.25, depth);
-  let heads = 0.75 + 0.25 * near.a;
+  let heads = 0.87 + 0.13 * near.a;
   let mottled = mix(seabedLook.uCoralDark, seabedLook.uCoralLight, smoothstep(0.1, 0.9, (0.5 + 0.3 * beds + 0.4 * clumps + 0.3 * small + 0.15 * fine) * heads));
 
   var sand = mix(seabedLook.uWetSand, seabedLook.uSeabedSand, smoothstep(0.0, 0.15, depth));

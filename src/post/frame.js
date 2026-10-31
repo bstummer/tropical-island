@@ -41,6 +41,9 @@
 //                     before the scene renders, for passes of their own; compile(),
 //                     if given, makes their pipelines ahead (compile() below) and
 //                     resolves to the problems; returns a remover
+//   afterOpaque(fn, compile)  fn(renderer) every frame between the opaque scene and the
+//                     after-opaque pass, for compute passes that read `opaque`; else as
+//                     beforeScene
 //   passes            the frame's passes, in the order they draw: a mesh's `pass` is one
 //   skyOrder          the sky's renderOrder: after every other after-opaque mesh
 //   translucent(node) puts the meshes under node in the translucent pass and sets up
@@ -124,7 +127,8 @@ export function createFrame(ctx, display) {
   const size = { width: 1, height: 1 };
   const listeners = new Set();
   const passes = new Set();
-  const compiles = new Set(); // beforeScene passes' compile()
+  const opaqueReaders = new Set(); // afterOpaque()'s
+  const compiles = new Set(); // beforeScene and afterOpaque passes' compile()
   const posts = [];
   let postCount = 0;
   const stopResize = display.onResize(() => {
@@ -231,6 +235,14 @@ export function createFrame(ctx, display) {
         compiles.delete(compile);
       };
     },
+    afterOpaque(fn, compile = null) {
+      opaqueReaders.add(fn);
+      if (compile) compiles.add(compile);
+      return () => {
+        opaqueReaders.delete(fn);
+        compiles.delete(compile);
+      };
+    },
     translucent(node) {
       const materials = new Set();
       node.traverse((child) => {
@@ -288,6 +300,7 @@ export function createFrame(ctx, display) {
       renderer.render(scene, camera, sceneTarget, { pass: 'opaque', clearColor: [0, 0, 0, 0], clearDepth: 0, ...opaque });
       if (use.afterOpaque) {
         resolveDepth();
+        for (const pass of opaqueReaders) pass(renderer);
         renderer.render(scene, camera, sceneTarget, { pass: 'afterOpaque', keepSamples: false, keepDepth: depthAfter });
       }
 
@@ -317,6 +330,7 @@ export function createFrame(ctx, display) {
       stopResize();
       listeners.clear();
       passes.clear();
+      opaqueReaders.clear();
       compiles.clear();
       posts.length = 0;
       for (const target of [sceneTarget, layerTarget, opaqueTarget, ...postTargets, outputTarget]) target?.dispose();

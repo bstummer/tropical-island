@@ -7,6 +7,7 @@ const TILE_GRASS: f32 = 3.0;
 const TILE_LITTER: f32 = 4.0;
 const TILE_LEAVES: f32 = 5.0;
 const TILE_SEABED: f32 = 6.0;
+const TILE_GLINTS: f32 = 7.0;
 
 @group(1) @binding(16) var uSurfaceTiles: texture_2d_array<f32>;
 @group(1) @binding(17) var uSurfaceTilesSampler: sampler;

@@ -79,7 +79,7 @@ when a choice is about taste or scope rather than engineering (see Open question
 | 4b | WebGPU port | The cove | done |
 | 4c | Maths of our own | The cove | done |
 | 5 | Shadows | The cove | done |
-| 6 | Ocean | The cove | in progress |
+| 6 | Ocean | The cove | review |
 | 7 | Shoreline | The cove | todo |
 | 8 | Foliage foundation and coconut palms | The cove | todo |
 | 9 | Cove vegetation | The cove | todo |
@@ -1248,7 +1248,7 @@ from the `overview`, a glowing ring round the coast.
   die down in shelter; a frame reached by jumping in time matches a fresh load, also hours in; shimmer and
   cost within their limits. Then the user watches the sea in the running game and runs the benchmark:
   everything after is tuned on these waves, and the numbers decide how far 6.4 goes.
-- [ ] **6.4 The mirror.** The water mirrors what stands over it. The sky with the sun's glow, as seen from
+- [x] **6.4 The mirror.** The water mirrors what stands over it. The sky with the sun's glow, as seen from
   the sea and not from the camera's height (Known from Stage 2). The sun as a path of glitter: separate
   glints near the camera, held in brightness as the sky's disk is, melting into a smooth band of light
   with distance, never sparkling or aliasing. The far sea keeps the near sea's average light and dissolves
@@ -1259,13 +1259,13 @@ from the `overview`, a glowing ring round the coast.
   measured across the horizon; a fixture holds the far sea's average light to the near sea's at the same
   angles, seen red on a deliberate mistake; shimmer turning and moving within its limit at every water view;
   `into-the-sun`, `shoreline` and `rocks` show the headland mirrored; the runtime time check passes.
-- [ ] **6.5 Seabed and colour.** Under the water the ground has surfaces of its own, which only the water
+- [x] **6.5 Seabed and colour.** Under the water the ground has surfaces of its own, which only the water
   shows: rippled sand on the lagoon floor, rubble and coral on the reef and the bommies, darker patches that
   break up the turquoise. They waver as the surface moves over them. Colour runs from clear turquoise to
   deep blue by the depth, at every hour. The seabed leaves room for Stage 7's caustics. Check: the swimmer's
   view and `beach` hold up with no tiling; the seabed shows no shimmer through the water; what stands above
   the water (a rock's edge) doesn't bleed into the seabed seen beside it; cost within its limits.
-- [ ] **6.6 Surf on the reef.** The white line. Waves rise, steepen and break along the reef's crest in
+- [x] **6.6 Surf on the reef.** The white line. Waves rise, steepen and break along the reef's crest in
   sets, each line of white drifting shoreward off the crest and fading, thin or gone in the pass and in the
   lee, as far as the swell reaches them. It reads as a white line from the beach, holds up from 30 m, and
   shows as a fine line from the overview. Foam is a surface of its own under the shared light, built so that
@@ -1390,6 +1390,70 @@ from the `overview`, a glowing ring round the coast.
     per pixel right by the camera, 4 far off, and at most 5 of the opaque depth. The benchmark on a mid-range laptop still has to say.
   - Left: `swimmer` still has a white patch near the camera at this `t`, smooth where calm water holds few ripples (6.4's
     glints, moved up from a thin streak); from under about 40 m the crossing crests still show faintly at the patch's ends, as a real sea's would.
+- Known from 6.4 to 6.6 (2026-10-30), built as one stretch after the user saw no more bugs in the sea and ran the
+  benchmark on it (`high`, 2562 x 1237, one desktop GPU): 60 fps throughout, GPU 6.95 ms at the median, 10.3 at worst
+  (`rocks`), about 5 where water fills the frame. That leaves room for a mirror of the land, not for a second pass
+  over the land's geometry, whose cost would grow with every plant to come.
+  - The sky it mirrors is the sky from the sea: a second layer of the sky-view table, made when the time changes, with
+    the sun's glow worked out from the sunlight table, so neither takes a texture. Three rays through what a pixel's
+    waves tilt where the eye looks low, one where it looks steeply down (`mirror.steep`): the sky by the horizon is far brighter
+    than at the height of its mean, which is what left the near water black in `into-the-sun`. One ray at moderately low angles
+    saved a little more and flipped the land's image pixel by pixel as the eye moved (2.46% shimmer in `open-sea`); the three
+    read it at their nearest cell but for the middle one, between cells, as all three between cells cost 1 ms more there.
+  - The far sea keeps the near sea's light: `seaMirrored` is now Schlick's over Gaussian slopes in closed form, held
+    down towards the horizon. Bruneton's fit, which the `sea light` check showed mirroring a third too little 15 degrees down,
+    is the part held down. The check looks from low and high at the same angles with no air and no ceiling: 4, 12, 17 and
+    17% apart (limit 20), 92% with what the far pixel's waves do left out. On the sun's path it is a mean over few
+    frames, so it is the coarsest of these.
+  - The rim of the sea goes over into the sky just above it, by the angle over it (`horizonFade`), which holds at any height of
+    the eye. The `sea seam` check: the old sea jumped 71 levels in `beach` and 110 in `horizon`, now at most 20 (limit 25) at the
+    four named times. No sun's glow in that colour: the sky's aureole goes to nothing right at the horizon, and it made a bright line.
+    Only far off, as a share of the way to the rim: by the angle alone, a wave right by a swimmer's eye turned to sky.
+  - The land in the water: pixel-projected reflections (Cichocki 2017; `water/mirror.js`). A compute pass between the opaque
+    scene and the water throws each cell of what stands above the sea (2 pixels on high) to where its mirror image lies, the
+    nearest winning by `atomicMax` on a key, so whatever order they land in; the water reads the keys from a storage buffer and
+    the colour from the opaque scene, so it takes no texture and costs the same however much stands there: plants will
+    show up in it for nothing. Where a ray lands on the image depends on how far it goes, known from the key, so nothing moves
+    at a rock's foot while a far hill stretches down the water. What is off the frame can't be mirrored: a hill's image
+    fades away over the frame's top 8% rather than ending in a line, and gets shorter as the eye looks down. The water fixture
+    holds it to JS: cells 1.2 off where JS mirrors them (limit 2), 14.5 for a mirror half a metre off the sea, no holes; and
+    what the water reads of it, in full on all 189 points that mirror the block and on none of 17 343 behind it (seen at
+    4 with that test taken out, the pale rectangle it made behind `rocks`'s far point).
+  - The glints: a tile of sparse spots (`textures/glints.js`, an eighth layer of the surface tiles, 6 MB) read three times, drifting
+    through each other, lit where their spots meet; flashes and how much of the pixel they cover are kept apart, so the
+    ceiling leaves their edges soft. The GPU's filtering melts them into the band, the same on average, with nothing to
+    pop. Tried first and dropped: cells of a hash, each a count of facets, which looked as good in a still but shimmered
+    at 2.41% in `lagoon-sun` and 3.06% in `air-headland`; the tile, 0.09 and 0.22%. The reads are skipped where there is
+    no sun to speak of. The sun's path comes to the shore because ripples now hold down to 30 cm deep (`ripplesDepth`, 1 m
+    before), so it runs on into the glow on the wet sand, whose own shader didn't change.
+- 6.5's second half came to little once the first was done: no tiling in `swimmer`, `beach`, `air-pass` or `overview`; no view
+  of the seabed over shimmer's limit; nothing above the water bleeds into the seabed beside it (the ray's walk); and `rocks`
+  shows no need for rocks' shadows on the seabed. All 16 textures stay in use: Stage 7's caustics have to be another layer of the
+  tiles, or worked out, and Stage 10's cloud shadows still have to free one.
+- 6.6, the surf, as first built: a hump standing up over the last 25 m to the crest, on timing of its own, its foam by the distance to the crest. It didn't survive the user's look (below); what stands now is written there. New views: `reef`, `surf`. `ctx.water.surfAt(x, z, t)` is for sound.
+- An outside review of the code (2026-10-30) found what stills couldn't: the fade into the sky went by angle alone, so a wave by a swimmer's
+  eye would have turned to sky; dark specks along mirrored edges, where MSAA had averaged the land with nothing; a read off the frame's
+  last column at some widths; keys overflowing on screens past 5K, now a larger stride there. All fixed, and its weak checks tightened.
+- Cost on high against 6.3's fixes, the same desktop GPU side by side at 1600 x 900: about 1 ms more where water fills the
+  frame (`beach` 3.4 to 4.3, `into-the-sun` 4.3 to 5.1, `open-sea` 4.2 to 5.3, `swimmer` 2.5 to 3.6), a little more looking steeply down at
+  it (`air-sun` 2.5 to 3.8, `lagoon-sun` 2.6 to 4.0), 0.3 on `rocks`. A compute pass, one 3 MB buffer, textures 168 to 174 MB; triangles, passes
+  and pipelines unchanged. Two more views and three more checks take CI's captures to 24 minutes, its whole job to about 27: its limit is now
+  40 minutes (`deploy.yml`), as a slower runner shouldn't stop a publish. SwiftShader frames, which run every branch: `rocks` 7.4 s, `surf` 6.7,
+  so the capture budget is now 8 s, by the user's leave (2026-10-30). The next stages should look for time to win back in both.
+- The user's picks (2026-10-31): W=b, the water clearer and more turquoise; C=a, the lagoon as it stood; S=a, the surf as it stood; G=c, stronger glitter (`glitterCeiling` 8). In. (`screenshots/picks-6.6.html`, by a scratch script, not in the repo.)
+- Known from the user's look at the sea with those picks (2026-10-31): waves that came out of nowhere, a line along a wave's top where the surf began, too much surf for such small waves, the lagoon as rough as the ocean, a snake's pattern from above, and the sun near the eye as little points. Each from a cause in the code:
+  - Out of nowhere: the wave was a separate thing from the swell behind it. Now each is a train from the open sea (`water/surf.js`, GPU twin `water-surf.wgsl`): a long low line hundreds of metres out, fading into the open sea over `surf.fades`, arriving when the sea map says. New in the map, a third layer: `late`, `wayA`, `wayO`, `speed`: the speed from the depth by the dispersion relation, the arrival by fast sweeping of the eikonal equation over it (`arrivals()`, 150 ms), so crests bend round the reef and bunch up over the shallows, with no timing or peel of their own left to tune. It stands taller as it slows (`shoals`), peaks up with a steep face by the reef, and goes round again as it dies on the flat.
+  - Too much: what breaks is now what the water takes from each wave: a wave's size in its set and along its length less the swell's own reach there. A full wave breaks seaward of the crest and whitens it through for a second or two, then lace; a small one breaks on the crest alone; the smallest not at all, so there are lulls. At any one spot 15 of a set's 40 are big enough to whiten the crest, the rest lace or less. The solid strip is gone, from above a ragged line. A wave's height at the break stays the pick's, about 0.9 m.
+  - The line along a wave's top was whitewater's reach for what stands off the water (`stands`), applied up close at a grazing angle to the far side of a crest: it now starts from 60 m off. Another seam, found by the review below, jumped the foam 0.61 across the crest from far off; a check now holds it to 0.02 (it reads 0.0002).
+  - As rough as the ocean: they were, on three counts. The ripples reached 0.6 in the lagoon and about 0.7 just outside it, as the wind blows off the land there; the chop was mostly gone from high up, leaving only the ripples, the same on both sides; and on the windward side the chop crossed the reef untouched. Now the open sea's own chop comes in with the swell and breaks on the reef as it does (`cascadeReach`, swell squared), the chop stays up from any height, its tile hidden by a wander in shape as well (`chopWander`, in JS too), and shallow water limits how far the wind's chop can have grown, by the square of the depth (`wind.grows`), so it starts over behind a crest, whatever the grid. No water behind a reef is now as rough as the sea by wind (0 of 16 176 samples; about half of them with the fetch merely scaled by depth, which also went by the grid), and 57 by swell, right at the pass.
+  - The snake: band-limited noise is a labyrinth, and that is what the ripples were from above, once the chop had gone and mips had taken what is under a pixel, all lying across the wind. Short waves now spread wider, as measured (`lobeAt`, Mitsuyasu et al. 1975), down to `chop.spreadLeast`, with the chop kept; and gusts (`waves.gusts`, `seaGusts()`) roughen and smooth the ripples in drifting patches a hundred metres and more across.
+  - Little points: the glints' tile, close enough to see its round spots. Each read now gives way once a pixel is under 0.4 of its cells (`GLINT_SAY`), its spots no more than a point or two (sizes 5.3, 7.1 and 9.7 m: no fine read, whose spots made the clusters); nearer, the waves' own shapes mirror the sun. Right by the eye a third read of the ripples, the capillaries, for the sun's mirror alone, breaks what would be a soft blob.
+- An outside review of this rework (2026-10-31), of the code and of frames over time, found, all fixed: the ceiling took the sun's light with it, leaving a gap in the path (1 cm pixels 0.84 of the smooth light, 3 cm 0.05): what it takes from a flash now stays in the smooth light; foam whitest where the swell ran out, then cut dead along a map cell's edge (`smoothstep` on the swell); the seam above; no filtering of the surf by what a pixel covers, against CLAUDE.md §8: past about half a wave a pixel now sees what the wave holds on average, its slope gone, so it doesn't blink. And from `overview` no white line, which 6.6 asks for: thin foam far off rounded down to nothing; now it covers as much as there is foam.
+- Tried and dropped, each measured: the outer two mirror rays counting for less (`open-sea` 0.54%) and held to the middle one (1.48%), as it is the middle one that flickers; sharper `fineSlopes` with a softer mirror (`swimmer` moving 0.61%, 0.44% with the old value now that capillaries break the blob); ripples held on the crest, for the dark line below, which turned out not to be the water's.
+- Tests: the new ones went red under 13 deliberate breaks of `surf.js`, `sea-map.js`, `surface.js` and `spectrum.js`, once the baseline was green (the first run wasn't, which hid three). The `waves` fixture holds the GPU to JS at 1024 points where it breaks: foam 0.003, height 5 mm, slope 0.005, and the surface 0.19 m (limit 0.25).
+- 6.7: every view at midday and golden hour and `beach`, `horizon` and `into-the-sun` at the four named times, seen. Shimmer on high: `open-sea` 0.48%, `lagoon-sun` 0.33, `swimmer` moving 0.44, all within the limit; no warnings. On `low` and `medium`, no frame-cost limit passed; `open-sea` shimmers at 0.96% and 0.72%, its land's image in coarser cells. Sea light 2.7, 14, 5 and 12% apart (limit 20); seam at most 22.5 levels (limit 25).
+- Cost on high, the same desktop GPU side by side at 1600 x 900, against 6.6 as first built: `beach` 4.65 to 4.07 (noise), `into-the-sun` 5.07 to 5.26, `open-sea` 5.19 to 5.76, `swimmer` 3.64 to 3.95, `air-sun` 3.30 to 4.44, `lagoon-sun` 4.34 to 4.36, `rocks` 5.61 to 5.68, `surf` 4.98 to 4.89, `overview` 6.04 to 6.40. Textures 174 to 184 MB, the map's third layer. The file 1.08 MB. CI's captures 26 minutes, its whole job about 29 (limit 40). The user's benchmark just before this (`high`, 2562 x 1237): 60 fps, GPU 8.32 ms at the median, 11.08 at worst (`rocks`). The next stages should look for time to win back in CI and SwiftShader.
+- Flaws, for the user's eye. Motion can't be judged from stills: the waves' timing, how long a glint lasts, and whether the gusts read as wind are the user's to say. From straight above, a wave out in the blue barely shows until it whitens. Near foam smears at a low angle, and from a low eye the middle distance reads soft: the slopes are read by the pixel's longer side (`sharper`). No spray, and a wave's face is a surface with no curl. A thin dark line along parts of the reef's crest, seen in the sun's glare from the air: the seabed's own step, 0.2 to over 4 m deep within 4 m (`overview`, and before this rework too). Dark specks at the crest as the water draws down, like seals from the air: probably rocks, 24 of the 61 within 40 m of it having their tops within 40 cm of the still sea, by the review's count. The land's image in the water stair-steps slightly right by a swimmer's eye. Looking steeply down at golden hour (`air-sun`, `air-headland`) the sea is nearly black: right by the numbers, not a wallpaper. In `into-the-sun` the near water is dark beside a bright beach, a hard meeting Stage 7's wet band may own. The reflection gets shorter as the eye looks down, as above. Whether all this holds on a mid-range laptop is the benchmark's to say.
 
 ### 7. Shoreline (the hero)
 

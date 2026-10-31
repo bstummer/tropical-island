@@ -11,9 +11,12 @@
 // out half a metre too deep. No point may read what stands above the water. A
 // second seabed lies deep and level from high cameras, as under a rock at a cliff's
 // foot: a point whose ray misses the block must not read it, though the pixel its
-// ray lands on shows it. window.__WATER__ holds them for tools/screenshot.js. Not
-// part of the island.
-import { Matrix4, Vector3, degToRad } from '../maths/index.js';
+// ray lands on shows it. And what the water mirrors of the block (water/mirror.js):
+// where each cell's key says its image came from is where JS mirrors that point of
+// the block to, a mistake half a metre off the sea showing how far that would be, and
+// a ray JS mirrors onto the block finds it there, one that JS has miss it nothing.
+// window.__WATER__ holds them for tools/screenshot.js. Not part of the island.
+import { Matrix4, Vector3, Vector4, degToRad } from '../maths/index.js';
 import shader from './water.wgsl';
 import plateShader from './water-plate.wgsl';
 import { Camera } from '../core/camera.js';
@@ -23,6 +26,7 @@ import { Mesh } from '../gpu/scene.js';
 import { createTarget } from '../gpu/texture.js';
 import { opticsUniforms } from '../water/water.js';
 import { waterLeaving } from '../water/optics.js';
+import { createMirror } from '../water/mirror.js';
 
 const SIZE = 256;
 const STEP = 3; // pixels between the points it judges
@@ -53,6 +57,7 @@ const BLOCK = { z: -9, halfWidth: 1.2, top: 1.2, depth: 2 };
 const SUN = { cos: 0.8, light: [0.5, 0.48, 0.42], sky: [0.06, 0.09, 0.14] };
 const MISTAKE = { deeper: 0.5 };
 const ABOVE = 1000; // what stands above the water reads as this, no point of the seabed
+const MIRROR = { stride: 2, indexBits: 22, margin: 0.3, cells: 2 }; // indexBits as mirror-project.wgsl; how far inside or outside the block (m), and how many cells from the frame's sides, a ray has to be, to tell
 
 export function create(ctx) {
   const { renderer, gpu, config } = ctx;
@@ -74,7 +79,12 @@ export function create(ctx) {
     const meshes = [seabedMesh, face, top];
 
     const surface = new Mesh(flat(2 * SEABED.width, 2 * SEABED.width, 8, 8), null);
-    const modes = [0, 1].map(
+    const mirror = createMirror(gpu, config.sky.atmosphere.groundRadius, MIRROR.stride);
+    const problems = await mirror.compiled;
+    if (problems.length) throw new Error(problems.join('; '));
+    const uMirror = { value: null };
+    const uMirrorCells = new Vector4(1, 1, MIRROR.stride, 1e-3);
+    const modes = [0, 1, 2].map(
       (mode) =>
         new Material({
           name: 'fixture-water',
@@ -89,6 +99,8 @@ export function create(ctx) {
             uSunLight: { value: new Vector3(...SUN.light) },
             uSkyLight: { value: new Vector3(...SUN.sky) },
             uSeabed: seabedUniform(),
+            uMirror,
+            uMirrorCells: { value: uMirrorCells },
           },
         }),
     );
@@ -97,7 +109,7 @@ export function create(ctx) {
       mesh.updateMatrixWorld();
     }
 
-    const result = { points: 0, landing: 0, depth: 0, light: 0, unbent: 0, tooDeep: 0, reads: 0, above: 0, ghosts: 0 };
+    const result = { points: 0, landing: 0, depth: 0, light: 0, unbent: 0, tooDeep: 0, reads: 0, above: 0, ghosts: 0, mirror: { cells: 0, off: 0, mistaken: 0, inside: 0, holes: 0, outside: 0, strays: 0, wrong: 0, seen: 0, unseen: 0, behind: 0, ghosts: 0 } };
     const camera = new Camera(60, 1, config.camera.near, config.camera.far);
     for (const scene of SCENES) {
       for (const material of [plateMaterial, blockMaterial, ...modes]) material.uniforms.uSeabed.value.set(scene.from, scene.slope, SEABED.reach);
@@ -108,6 +120,10 @@ export function create(ctx) {
         camera.updateProjectionMatrix();
         camera.updateMatrixWorld();
         renderer.render(meshes, camera, opaque, { clearColor: [0, 0, 0, 0], clearDepth: 0 });
+        mirror.project(opaque.depth, camera);
+        uMirror.value = mirror.cells;
+        uMirrorCells.x = mirror.across;
+        uMirrorCells.y = mirror.down;
         const reads = [];
         for (const material of modes) {
           surface.material = material;
@@ -115,9 +131,12 @@ export function create(ctx) {
           reads.push(await output.color.read());
         }
         judge(reads[0], reads[1], { height, pitch, fov, camera, water: config.water, scene }, result);
+        judgeMirror(await readKeys(gpu, mirror), { height, pitch, fov, camera, across: mirror.across, down: mirror.down }, result.mirror);
+        judgeMirrored(reads[2], { height, pitch, fov, camera }, result.mirror);
       }
     }
     window.__WATER__ = result;
+    mirror.dispose();
     opaque.dispose();
     output.dispose();
     for (const mesh of [...meshes, surface]) mesh.geometry.dispose();
@@ -197,6 +216,143 @@ function judge(seen, light, { height, pitch, fov, camera, water, scene }, result
       }
     }
   }
+}
+
+// The mirror's keys, as a Uint32Array.
+async function readKeys(gpu, mirror) {
+  const size = mirror.cells.size;
+  const staging = gpu.device.createBuffer({ label: 'fixture-water keys', size, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+  const encoder = gpu.device.createCommandEncoder({ label: 'fixture-water keys' });
+  encoder.copyBufferToBuffer(mirror.cells, 0, staging, 0, size);
+  gpu.queue.submit([encoder.finish()]);
+  await staging.mapAsync(GPUMapMode.READ);
+  const keys = new Uint32Array(staging.getMappedRange().slice(0));
+  staging.destroy();
+  return keys;
+}
+
+// What the camera looks along through a cell, as judge() has it.
+function cellRay(i, j, across, down, tan, cp, sp) {
+  const vx = ((2 * (i + 0.5)) / across - 1) * tan;
+  const vy = (1 - (2 * (j + 0.5)) / down) * tan;
+  const length = Math.hypot(vx, vy, 1);
+  return [vx / length, (vy * cp + sp) / length, (vy * sp - cp) / length];
+}
+
+// Where from height a ray first meets the block above the sea, if it does.
+function onBlock(from, [dx, dy, dz]) {
+  const hits = [];
+  const toFace = (BLOCK.z - from[2]) / dz;
+  const atFace = [from[0] + toFace * dx, from[1] + toFace * dy];
+  if (toFace > 0 && Math.abs(atFace[0]) <= BLOCK.halfWidth && atFace[1] >= 0 && atFace[1] <= BLOCK.top) hits.push([toFace, atFace[0], atFace[1], BLOCK.z]);
+  if (dy !== 0) {
+    const toTop = (BLOCK.top - from[1]) / dy;
+    const [x, z] = [from[0] + toTop * dx, from[2] + toTop * dz];
+    if (toTop > 0 && Math.abs(x) <= BLOCK.halfWidth && z <= BLOCK.z && z >= BLOCK.z - BLOCK.depth) hits.push([toTop, x, BLOCK.top, z]);
+  }
+  hits.sort((a, b) => a[0] - b[0]);
+  return hits[0]?.slice(1) ?? null;
+}
+
+// Each cell's key against where JS says the image lies, and each cell's ray, mirrored
+// by a level sea, against the block.
+function judgeMirror(keys, { height, pitch, fov, camera, across, down }, out) {
+  const tan = Math.tan(degToRad(fov) / 2);
+  const [cp, sp] = [Math.cos(degToRad(pitch)), Math.sin(degToRad(pitch))];
+  const mask = 2 ** MIRROR.indexBits - 1;
+  const imageCell = (x, y, z) => {
+    const on = new Vector3(x, y, z).project(camera);
+    return [((on.x + 1) / 2) * across, ((1 - on.y) / 2) * down];
+  };
+  for (let j = 0; j < down; j++) {
+    for (let i = 0; i < across; i++) {
+      const key = keys[j * across + i];
+      if (key) {
+        const index = key & mask;
+        const [si, sj] = [index % across, Math.floor(index / across)];
+        // The last columns run on to the frame's sides, on purpose.
+        if (si > 0 && si < across - 1) {
+          const hit = onBlock([0, height, 0], cellRay(si, sj, across, down, tan, cp, sp));
+          // The next ray along may be the one that met it, its edge lying between them.
+          const near = hit ?? [[1, 0], [-1, 0], [0, 1], [0, -1]].map(([a, b]) => onBlock([0, height, 0], cellRay(si + a, sj + b, across, down, tan, cp, sp))).find(Boolean);
+          if (!near) {
+            out.wrong++;
+          } else {
+            const [x, y, z] = near;
+            const [a, b] = imageCell(x, -y, z);
+            const [c, d] = imageCell(x, -y - 2 * 0.5, z);
+            out.cells++;
+            // The ray through the cell's middle, and the image falls one row further too.
+            out.off = Math.max(out.off, Math.hypot(a - (i + 0.5), Math.max(Math.abs(b - (j + 0.5)) - 1, 0)));
+            out.mistaken = Math.max(out.mistaken, Math.abs(d - (j + 0.5)));
+          }
+        }
+      }
+      // Off the sides there is what runs on; near them, what's rounded.
+      if (i < MIRROR.cells || i >= across - MIRROR.cells || j < MIRROR.cells || j >= down - MIRROR.cells) continue;
+      const [dx, dy, dz] = cellRay(i, j, across, down, tan, cp, sp);
+      if (dy >= -0.02) continue;
+      const t = -height / dy;
+      const from = [t * dx, 0, t * dz];
+      const direct = onBlock([0, height, 0], [dx, dy, dz]);
+      if (direct) continue; // the block stands in front of the sea here
+      if (from[2] < BLOCK.z) continue; // the sea behind the block mirrors its back, which the eye can't see
+      const up = [dx, -dy, dz];
+      const toFace = (BLOCK.z - from[2]) / dz;
+      const [x, y] = [from[0] + toFace * up[0], toFace * up[1]];
+      const inside = Math.abs(x) < BLOCK.halfWidth - MIRROR.margin && y > MIRROR.margin && y < BLOCK.top - MIRROR.margin;
+      const outside = Math.abs(x) > BLOCK.halfWidth + MIRROR.margin || y > BLOCK.top + MIRROR.margin;
+      if (inside) {
+        // Its image has to lie on the frame: what is off the frame can't be mirrored.
+        const fromFace = cellOnFrame(x, y, BLOCK.z, camera);
+        if (fromFace) {
+          out.inside++;
+          if (!key) out.holes++;
+        }
+      } else if (outside) {
+        out.outside++;
+        if (key) out.strays++;
+      }
+    }
+  }
+}
+
+// What the water itself reads, per point of the surface in view: land where JS's
+// mirrored ray meets the block's face, and nothing behind the block, which it can't
+// mirror however the image lies: the ghost a point of the sea far off would read.
+function judgeMirrored(read, { height, pitch, fov, camera }, out) {
+  const tan = Math.tan(degToRad(fov) / 2);
+  const [cp, sp] = [Math.cos(degToRad(pitch)), Math.sin(degToRad(pitch))];
+  for (let j = 4; j < SIZE - 4; j += STEP) {
+    for (let i = 4; i < SIZE - 4; i += STEP) {
+      const [dx, dy, dz] = cellRay(i, j, SIZE, SIZE, tan, cp, sp);
+      if (dy >= -0.02) continue;
+      if (onBlock([0, height, 0], [dx, dy, dz])) continue; // the block stands in front of the sea here
+      const t = -height / dy;
+      const [x, z] = [t * dx, t * dz];
+      const share = read[4 * (j * SIZE + i) + 3];
+      if (z < BLOCK.z) {
+        // Well behind it, past the block's own foot in the image's cells.
+        if (z < BLOCK.z - BLOCK.depth - 1) {
+          out.behind++;
+          if (Math.max(share, read[4 * (j * SIZE + i)]) > 0.01) out.ghosts++;
+        }
+        continue;
+      }
+      const toFace = (BLOCK.z - z) / dz;
+      const [fx, fy] = [x + toFace * dx, -toFace * dy];
+      if (Math.abs(fx) < BLOCK.halfWidth - MIRROR.margin && fy > MIRROR.margin && fy < BLOCK.top - MIRROR.margin && cellOnFrame(fx, fy, BLOCK.z, camera)) {
+        out.seen++;
+        if (share < 0.5) out.unseen++;
+      }
+    }
+  }
+}
+
+// Whether a point in the world lies on the frame.
+function cellOnFrame(x, y, z, camera) {
+  const on = new Vector3(x, y, z).project(camera);
+  return Math.abs(on.x) < 1 && Math.abs(on.y) < 1;
 }
 
 // Whether the block stands between the camera and the surface `t` along this ray.

@@ -152,9 +152,9 @@ systems are listed in `WORLD_SYSTEMS` in `src/main.js`, and update in that order
 heights, the mesh as drawn and its JS twin, the ground's surfaces), `rocks` (placed rocks, read-only, and their
 clearance for later placement), `sky` (the light state; `follow(fn)` for what must land with a time change),
 `shadows` (what casts registers with `cast(fn)` and `from(spheres)`), `water` (where the sea stands, `heightAt(x, z, t)`,
-and what it knows of the island) and `frame` (`post/frame.js`: the drawing
-buffer's size, the uniforms every scene material binds at group 0, `beforeScene()` for passes of a system's
-own, the passes, `translucent()`, `opaque`, `addPost()`). A system that reads one of them in `create()` comes
+the surf, `surfAt(x, z, t)`, and what it knows of the island) and `frame` (`post/frame.js`: the drawing
+buffer's size, the uniforms every scene material binds at group 0, `beforeScene()` and `afterOpaque()` for
+passes of a system's own, the passes, `translucent()`, `opaque`, `addPost()`). A system that reads one of them in `create()` comes
 after its owner in `WORLD_SYSTEMS`.
 
 - The time of day changes only when it is set, but it can be set while the game runs: a system that depends on
@@ -206,8 +206,8 @@ it. A new system's async work goes behind `ready`, or behind `settled()` when it
   takes only what stands on the seabed, by its alpha: so an opaque material's alpha says how much the water should
   take it as seen under the surface (the ground's fades to 0 just under the sea). What lies under the sea leaves
   the haze to the water, which adds it for all of it, and has no sheen: the water's surface mirrors.
-- **Compute** goes through `gpu/compute.js`, in a system's own `frame.beforeScene()` pass, its pipelines made
-  ahead through that pass's `compile`.
+- **Compute** goes through `gpu/compute.js`, in a system's own `frame.beforeScene()` pass, or `frame.afterOpaque()`
+  to read the opaque scene (the water's mirror), its pipelines made ahead through that pass's `compile`.
 - **What casts a shadow adds meshes in pass `'shadow'`**: the same shader and uniforms as its own material,
   so its vertices land where they are drawn, `fragment: null` (or one that only discards, for a cut-out),
   and instances picked through `ctx.shadows.cast()`, also out of view. A mesh whose vertex shader moves it

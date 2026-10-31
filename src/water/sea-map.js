@@ -11,17 +11,58 @@
 //   swell  how much of the open sea's swell reaches here, 0 to 1
 //   wind   how much of the wind's chop has grown here, 0 to 1
 //   surf   how much of the swell breaks here, 0 to 1
+//   breaks how hard the surf breaks round here, 0 to 1: the surf over tens of metres,
+//          what its foam runs in over (water/surf.js)
+//   late   s a wave of the swell gets here later than one over deep water would
+//   wayA, wayO  the way it runs here, a unit vector (a, o)
+//   speed  m/s it runs at here
 //
 // A swell runs in from the open sea, spread over a fan of directions, and can't
 // stand taller than the water under it allows: what the crest of the reef
 // (or any shallows) takes from it breaks there, and that is the surf; behind it
 // the swell stays as small as the shallowest water it crossed. Land stops it.
-// The wind's chop grows with how far the wind has blown over open water.
-// config.water.map holds the numbers.
+// The wind's chop grows with how far the wind has blown over open water. A wave front
+// slows over shallow water, so it bends round what is shallow and bunches up over it:
+// when it reaches each place is worked out as light's would be, through water whose
+// speed goes by its depth. config.water.map holds the numbers.
+
+const G = 9.81;
+const SHALLOWEST = 0.1; // m: what a wave runs over on land and at the waterline, so it gets round them
+
+// How fast a wave of this period runs over water this deep (m/s): the dispersion
+// relation, in Fenton and McKee's (1990) closed form.
+export function waveSpeed(depth, period) {
+  const inDeep = (G * period) / (2 * Math.PI);
+  if (depth === Infinity) return inDeep;
+  const x = ((2 * Math.PI) / period) * Math.sqrt(Math.max(depth, SHALLOWEST) / G);
+  return inDeep * Math.tanh(x ** 1.5) ** (2 / 3);
+}
 
 // How far a wave's swell is held by the water under it, as a share of the open
 // sea's: all of it down to `breaks` m deep, less and less over shallower water.
 const heldBy = (depth, breaks) => Math.max(Math.min(depth / breaks, 1), 0);
+
+// The mean of `values` over a square `radius` samples each way: twice along each axis, as rounder.
+function roundAbout(values, samples, radius) {
+  let from = values;
+  for (let pass = 0; pass < 2; pass++) {
+    for (const stride of [1, samples]) {
+      const across = stride === 1 ? samples : 1;
+      const to = new Float32Array(from.length);
+      for (let line = 0; line < samples; line++) {
+        let sum = 0;
+        const at = (k) => from[line * across + Math.min(Math.max(k, 0), samples - 1) * stride];
+        for (let k = -radius; k <= radius; k++) sum += at(k);
+        for (let k = 0; k < samples; k++) {
+          to[line * across + k * stride] = sum / (2 * radius + 1);
+          sum += at(k + radius + 1) - at(k - radius);
+        }
+      }
+      from = to;
+    }
+  }
+  return from;
+}
 
 // Directions in the cove's frame, degrees to the right of straight out to sea
 // for someone facing it (`side`: config.world.island.cove.headlandSide).
@@ -75,20 +116,29 @@ export function buildSeaMap(heightmap, settings, side, blend = 0) {
     }
   });
   for (let n = 0; n < count; n++) surf[n] = Math.min((surf[n] * settings.swell.surf) / settings.texel, 1);
+  const breaking = roundAbout(surf, samples, Math.max(Math.round(settings.swell.round / texel), 1));
+  for (let n = 0; n < count; n++) breaking[n] = Math.min(breaking[n] / settings.swell.full, 1);
 
   // The wind: how far it has blown over water, from every direction of its fan.
   const wind = new Float32Array(count);
   const fetch = new Float32Array(count);
-  const { blows, gusts, fetch: fullFetch, depth: chopDepth } = settings.wind;
+  const { blows, gusts, fetch: fullFetch, depth: chopDepth, grows } = settings.wind;
   gusts.forEach(([degrees, share]) => {
     const blowing = outward(blows + degrees, side);
     const step = texel * Math.hypot(blowing[0], blowing[1]) / Math.max(Math.abs(blowing[0]), Math.abs(blowing[1]));
     sweep(samples, blowing, fullFetch * 4, (n, before) => {
-      fetch[n] = heights[n] < 0 ? before + step : 0;
+      // Shallow water holds it back, whatever it has crossed: behind a reef's crest it starts over.
+      fetch[n] = heights[n] < 0 ? Math.min(before + step, grows * shallowest(n) ** 2) : 0;
     }, fetch);
     for (let n = 0; n < count; n++) wind[n] += share * (1 - Math.exp(-fetch[n] / fullFetch));
   });
   for (let n = 0; n < count; n++) wind[n] *= heldBy(shallowest(n), chopDepth);
+
+  // When the swell's waves get to each place, and which way they run there.
+  const speed = new Float32Array(count);
+  for (let n = 0; n < count; n++) speed[n] = waveSpeed(depths[n], settings.swell.period);
+  const running = outward(from, side).map((v) => -v);
+  const { late, wayA, wayO } = arrivals(speed, samples, texel, running, waveSpeed(Infinity, settings.swell.period));
 
   return {
     origin,
@@ -102,6 +152,11 @@ export function buildSeaMap(heightmap, settings, side, blend = 0) {
     swell,
     wind,
     surf,
+    breaks: breaking,
+    late,
+    wayA,
+    wayO,
+    speed,
     // The map at a, o in the cove's frame, into `out`, bilinear as the GPU filters it.
     at(a, o, out = {}) {
       const last = samples - 1;
@@ -123,19 +178,26 @@ export function buildSeaMap(heightmap, settings, side, blend = 0) {
       out.swell = mix(swell);
       out.wind = mix(wind);
       out.surf = mix(surf);
+      out.breaks = mix(breaking);
       out.toShoreA = mix(toShoreA);
       out.toShoreO = mix(toShoreO);
+      out.late = mix(late);
+      out.wayA = mix(wayA);
+      out.wayO = mix(wayO);
+      out.speed = mix(speed);
       return out;
     },
   };
 }
 
-// The two layers of half floats the GPU reads (water/sea-map.wgsl): shore, depth,
-// swell, wind, which every pixel of water needs; the way to the shore, surf, reef.
-export function seaMapLayers({ shore, depth, reef, swell, wind, toShoreA, toShoreO, surf }, half) {
+// The three layers of half floats the GPU reads (water/sea-map.wgsl): shore, depth,
+// swell, wind, which every pixel of water needs; the way to the shore, breaks, reef;
+// the swell's waves. `late` stays small where they break, so half floats hold it finely.
+export function seaMapLayers({ shore, depth, reef, swell, wind, toShoreA, toShoreO, breaks, late, wayA, wayO, speed }, half) {
   const count = shore.length;
   const first = new Uint16Array(4 * count);
   const second = new Uint16Array(4 * count);
+  const third = new Uint16Array(4 * count);
   for (let n = 0; n < count; n++) {
     first[4 * n] = half(shore[n]);
     first[4 * n + 1] = half(depth[n]);
@@ -143,10 +205,14 @@ export function seaMapLayers({ shore, depth, reef, swell, wind, toShoreA, toShor
     first[4 * n + 3] = half(wind[n]);
     second[4 * n] = half(toShoreA[n]);
     second[4 * n + 1] = half(toShoreO[n]);
-    second[4 * n + 2] = half(surf[n]);
+    second[4 * n + 2] = half(breaks[n]);
     second[4 * n + 3] = half(reef[n]);
+    third[4 * n] = half(late[n]);
+    third[4 * n + 1] = half(wayA[n]);
+    third[4 * n + 2] = half(wayO[n]);
+    third[4 * n + 3] = half(speed[n]);
   }
-  return [first, second];
+  return [first, second, third];
 }
 
 // The drawn height and the crest's offset on the map's sample lines, read from
@@ -239,6 +305,54 @@ function sweep(samples, [da, dO], edge, step, field) {
       step(n, before, either);
     }
   }
+}
+
+// When a wave front running the way `way` from the grid's upwind edges reaches each
+// sample, at the speed each has: fast sweeping (Zhao 2005) of the eikonal equation,
+// over all four orders of the grid, twice, as what bends round the land runs against some.
+// `late`: s behind where a front that kept `inDeep` would be; `wayA`, `wayO`: which way it runs.
+function arrivals(speed, samples, texel, way, inDeep) {
+  const count = samples * samples;
+  const last = samples - 1;
+  const plain = (i, j) => ((i * way[0] + j * way[1]) * texel) / inDeep;
+  const arrives = new Float64Array(count).fill(Infinity);
+  for (let k = 0; k < samples; k++) {
+    if (way[0] !== 0) arrives[k * samples + (way[0] > 0 ? 0 : last)] = plain(way[0] > 0 ? 0 : last, k);
+    if (way[1] !== 0) arrives[(way[1] > 0 ? 0 : last) * samples + k] = plain(k, way[1] > 0 ? 0 : last);
+  }
+  const first = (step) => (step > 0 ? 0 : last);
+  // Its own way first: that alone settles most of it.
+  const steps = [Math.sign(way[0]) || 1, Math.sign(way[1]) || 1];
+  const orders = [[steps[0], steps[1]], [-steps[0], steps[1]], [steps[0], -steps[1]], [-steps[0], -steps[1]]];
+  for (let round = 0; round < 2; round++) {
+    for (const [si, sj] of orders) {
+      for (let j = first(sj); j >= 0 && j < samples; j += sj) {
+        for (let i = first(si); i >= 0 && i < samples; i += si) {
+          const n = j * samples + i;
+          const a = Math.min(i > 0 ? arrives[n - 1] : Infinity, i < last ? arrives[n + 1] : Infinity);
+          const b = Math.min(j > 0 ? arrives[n - samples] : Infinity, j < last ? arrives[n + samples] : Infinity);
+          const slow = texel / speed[n];
+          const gap = Math.abs(a - b);
+          const t = gap >= slow ? Math.min(a, b) + slow : 0.5 * (a + b + Math.sqrt(2 * slow * slow - gap * gap));
+          if (t < arrives[n]) arrives[n] = t;
+        }
+      }
+    }
+  }
+  const late = new Float32Array(count);
+  const wayA = new Float32Array(count);
+  const wayO = new Float32Array(count);
+  for (let j = 0, n = 0; j < samples; j++) {
+    for (let i = 0; i < samples; i++, n++) {
+      late[n] = arrives[n] - plain(i, j);
+      const da = arrives[j * samples + Math.min(i + 1, last)] - arrives[j * samples + Math.max(i - 1, 0)];
+      const dO = arrives[Math.min(j + 1, last) * samples + i] - arrives[Math.max(j - 1, 0) * samples + i];
+      const length = Math.hypot(da, dO);
+      wayA[n] = length > 1e-6 ? da / length : way[0];
+      wayO[n] = length > 1e-6 ? dO / length : way[1];
+    }
+  }
+  return { late, wayA, wayO };
 }
 
 // How far each sample lies from where `inside(n)` changes between neighbours, in

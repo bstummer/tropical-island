@@ -8,7 +8,7 @@
 #include "frame-struct.wgsl"
 
 @group(0) @binding(0) var<uniform> frame: Frame;
-@group(0) @binding(1) var uSkyView: texture_2d<f32>;
+@group(0) @binding(1) var uSkyView: texture_2d_array<f32>; // layer 0 from the camera's height, 1 from the sea's
 @group(0) @binding(2) var uSkyViewSampler: sampler;
 @group(0) @binding(3) var uAerial: texture_3d<f32>;
 @group(0) @binding(4) var uAerialSampler: sampler;

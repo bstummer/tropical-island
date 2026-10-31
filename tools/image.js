@@ -167,6 +167,32 @@ export function bandedShare({ width, height, data }, { minRun = 16, maxStep = 3 
 // worth on both axes (yaw and pitch) at the centre of the frame: per pixel
 // motion in pixels (dx right, dy down; larger towards the edges), plus that
 // turn in degrees for __CAPTURE__.render({ turn }). `fov` is vertical, in degrees.
+// The jump in colour across the rim of the sea, at each of `blocks` blocks across
+// the frame that show nothing but sky and sea there (`from`, a share of the width
+// on): the largest, in levels of any channel, between the mean of `rows` rows `gap`
+// rows above the rim and as many below. The rim is where the planet's horizon lies
+// from the view's height (`groundRadius`, km).
+export function seaSeam({ width, height, data }, { position, pitch, fov }, groundRadius, { rows = 2, gap = 1, blocks = 8, from = 0 } = {}) {
+  const dip = Math.asin(Math.sqrt(position[1] * 0.001 * (2 * groundRadius + position[1] * 0.001)) / (groundRadius + position[1] * 0.001));
+  const rad = Math.PI / 180;
+  const row = ((1 + Math.tan(pitch * rad + dip) / Math.tan((fov * rad) / 2)) * height) / 2;
+  const mean = (x0, x1, y0, y1) => {
+    const sum = [0, 0, 0];
+    for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) for (let c = 0; c < 3; c++) sum[c] += data[4 * (y * width + x) + c];
+    return sum.map((v) => v / ((x1 - x0) * (y1 - y0)));
+  };
+  const [above, below] = [Math.round(row) - gap - rows, Math.round(row) + gap];
+  if (above < 0 || below + rows > height) throw new Error('seaSeam: the rim of the sea is off the frame');
+  let worst = 0;
+  const first = Math.ceil(from * blocks);
+  for (let b = first; b < blocks; b++) {
+    const [x0, x1] = [Math.floor((b * width) / blocks), Math.floor(((b + 1) * width) / blocks)];
+    const [up, down] = [mean(x0, x1, above, above + rows), mean(x0, x1, below, below + rows)];
+    for (let c = 0; c < 3; c++) worst = Math.max(worst, Math.abs(up[c] - down[c]));
+  }
+  return worst;
+}
+
 // How alike a frame of the sea is to itself `lag` metres away over the water ([x, z],
 // a level sea at y = 0), seen from `view` (views.js): the correlation of its fine
 // detail, 1 where it repeats exactly at that lag, about 0 where it doesn't. Only

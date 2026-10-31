@@ -96,6 +96,7 @@ export function create(ctx) {
     material.uniforms.uMultiscatter.value = atmosphere.tables(set).multiscatter;
     light.uSunDirection.value.fromArray(sun.direction);
     atmosphere.renderSunlight(set, haze, sun.direction[1]);
+    atmosphere.renderSeaView(set, haze, sun.direction[1]);
     const state = lightFromProbe(probe, sun, settings);
     light.uSunRadiance.value.fromArray(state.sunRadiance);
     state.sky.forEach((c, k) => light.uSkySH.value[k].fromArray(c));

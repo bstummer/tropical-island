@@ -36,7 +36,7 @@ jobs:
     # runner image could break verify, and with it publishing, unannounced. Move up on purpose.
     # (The browser doesn't depend on it: every release gets the same Chromium build.)
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 40
     permissions:
       contents: read
     steps:

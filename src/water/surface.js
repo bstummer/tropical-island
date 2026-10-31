@@ -7,21 +7,34 @@
 
 import { largestWaves } from './spectrum.js';
 
-export function createSurface(spectrum, map, toCove, { rest, most }, ripplesLeast) {
+export function createSurface(spectrum, map, toCove, { rest, most }, ripplesLeast, ripplesDepth = 1, surf = null, chopWander = { reach: 0, across: 1 }) {
   const waves = spectrum.cascades.map((c) => ({ waves: largestWaves(c, rest, most), choppy: c.choppy }));
   const here = {};
+  const breaking = {};
 
   // How the cascades reach a point (cascadeReach in water/sea-map.wgsl): the
   // swell as far as it arrives, the chop's long waves where the wind has blown
-  // far, its ripples soon, and some anywhere there is water to move.
+  // far, its ripples soon, and some anywhere there is water to move; and the
+  // open sea's own chop, which comes in with the swell.
   function reachInto(x, z, out) {
     map.at(...toCove(x, z), here);
-    const t = Math.min(Math.max(here.depth, 0), 1);
+    const t = Math.min(Math.max(here.depth / ripplesDepth, 0), 1);
+    const open = here.swell * here.swell;
     out[0] = here.swell;
-    out[1] = here.wind * here.wind;
-    out[2] = Math.max(Math.sqrt(here.wind), ripplesLeast * t * t * (3 - 2 * t));
+    out[1] = Math.max(here.wind * here.wind, open);
+    out[2] = Math.max(Math.sqrt(here.wind), ripplesLeast * t * t * (3 - 2 * t), open);
     return out;
   }
+
+  // Where the chop's tile is read (chopRest in water/sea-map.wgsl).
+  const wanderAt = (2 * Math.PI) / chopWander.across;
+  function chopRest(x, z, out) {
+    const [a, b] = [x * wanderAt, z * wanderAt];
+    out[0] = x + chopWander.reach * (Math.sin(0.946 * a + 0.324 * b) + 0.5 * Math.sin(-0.543 * a + 1.503 * b));
+    out[1] = z + chopWander.reach * (Math.sin(-0.365 * a + 0.9 * b) + 0.5 * Math.sin(1.574 * a + 0.492 * b));
+    return out;
+  }
+  const chopAt = [0, 0];
 
   // Height and sideways displacement of the sum of `list` at x, z (the point the
   // waves move, not where it ends up), into `out`.
@@ -51,8 +64,11 @@ export function createSurface(spectrum, map, toCove, { rest, most }, ripplesLeas
     reachInto(x, z, reach);
     out[0] = out[1] = out[2] = 0;
     waves.forEach((cascade, c) => {
-      if (reach[c] > 0) displaced(cascade.waves, cascade.choppy, x, z, wrapped, out, reach[c]);
+      if (reach[c] <= 0) return;
+      if (c === 1) chopRest(x, z, chopAt);
+      displaced(cascade.waves, cascade.choppy, c === 1 ? chopAt[0] : x, c === 1 ? chopAt[1] : z, wrapped, out, reach[c]);
     });
+    if (surf) out[1] += surf(here, x, z, wrapped, breaking).height;
     return out;
   }
 

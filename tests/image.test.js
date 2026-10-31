@@ -14,6 +14,7 @@ import {
   overdrawStats,
   panShift,
   seaRepeat,
+  seaSeam,
   shimmer,
   shrink,
   tile,
@@ -231,6 +232,24 @@ test('sea repeat: a pattern repeating over the water is alike at its period and 
     assert.ok(seaRepeat(image, view, [0, period]) > 0.5, `alike at its period: ${seaRepeat(image, view, [0, period])}`);
     assert.ok(Math.abs(seaRepeat(image, view, [period * 0.73, 0])) < 0.15, 'not alike at another lag');
   }
+});
+
+test('sea seam: the jump across where the rim of the sea lies from the view, in the worst block, in the blocks asked for', () => {
+  const view = { position: [0, 3, 0], pitch: 1, fov: 8 };
+  const groundRadius = 6371;
+  const dip = Math.asin(Math.sqrt(0.003 * (2 * groundRadius + 0.003)) / (groundRadius + 0.003));
+  const rim = Math.round(((1 + Math.tan((Math.PI / 180) * 1 + dip) / Math.tan((Math.PI / 180) * 4)) * 90) / 2);
+  // The sky at 200, the sea at 150: a line, whatever the rows the check looks at.
+  const line = greyImage(160, 90, (x, y) => (y < rim ? 200 : 150));
+  assert.equal(seaSeam(line, view, groundRadius, { rows: 2, gap: 1 }), 50);
+  // A gradient over many rows is no line.
+  const fading = greyImage(160, 90, (x, y) => 200 - Math.max(y - rim, 0));
+  assert.ok(seaSeam(fading, view, groundRadius, { rows: 2, gap: 1 }) < 4);
+  // Only the right half has a line: asked for from there on it shows; the left half alone shows none.
+  const half = greyImage(160, 90, (x, y) => (x >= 80 && y >= rim ? 100 : 200));
+  assert.equal(seaSeam(half, view, groundRadius, { rows: 2, gap: 1, from: 0.5 }), 100);
+  assert.equal(seaSeam(greyImage(160, 90, (x, y) => (x < 80 && y >= rim ? 100 : 200)), view, groundRadius, { rows: 2, gap: 1, from: 0.5 }), 0);
+  assert.throws(() => seaSeam(line, { ...view, pitch: 30 }, groundRadius), /off the frame/);
 });
 
 // ---------------------------------------------------------------- shimmer

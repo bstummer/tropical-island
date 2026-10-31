@@ -1,7 +1,9 @@
 // Tool fixture (water.js): the water's own code over a flat surface, into a float
 // target. uMode 0: what it sees under the surface (the opaque scene's colour
 // where the bent ray lands, how deep that is, and where it holds nothing there,
-// where it landed as the fixture's seabed); 1: the light it works out from it.
+// where it landed as the fixture's seabed); 1: the light it works out from it; 2:
+// what it mirrors of what stands over it: in alpha how much of it there is, and in
+// red how much along a ray tilted up as a wave would, which reads the image further off.
 
 #include "/chunks/frame.wgsl"
 #include "/chunks/object.wgsl"
@@ -20,8 +22,16 @@ struct Check {
 @group(1) @binding(1) var<uniform> check: Check;
 @group(1) @binding(2) var uOpaque: texture_2d<f32>;
 @group(1) @binding(4) var uOpaqueDepth: texture_depth_2d;
+@group(1) @binding(8) var<storage, read> uMirror: array<u32>;
+
+struct MirrorRead {
+  uMirrorCells: vec4f,
+}
+
+@group(1) @binding(9) var<uniform> water: MirrorRead;
 
 #include "../water/water-seen.wgsl"
+#include "../water/water-land.wgsl"
 
 // The depth of the water at world xz, as water/sea-map.js would say it.
 fn seaDepthAt(xz: vec2f, footprint: f32) -> f32 {
@@ -49,6 +59,14 @@ fn vertexMain(@location(0) position: vec3f) -> Varyings {
 @fragment
 fn fragmentMain(in: Varyings) -> @location(0) vec4f {
   let view = normalize(frame.cameraPosition - in.vWorld);
+  if (check.uMode == 2) {
+    let eyeW = (frame.projectionMatrix * frame.viewMatrix * vec4f(in.vWorld, 1.0)).w;
+    let toLand = landFarther(in.position.xy, length(frame.cameraPosition - in.vWorld), eyeW);
+    let flat = reflect(-view, vec3f(0.0, 1.0, 0.0));
+    let far = select(8.0, toLand, toLand > 0.0);
+    let tilted = landSmooth(landImageUv(in.vWorld, normalize(flat + vec3f(0.0, 0.3, 0.0)), far), eyeW);
+    return vec4f(tilted.a, 0.0, 0.0, landSmooth(landImageUv(in.vWorld, flat, far), eyeW).a);
+  }
   let size = vec2f(textureDimensions(uOpaqueDepth));
   let bent = refract(-view, vec3f(0.0, 1.0, 0.0), 1.0 / optics.uIor);
   let below = seenBelow(in.vWorld, bent, size, optics.uSeabedFade.y, seaDepthAt(in.vWorld.xz, 0.0), 0.0);

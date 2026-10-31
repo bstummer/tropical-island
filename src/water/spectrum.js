@@ -40,6 +40,13 @@ export function spreading(angle, spread) {
   return Math.abs(Math.cos(angle / 2)) ** (2 * spread);
 }
 
+// How narrow a sea's lobe is at wave number k, where kp is its peak's. From the peak
+// to shorter waves it widens as Mitsuyasu et al. (1975) measured, down to `spreadLeast`, if it has one.
+export function lobeAt({ spread, spreadLeast }, k, kp) {
+  if (spreadLeast === undefined || k <= kp) return spread;
+  return Math.max(spread * (k / kp) ** -1.25, spreadLeast);
+}
+
 // Which cascade holds wave number k of this sea, or -1: the bands of `bands`,
 // [cascade, from, to], don't overlap.
 function bandOf(bands, k) {
@@ -80,6 +87,7 @@ export function buildSpectrum(settings, size, rng, direction) {
   for (const sea of seas) {
     const [hx, hz] = sea.heading;
     const wp = (2 * Math.PI) / sea.period;
+    const kp = (wp * wp) / G;
     let total = 0;
     // First the sea's total power, to scale it to its height.
     const power = (c, kx, kz) => {
@@ -87,8 +95,9 @@ export function buildSpectrum(settings, size, rng, direction) {
       if (k === 0 || bandOf(sea.bands, k) !== c) return 0;
       const w = Math.sqrt(G * k);
       const angle = Math.atan2(kx * hz - kz * hx, kx * hx + kz * hz);
-      // Per unit of wave vector: dw/dk over k.
-      return jonswap(w, wp, sea.gamma) * spreading(angle, sea.spread) * (0.5 * Math.sqrt(G / k)) / k * Math.exp(-((k * settings.smallest) ** 2));
+      const s = lobeAt(sea, k, kp);
+      // Per unit of wave vector: dw/dk over k. The root of s keeps a wider lobe from holding more.
+      return jonswap(w, wp, sea.gamma) * Math.sqrt(s) * spreading(angle, s) * (0.5 * Math.sqrt(G / k)) / k * Math.exp(-((k * settings.smallest) ** 2));
     };
     for (const [c] of sea.bands) {
       const { patch } = cascades[c];

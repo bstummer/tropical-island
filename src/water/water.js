@@ -5,10 +5,10 @@
 // lighting. It moves with the waves (waves.js, spectrum.js), as far as each
 // reaches a point (sea-map.js), and JS knows where it stands (surface.js).
 //
-// Puts ctx.water on the context: { ready, heightAt(x, z, t), map (sea-map.js's,
-// once ready), surface (surface.js's, once ready) }. heightAt is 0 until ready,
-// and t defaults to the clock's. Needs the terrain's grids, so comes after it in
-// WORLD_SYSTEMS.
+// Puts ctx.water on the context: { ready, heightAt(x, z, t), surfAt(x, z, t), map
+// (sea-map.js's, once ready), surface (surface.js's, once ready) }. heightAt is 0
+// and surfAt none until ready, and t defaults to the clock's. Needs the terrain's
+// grids, so comes after it in WORLD_SYSTEMS.
 import { Box3, Frustum, Matrix4, Vector2, Vector3, Vector4, toHalfFloat } from '../maths/index.js';
 import shader from './water.wgsl';
 import { Material } from '../gpu/material.js';
@@ -17,10 +17,12 @@ import { Mesh } from '../gpu/scene.js';
 import { Texture } from '../gpu/texture.js';
 import { gridGeometry } from '../world/terrain-nodes.js';
 import { lodRanges } from '../world/lod.js';
-import { buildSeaMap, seaMapLayers } from './sea-map.js';
+import { buildSeaMap, seaMapLayers, waveSpeed } from './sea-map.js';
 import { buildSpectrum, unresolvedSlopes } from './spectrum.js';
 import { createSurface } from './surface.js';
 import { createWaves } from './waves.js';
+import { createMirror } from './mirror.js';
+import { createSurf } from './surf.js';
 import { selectSea } from './water-nodes.js';
 
 const MAX_NODES = 2048;
@@ -35,6 +37,24 @@ export function opticsUniforms({ dimming, body, through, ior, seabedFade }) {
     uIor: { value: ior },
     uSeabedFade: { value: new Vector2(...seabedFade) },
   };
+}
+
+// The uniforms of water-surf.wgsl, from config.water.surf and the way the swell runs.
+export function surfUniforms({ period, height, shoals, fades, limit, dips, least, back, front, fall, ahead, run, always, wave, trail, toe }, way) {
+  return {
+    uSurfTiming: { value: new Vector4(period, waveSpeed(Infinity, period), height, shoals) },
+    uSurfWay: { value: new Vector4(way[0], way[1], fades[0], fades[1]) },
+    uSurfWave: { value: new Vector4(limit, least, back, front) },
+    uSurfFoam: { value: new Vector4(fall, ahead, run, always) },
+    uSurfBreak: { value: new Vector4(wave, trail, toe, dips) },
+  };
+}
+
+// How two reads of a tile drift at `speed` (m/s) the way [x, z], tiles/s: a whole number of
+// tiles in the waves' loop, so nothing jumps as the time wraps. The larger read is turned as water-seabed.wgsl's SEABED_TURN.
+function twoDrifting(speed, [large, small], [x, z], loop) {
+  const tiles = (along, size) => Math.round((along * speed * loop) / size) / loop;
+  return new Vector4(tiles(0.8 * x - 0.6 * z, large), tiles(0.6 * x + 0.8 * z, large), tiles(x, small), tiles(z, small));
 }
 
 // water.wgsl's uUnresolved: what each cascade's mip levels 0 to 7 have lost.
@@ -72,7 +92,12 @@ export function create(ctx) {
     return island.fromCove(config.world.island.cove.headlandSide * Math.sin(t), Math.cos(t));
   };
   const spectrum = buildSpectrum(waveSettings, quality.waterSize, ctx.rng('water/spectrum'), direction);
+  // The way the swell runs: in from where it comes from.
+  const swellWay = direction(waveSettings.swell.from).map((v) => -v);
   const waves = createWaves(ctx, spectrum);
+  const mirror = createMirror(gpu, config.sky.atmosphere.groundRadius, quality.waterMirror);
+  const uMirrorCells = new Vector4(1, 1, quality.waterMirror, settings.mirror.edge);
+  const uMirror = { value: null };
 
   const levels = Math.ceil(Math.log2(meshSettings.reach / meshSettings.leaf)) + 1;
   if (levels > LOD_MAX) throw new Error(`water: ${levels} levels of detail; water.wgsl holds ${LOD_MAX}`);
@@ -98,7 +123,29 @@ export function create(ctx) {
       uSurfaceTiles: ctx.terrain.surfaces.uSurfaceTiles,
       uRisesLevel: { value: Math.log2(settings.seabedRises / settings.map.texel) },
       uRippleWander: { value: new Vector2(waveSettings.wander.reach, (2 * Math.PI) / waveSettings.wander.across) },
+      uChopWander: { value: new Vector2(waveSettings.chopWander.reach, (2 * Math.PI) / waveSettings.chopWander.across) },
+      uGustSizes: { value: new Vector2(...waveSettings.gusts.sizes) },
+      uGustDrift: { value: twoDrifting(waveSettings.gusts.speed, waveSettings.gusts.sizes, direction(waveSettings.chop.blows), waveSettings.loop) },
+      uGustStrength: { value: waveSettings.gusts.strength },
       uHighUp: { value: new Vector4(...waveSettings.highUp.heights, waveSettings.highUp.chop, waveSettings.highUp.ripples) },
+      uAureole: { value: new Vector2(config.sky.aureole.g, config.sky.aureole.strength) },
+      ...surfUniforms(settings.surf, swellWay),
+      uFoamAlbedo: { value: linear(settings.surf.albedo) },
+      uFoamLook: { value: new Vector3(...settings.surf.lace, settings.surf.softOver) },
+      uFoamDrift: { value: twoDrifting(settings.surf.drift, settings.surf.lace, swellWay, waveSettings.loop) },
+      uFoamStands: { value: new Vector4(...settings.surf.stands) },
+      uFoamFacing: { value: settings.surf.facing },
+      uMirror,
+      uMirrorCells: { value: uMirrorCells },
+      uMirrorBeyond: { value: settings.mirror.beyond },
+      uMirrorSteep: { value: settings.mirror.steep },
+      uMirrorTaps: { value: new Vector3(...settings.mirror.taps) },
+      uHorizonFade: { value: Math.sin((settings.horizonFade * Math.PI) / 180) },
+      uHorizonFrom: { value: new Vector2(...settings.horizonFrom) },
+      uSeconds: { value: 0 },
+      uGlintMean: ctx.terrain.surfaces.uGlintMean,
+      uGlintSizes: { value: new Vector3(...settings.glints.sizes) },
+      uGlintDrift: { value: settings.glints.drift.map(([x, z]) => new Vector4(x / waveSettings.loop, z / waveSettings.loop, 0, 0)) },
       uOpaque: { value: frame.opaque.color },
       uOpaqueDepth: { value: frame.opaque.depth },
       uPatches: { value: new Vector3(...waveSettings.patches.map((patch) => 1 / patch)) },
@@ -108,11 +155,13 @@ export function create(ctx) {
       uWaveTexels: { value: quality.waterSize },
       uSunCeiling: { value: settings.glitterCeiling },
       uFinest: { value: new Vector3(waveSettings.finest.scale, waveSettings.finest.strength, Math.log2(waveSettings.finest.scale)) },
+      uCapillaries: { value: waveSettings.finest.capillaries },
       uFootBias: { value: Math.log2(quality.waterSize) },
       uSharper: { value: settings.sharper },
       uLogPatches: { value: new Vector3(...waveSettings.patches.map((patch) => -Math.log2(patch))) },
       uWaves: { value: waves.texture },
       uSeaLayout: { value: new Vector4(0, 0, 0, waveSettings.ripplesLeast) },
+      uRipplesDepth: { value: waveSettings.ripplesDepth },
       uSeaMap: { value: null },
     },
     // The island's shade alone: the rocks' shadows fall on the seabed they stand on.
@@ -132,6 +181,7 @@ export function create(ctx) {
   let seaTexture = null;
   let map = null;
   let surface = null;
+  let surf = null;
   let disposed = false;
   let failed = null;
   const ready = Promise.all([seaMapFor(ctx, seed), waves.compiled]).then(
@@ -140,12 +190,13 @@ export function create(ctx) {
       if (disposed) return;
       map = built;
       const { samples, texel, origin } = map;
-      seaTexture = new Texture(gpu, { name: 'sea map', width: samples, height: samples, depth: 2, array: true, format: 'rgba16float', mips: true, data: true, sampler: { mag: 'linear', min: 'linear', mipmap: 'linear' } });
-      const [first, second] = seaMapLayers(map, toHalfFloat);
-      seaTexture.upload(first, { layer: 0, layers: 1 }).upload(second, { layer: 1, layers: 1 }).generateMipmaps();
+      seaTexture = new Texture(gpu, { name: 'sea map', width: samples, height: samples, depth: 3, array: true, format: 'rgba16float', mips: true, data: true, sampler: { mag: 'linear', min: 'linear', mipmap: 'linear' } });
+      const [first, second, third] = seaMapLayers(map, toHalfFloat);
+      seaTexture.upload(first, { layer: 0, layers: 1 }).upload(second, { layer: 1, layers: 1 }).upload(third, { layer: 2, layers: 1 }).generateMipmaps();
       material.uniforms.uSeaMap.value = seaTexture;
       material.uniforms.uSeaLayout.value.set(origin[0] - texel / 2, origin[1] - texel / 2, 1 / (samples * texel), waveSettings.ripplesLeast);
-      surface = createSurface(spectrum, map, island.toCove, waveSettings.inJs, waveSettings.ripplesLeast);
+      surf = createSurf(settings.surf, swellWay);
+      surface = createSurface(spectrum, map, island.toCove, waveSettings.inJs, waveSettings.ripplesLeast, waveSettings.ripplesDepth, surf, waveSettings.chopWander);
       Object.assign(ctx.water, { map, surface, seaTexture, seaLayout: material.uniforms.uSeaLayout.value });
       for (const mesh of meshes) mesh.visible = true;
     },
@@ -160,9 +211,17 @@ export function create(ctx) {
     map: null,
     surface: null,
     heightAt: (x, z, t = ctx.clock.elapsed) => (surface ? surface.heightAt(x, z, t) : 0),
-    // For the waves fixture, which holds the GPU's side to JS's.
+    // The surf at world x, z: { foam, height, slope } (water/surf.js), for sound.
+    surfAt(x, z, t = ctx.clock.elapsed) {
+      if (!surf) return { foam: 0, height: 0 };
+      const here = map.at(...island.toCove(x, z));
+      return surf(here, x, z, t - spectrum.loop * Math.floor(t / spectrum.loop));
+    },
+    // For the fixtures: the waves', which holds the GPU's side to JS's, and sea-light's.
     waves,
     spectrum,
+    material,
+    swellWay,
     patches: material.uniforms.uPatches.value,
   };
 
@@ -177,6 +236,7 @@ export function create(ctx) {
     () => {
       if (!map) return;
       waves.compute(ctx.clock.elapsed);
+      material.uniforms.uSeconds.value = ctx.clock.elapsed - spectrum.loop * Math.floor(ctx.clock.elapsed / spectrum.loop);
       viewProjection.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
       frustum.setFromProjectionMatrix(viewProjection);
       const cam = [camera.position.x, camera.position.y, camera.position.z];
@@ -212,6 +272,17 @@ export function create(ctx) {
     () => waves.compiled,
   );
 
+  const stopMirror = frame.afterOpaque(
+    () => {
+      mirror.project(frame.opaque.depth, camera);
+      uMirror.value = mirror.cells;
+      uMirrorCells.x = mirror.across;
+      uMirrorCells.y = mirror.down;
+      uMirrorCells.z = mirror.stride;
+    },
+    () => mirror.compiled,
+  );
+
   return {
     ready,
     update() {
@@ -220,6 +291,8 @@ export function create(ctx) {
     dispose() {
       disposed = true;
       stop();
+      stopMirror();
+      mirror.dispose();
       for (const mesh of meshes) {
         scene.remove(mesh);
         mesh.geometry.dispose();

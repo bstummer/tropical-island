@@ -5,7 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { config } from '../src/config.js';
 import { createRandom } from '../src/core/random.js';
-import { buildSpectrum, jonswap, largestWaves, spreading, unresolvedSlopes, wave } from '../src/water/spectrum.js';
+import { buildSpectrum, jonswap, lobeAt, largestWaves, spreading, unresolvedSlopes, wave } from '../src/water/spectrum.js';
 import { createSurface } from '../src/water/surface.js';
 import { selectSea } from '../src/water/water-nodes.js';
 import { lodRanges } from '../src/world/lod.js';
@@ -187,8 +187,58 @@ test('the surface in JS: still where nothing reaches, moving where the sea does,
   assert.ok(Math.abs(moving.displacement(x, z, t)[1] - h) < 0.01);
 });
 
+test('the shorter a wave of the chop the wider it spreads, down to its least; the swell keeps its lobe', () => {
+  const kp = 0.3;
+  const { chop, swell } = waves;
+  assert.equal(lobeAt(chop, kp, kp), chop.spread);
+  assert.equal(lobeAt(chop, kp / 2, kp), chop.spread);
+  assert.ok(lobeAt(chop, 2 * kp, kp) < chop.spread);
+  assert.equal(lobeAt(chop, 1000 * kp, kp), chop.spreadLeast);
+  assert.equal(lobeAt(swell, 10 * kp, kp), swell.spread);
+  // The ripples run every which way, so no row of them lies along another: as much of their power crosswise as a wide lobe holds.
+  const { cascades } = spectrumOf(3, 128);
+  const c = cascades[2];
+  const way = direction(chop.blows);
+  const dk = (2 * Math.PI) / c.patch;
+  let [along, across] = [0, 0];
+  for (let j = 0; j < c.size; j++) {
+    for (let i = 0; i < c.size; i++) {
+      const n = j * c.size + i;
+      const power = c.amplitudes[4 * n] ** 2 + c.amplitudes[4 * n + 1] ** 2;
+      const [kx, kz] = [wave(i, c.size) * dk, wave(j, c.size) * dk];
+      const k = Math.hypot(kx, kz);
+      if (k === 0) continue;
+      const cos = (kx * way[0] + kz * way[1]) / k;
+      along += power * cos * cos;
+      across += power * (1 - cos * cos);
+    }
+  }
+  assert.ok(across > 0.35 * along, `the ripples' power: ${along} along the wind, ${across} across it`);
+});
+
+test('the chop\'s tile wanders in JS as on the GPU, by no more than its reach', () => {
+  const spectrum = { ...spectrumOf(5), cascades: spectrumOf(5).cascades.slice(0, 2).map((c, n) => (n === 0 ? { ...c, amplitudes: new Float32Array(c.amplitudes.length) } : c)) };
+  const map = { at: (a, o, out) => Object.assign(out, { swell: 0, wind: 1, depth: 20 }) };
+  const inJs = { rest: 0, most: Infinity };
+  const { reach, across } = waves.chopWander;
+  const wandering = createSurface(spectrum, map, (x, z) => [x, z], inJs, waves.ripplesLeast, 1, null, waves.chopWander);
+  let moved = 0;
+  for (const [x, z] of [[5, 7], [-400, 90], [200, -913], [1500, 40]]) {
+    const [a, b] = [x * ((2 * Math.PI) / across), z * ((2 * Math.PI) / across)];
+    const dx = reach * (Math.sin(0.946 * a + 0.324 * b) + 0.5 * Math.sin(-0.543 * a + 1.503 * b));
+    const dz = reach * (Math.sin(-0.365 * a + 0.9 * b) + 0.5 * Math.sin(1.574 * a + 0.492 * b));
+    assert.ok(Math.hypot(dx, dz) < 2.2 * reach);
+    moved += Math.hypot(dx, dz);
+    // The whole sum of its waves by their definition, read where the tile has wandered to.
+    const [got, want] = [wandering.displacement(x, z, 3)[1], heightOf(spectrum.cascades[1], x + dx, z + dz, 3)];
+    assert.ok(Math.abs(got - want) < 1e-4, `at ${x}, ${z}: ${got}, not ${want}`);
+  }
+  assert.ok(moved > reach, 'it hardly wandered');
+});
+
 test('the surface in JS scales each cascade by how much of it reaches a point, as the GPU does', () => {
-  const spectrum = spectrumOf(7);
+  const spectrum = { ...spectrumOf(7) };
+  spectrum.cascades = spectrum.cascades.slice(0, 1);
   const onlySwell = (swell) => createSurface(spectrum, { at: (a, o, out) => Object.assign(out, { swell, wind: 0, depth: 0 }) }, (x, z) => [x, z], waves.inJs, waves.ripplesLeast);
   const [whole, half] = [onlySwell(1), onlySwell(0.5)];
   for (const [x, z, t] of [[5, 7, 1], [-40, 90, 3.5], [200, -13, 8]]) {
@@ -202,6 +252,10 @@ test('the surface in JS scales each cascade by how much of it reaches a point, a
   assert.equal(reach(0, 0)[2], 0);
   assert.equal(reach(1, 5)[1], 1);
   assert.equal(reach(0.5, 5)[1], 0.25);
+  // The open sea's own chop comes in with the swell, whatever the wind does here.
+  const swelled = (swell) => createSurface(spectrum, { at: (a, o, out) => Object.assign(out, { swell, wind: 0, depth: 5 }) }, (x, z) => [x, z], waves.inJs, waves.ripplesLeast).reachInto(0, 0, [0, 0, 0]);
+  assert.deepEqual(swelled(1), [1, 1, 1]);
+  assert.deepEqual(swelled(0.2).map((v) => Number(v.toFixed(6))), [0.2, 0.04, waves.ripplesLeast]);
 });
 
 test('the sea mesh covers the ground once, neighbours a level apart at most, and takes nothing out unless asked', () => {

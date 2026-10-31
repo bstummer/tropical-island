@@ -7,21 +7,25 @@
 // on the GPU (water/sea-map.wgsl) against water/sea-map.js at seeded points; its
 // mistake half a texel off. And the water's displacement at seeded points, as its
 // vertex shader adds it up, against what JS's own smaller sum says
-// (water/surface.js), which only has to be near; its mistake a time well off.
+// (water/surface.js), which only has to be near; its mistake a time well off. And the
+// surf, its foam and its height, where it breaks, against water/surf.js; its mistake a time off.
 // window.__WAVES__ holds the worst differences for tools/screenshot.js. The island
 // and the sea draw as usual meanwhile. Not part of the island.
 import shader from './waves-check.wgsl';
+import { Vector2 } from '../maths/index.js';
 import { Material } from '../gpu/material.js';
 import { createTarget, Texture } from '../gpu/texture.js';
 import { wave } from '../water/spectrum.js';
+import { surfUniforms } from '../water/water.js';
 
 const TIMES = [0, 7.3, 3 * 3600 + 1.1];
 const POINTS = 48; // texels per cascade per time
 const AT_POINTS = 1024; // over the sea
-const MISTAKE = { time: 0.05, surfaceTime: 2.5, texels: 1, layout: 0.5 };
+const MISTAKE = { time: 0.05, surfaceTime: 2.5, surfTime: 2, texels: 1, layout: 0.5 };
+const SURFACE_TIME = 12.5;
 
 export function create(ctx) {
-  const { renderer, gpu } = ctx;
+  const { renderer, gpu, config } = ctx;
   const ready = ctx.water.ready.then(async () => {
     const { waves, spectrum, map, surface } = ctx.water;
     const { island } = ctx.terrain;
@@ -122,7 +126,7 @@ export function create(ctx) {
     const material = new Material({
       name: 'fixture-waves',
       shader,
-      uniforms: { uPoints: { value: input }, uSeaMap: { value: ctx.water.seaTexture }, uSeaLayout: { value: layout }, uMode: { value: 0 }, uPatches: { value: ctx.water.patches }, uWaves: { value: waves.texture } },
+      uniforms: { uPoints: { value: input }, uSeaMap: { value: ctx.water.seaTexture }, uSeaLayout: { value: layout }, uRipplesDepth: { value: ctx.config.water.waves.ripplesDepth }, uChopWander: { value: new Vector2(ctx.config.water.waves.chopWander.reach, (2 * Math.PI) / ctx.config.water.waves.chopWander.across) }, ...surfUniforms(ctx.config.water.surf, ctx.water.swellWay), uSeconds: { value: SURFACE_TIME }, uMode: { value: 0 }, uPatches: { value: ctx.water.patches }, uWaves: { value: waves.texture } },
     });
     const pass = renderer.fullscreen(material);
     const run = async (mode, offset = 0) => {
@@ -153,7 +157,7 @@ export function create(ctx) {
     });
 
     // The surface as its vertex shader adds it up, and as JS sums it.
-    const t = 12.5;
+    const t = SURFACE_TIME;
     waves.compute(t);
     const moved = await run(1);
     const inJs = [0, 0, 0];
@@ -164,6 +168,35 @@ export function create(ctx) {
       surface.displacement(xz[0], xz[1], t + MISTAKE.surfaceTime, inJs);
       result.surface.time = Math.max(result.surface.time, Math.abs(moved[4 * n + 1] - inJs[1]));
     });
+
+    // The surf, at points where it breaks: its twin to a little, as both read the map.
+    const span2 = (map.samples - 1) * map.texel;
+    const breaking = [];
+    for (let tries = 0; tries < 200000 && breaking.length < AT_POINTS; tries++) {
+      const a = map.origin[0] + r.range(0.02, 0.98) * span2;
+      const o = map.origin[1] + r.range(0.02, 0.98) * span2;
+      const here = map.at(a, o);
+      if (here.breaks > 0.1 && here.reef < config.water.surf.ahead) breaking.push({ xz: island.fromCove(a, o) });
+    }
+    const surfInput = new Texture(gpu, { name: 'fixture-waves surf points', width: AT_POINTS, height: 1, format: 'rgba32float', data: true, sampler: { mag: 'nearest', min: 'nearest' } });
+    const surfData = new Float32Array(4 * AT_POINTS);
+    breaking.forEach(({ xz }, n) => surfData.set([xz[0], xz[1], 0, 0], 4 * n));
+    surfInput.upload(surfData);
+    material.uniforms.uPoints.value = surfInput;
+    const surfSeen = await run(2);
+    const seams = await run(3);
+    material.uniforms.uPoints.value = input;
+    result.surf = { points: breaking.length, foam: 0, height: 0, slope: 0, seam: 0, time: 0 };
+    breaking.forEach(({ xz }, n) => {
+      const twin = ctx.water.surfAt(xz[0], xz[1], SURFACE_TIME);
+      const later = ctx.water.surfAt(xz[0], xz[1], SURFACE_TIME + MISTAKE.surfTime);
+      result.surf.foam = Math.max(result.surf.foam, Math.abs(surfSeen[4 * n] - twin.foam));
+      result.surf.height = Math.max(result.surf.height, Math.abs(surfSeen[4 * n + 1] - twin.height));
+      result.surf.slope = Math.max(result.surf.slope, Math.abs(surfSeen[4 * n + 2] - twin.slope));
+      result.surf.seam = Math.max(result.surf.seam, seams[4 * n]);
+      result.surf.time = Math.max(result.surf.time, Math.abs(surfSeen[4 * n] - later.foam));
+    });
+    surfInput.destroy();
 
     window.__WAVES__ = result;
     pass.dispose();

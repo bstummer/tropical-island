@@ -110,7 +110,8 @@ export function create(ctx) {
   const patches = greenPatches(settings.green, patchSeeds);
   // The ground's surfaces, shared with what is made of them or lies on them.
   // The tiles' averages are read back from the GPU: zeros until `ready`.
-  const surfaceUniforms = ({ sand, rock, green }) => ({
+  const surfaceUniforms = ({ sand, rock, green, glints }) => ({
+    uGlintMean: { value: glints },
     ...sandUniforms(sand, sandSettings, looks.wetHeight, config.sky.sun.sunsetYaw),
     ...rockUniforms(rock, rockSettings),
     ...greenUniforms(green, albedo, greenSettings, patchSeeds),
@@ -124,7 +125,7 @@ export function create(ctx) {
     uSeabedDeepest: { value: config.water.seabedFade[1] },
     uUnderSea: { value: new Vector3(...config.water.groundFade, config.water.troughs) },
     ...tilesUniforms(tiles),
-    ...surfaceUniforms({ sand: { grainMean: new Vector3() }, rock: { mean: new Vector4() }, green: { grassMean: new Vector3(), grassCover: 0, litterCover: 0 } }),
+    ...surfaceUniforms({ sand: { grainMean: new Vector3() }, rock: { mean: new Vector4() }, green: { grassMean: new Vector3(), grassCover: 0, litterCover: 0 }, glints: 1 }),
   };
   const materialUniforms = { ...uniforms, ...drawn.uniforms, ...surfaces };
 

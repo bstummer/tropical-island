@@ -44,6 +44,7 @@ import * as shadowsFixture from './fixtures/shadows.js';
 import * as shadeFixture from './fixtures/shade.js';
 import * as waterFixture from './fixtures/water.js';
 import * as wavesFixture from './fixtures/waves.js';
+import * as seaLightFixture from './fixtures/sea-light.js';
 
 // Updated in this order every frame. Each module exports create(ctx) -> { update(dt, t), dispose(), ready? }
 // where the optional `ready` promise is awaited before a capture starts.
@@ -76,6 +77,7 @@ const FIXTURES = {
   shade: [sky, terrain, shadows, shadeFixture],
   water: [waterFixture],
   waves: [sky, terrain, water, wavesFixture],
+  'sea-light': [sky, terrain, water, seaLightFixture],
 };
 
 let captureMode = false;

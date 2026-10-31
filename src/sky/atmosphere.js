@@ -2,7 +2,8 @@
 // maths, after Hillaire 2020):
 //   transmittance  how much light gets through from any height and angle; with the haze
 //   multiscatter   light scattered twice and more; with the haze
-//   skyView        the sky in every direction from one height, for one sun; on demand
+//   skyView        the sky in every direction, for one sun, from one height (a layer per
+//                  height: the camera's, and the sea's, which the water mirrors); on demand
 //   aerial         the light the air adds between the camera and any point; on demand
 //   aerialTransmittance  and the share of the point's light it lets through; on demand
 //   sunlight       the sun's light by the height above the sea, for one sun; on demand
@@ -33,7 +34,7 @@ export function createAtmosphere(renderer, { atmosphere: settings, tables, sampl
   const target = (name, [width, height], format = 'rgba16float') => createTarget(gpu, { name: `sky ${name}`, width, height, format });
   const sets = [0, 1].map(() => ({ transmittance: target('transmittance', tables.transmittance), multiscatter: target('multiscatter', tables.multiscatter) }));
   const targets = {
-    skyView: target('view', tables.skyView),
+    skyView: createTarget(gpu, { name: 'sky view', width: tables.skyView[0], height: tables.skyView[1], layers: 2, array: true, format: 'rgba16float' }),
     aerialTransmittance: target('aerial transmittance', tables.aerial.slice(1)), // the aerial table's rows and slices
     sunlight: target('sunlight', tables.sunlight),
     probe: target('probe', [PROBE_TEXELS, 1], 'rgba32float'), // read back: full precision
@@ -93,12 +94,19 @@ export function createAtmosphere(renderer, { atmosphere: settings, tables, sampl
         p.uniforms.uSunMu.value = sunMu;
       }
       passes.aerialTransmittance.uniforms.uHeight.value = height;
-      passes.skyView.render(targets.skyView);
+      passes.skyView.render(targets.skyView, { layer: 0 });
       passes.aerialTransmittance.render(targets.aerialTransmittance);
       for (let slice = 0; slice < tables.aerial[2]; slice++) {
         passes.aerial.uniforms.uSlice.value = slice;
         passes.aerial.render(targets.aerial, { layer: slice });
       }
+    },
+    // The sky as seen from the sea, for the sun at zenith cosine sunMu: what the water mirrors.
+    renderSeaView(k, hazeAmount, sunMu) {
+      use(k, hazeAmount);
+      passes.skyView.uniforms.uHeight.value = 0;
+      passes.skyView.uniforms.uSunMu.value = sunMu;
+      passes.skyView.render(targets.skyView, { layer: 1 });
     },
     // The sunlight table for the sun at zenith cosine sunMu.
     renderSunlight(k, hazeAmount, sunMu) {
