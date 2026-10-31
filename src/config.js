@@ -739,7 +739,9 @@ export const water = {
   // wide a pixel has it soft through and through (`softOver`, m); `stands`: how high
   // whitewater stands off the water (m), how much ground that may hide at most (m), and
   // from what distance it does, to what in full (m), as nearer it's seen as it is;
-  // `facing`: how much of the sun's light it takes with the sun on the horizon. A set's
+  // `facing`: how much of the sun's light it takes with the sun on the horizon; `backlit`:
+  // how much of it its thin tops and spray let through, and how much of that onwards
+  // (Henyey-Greenstein g), so against a low sun it glows. A set's
   // rhythm: a wave's size beats over `sets` waves (whole sets in the loop), each beat
   // moving it by `beat`; along its crest it varies per beat at `along` [rad/m, turns over
   // the beat's waves]; its front `wander`s, [m, rad/m along x and z] per term.
@@ -766,6 +768,7 @@ export const water = {
     softOver: 0.4,
     stands: [0.5, 40, 60, 200],
     facing: 0.4,
+    backlit: [0.25, 0.6],
     sets: [8, 5],
     beat: 0.35,
     along: [[0.031, 3], [0.0127, 2]],

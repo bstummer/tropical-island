@@ -151,6 +151,7 @@ export function create(ctx) {
       uFoamDrift: { value: twoDrifting(settings.surf.drift, settings.surf.lace, swellWay, waveSettings.loop) },
       uFoamStands: { value: new Vector4(...settings.surf.stands) },
       uFoamFacing: { value: settings.surf.facing },
+      uFoamBacklit: { value: new Vector2(...settings.surf.backlit) },
       uMirror,
       uMirrorCells: { value: uMirrorCells },
       uMirrorBeyond: { value: settings.mirror.beyond },

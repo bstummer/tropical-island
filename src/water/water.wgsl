@@ -55,6 +55,7 @@ struct Water {
   uFoamDrift: vec4f, // how each read of the tile drifts with the swell, tiles/s
   uFoamStands: vec4f, // how high whitewater stands off the water (m); how much ground that may hide, at most (m); from what distance it does, and in full (m)
   uFoamFacing: f32, // how much of the sun's light it takes with the sun on the horizon
+  uFoamBacklit: vec2f, // how much of the sun's light its thin tops let through, and how much of that goes on onwards (Henyey-Greenstein g)
 }
 
 @group(1) @binding(0) var<uniform> optics: WaterOptics;
@@ -354,7 +355,7 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
     // Sharper than the pixel's longer side, or it smears across the eye's line.
     let lace = seaFoamCover(foam, in.vRest, water.uSeconds, wide * exp2(-min(0.5 * stretch, 1.5)));
     foamCover = lace.x;
-    radiance = mix(radiance, lace.y * foamLight(beam, sky), foamCover);
+    radiance = mix(radiance, lace.y * foamLight(beam, sky, view), foamCover);
   }
 
   // What it mirrors of the land comes through the air on screen as it is: the air

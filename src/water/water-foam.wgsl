@@ -20,7 +20,11 @@ fn seaFoamCover(foam: f32, xz: vec2f, t: f32, wide: f32) -> vec2f {
 
 // Foam's light: white, lit from the sun and the sky on it. It stands up off the water
 // in heaps, some side of which always faces the sun: a low sun, which hardly reaches
-// the level sea, still lights it. beam: the sun's light on a surface facing it.
-fn foamLight(beam: vec3f, sky: vec3f) -> vec3f {
-  return water.uFoamAlbedo / PI * (beam * mix(water.uFoamFacing, 1.0, max(frame.uSunDirection.y, 0.0)) + sky);
+// the level sea, still lights it. Its thin tops and spray let some of the sun through,
+// mostly onwards: seen against a low sun it glows rather than standing dark against
+// the sky the sea mirrors. beam: the sun's light on a surface facing it; view: to the eye.
+fn foamLight(beam: vec3f, sky: vec3f, view: vec3f) -> vec3f {
+  let g = water.uFoamBacklit.y;
+  let onwards = (1.0 - g * g) / (4.0 * PI * pow(1.0 + g * g + 2.0 * g * dot(view, frame.uSunDirection), 1.5));
+  return water.uFoamAlbedo * (beam * (mix(water.uFoamFacing, 1.0, max(frame.uSunDirection.y, 0.0)) / PI + water.uFoamBacklit.x * onwards) + sky / PI);
 }
