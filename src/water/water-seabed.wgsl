@@ -21,6 +21,7 @@ struct SeabedLook {
   uCoralLight: vec3f,
   uWeed: vec3f,
   uSeabedTile: vec3f, // the tile's size, m; how much larger its second read is; its texels across
+  uSeabedTurns: vec2f, // m under the sea over which sand and rock turn to the seabed's, .x and .y
 }
 
 @group(1) @binding(7) var<uniform> seabedLook: SeabedLook;
@@ -61,7 +62,7 @@ fn seabedRadiance(xz: vec2f, depth: f32, dx: vec2f, dy: vec2f, sharp: f32, sun: 
   let heads = 0.87 + 0.13 * near.a;
   let mottled = mix(seabedLook.uCoralDark, seabedLook.uCoralLight, smoothstep(0.1, 0.9, (0.5 + 0.3 * beds + 0.4 * clumps + 0.3 * small + 0.15 * fine) * heads));
 
-  var sand = mix(seabedLook.uWetSand, seabedLook.uSeabedSand, smoothstep(0.0, 0.15, depth));
+  var sand = mix(seabedLook.uWetSand, seabedLook.uSeabedSand, smoothstep(0.0, seabedLook.uSeabedTurns.x, depth));
   sand *= 1.0 + 0.1 * clumps + 0.06 * small + 0.04 * fine;
   let weeds = smoothstep(0.1, 0.45, beds + 0.5 * clumps + 0.25 * small) * smoothstep(0.3, 1.0, depth);
   sand = mix(sand, seabedLook.uWeed * (1.0 + 0.35 * small + 0.35 * fine), 0.8 * weeds);

@@ -28,7 +28,7 @@
 // made of them or lies on them, their tiles' averages filled once `ready`
 // resolved; greenAt: whether the green inland is living green or bare ground
 // at world x, z, as drawn (world/green.js), once `ready` resolved: 1 green, 0 bare.
-import { Box3, Frustum, Matrix4, Vector3, Vector4, toHalfFloat } from '../maths/index.js';
+import { Box3, Frustum, Matrix4, Vector2, Vector3, Vector4, toHalfFloat } from '../maths/index.js';
 import shader from './terrain.wgsl';
 import HeightmapWorker from './heightmap-worker.js?worker&inline';
 import { Material } from '../gpu/material.js';
@@ -122,6 +122,7 @@ export function create(ctx) {
     uRock: { value: linear(albedo.rock) },
     uSeabedSand: { value: linear(config.water.seabedSand) },
     uSeabedRock: { value: linear(config.water.seabedRock) },
+    uSeabedTurns: { value: new Vector2(...config.water.seabedTurns) },
     uSeabedDeepest: { value: config.water.seabedFade[1] },
     uUnderSea: { value: new Vector4(...config.water.groundFade, config.water.troughs, 0) },
     ...tilesUniforms(tiles),

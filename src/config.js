@@ -618,12 +618,14 @@ export const world = {
 // that leaves through the surface; the seabed fades out between `seabedFade` m
 // down, past which nothing is drawn. `seabedSand`: its albedo, white coral sand,
 // whiter and cooler than the beach's wet sand; `seabedRock`: what rock and the
-// reef's rubble average, algae and coral, not bare basalt; `seabedCoral`: the
-// darkest and lightest of that mottling; `seabedWeed`: the beds of weed on the
-// sand; `seabedTile`: its mottling's tile, m, and how much larger its second read
-// is; what stands `seabedRises`-wide proud of the ground round it is coral. The
-// ground as drawn gives way to the seabed the water draws over `groundFade` m under
-// the sea, and needs its shading no further down than the deepest trough, `troughs` m.
+// reef's rubble average, algae and coral, not bare basalt; the beach's wet sand
+// and the shore's rock turn to them over the first `seabedTurns` m under the sea,
+// [sand, rock]; `seabedCoral`: the darkest and lightest of that mottling;
+// `seabedWeed`: the beds of weed on the sand; `seabedTile`: its mottling's tile,
+// m, and how much larger its second read is; what stands `seabedRises`-wide proud
+// of the ground round it is coral. The ground as drawn gives way to the seabed
+// the water draws over `groundFade` m under the sea, and needs its shading no
+// further down than the deepest trough, `troughs` m.
 const surfPeriod = 11.25; // s between the waves of the swell that reach the reef
 const swellFrom = 15; // degrees to the right of straight out to sea the swell comes from: the map's and the waves' alike
 export const water = {
@@ -634,6 +636,7 @@ export const water = {
   seabedFade: [25, 45],
   seabedSand: [0.78, 0.75, 0.62],
   seabedRock: [0.2, 0.22, 0.18],
+  seabedTurns: [0.15, 2],
   seabedCoral: [[0.09, 0.11, 0.08], [0.46, 0.42, 0.28]],
   seabedWeed: [0.2, 0.28, 0.15],
   seabedTile: { size: 128, larger: 6.7 },

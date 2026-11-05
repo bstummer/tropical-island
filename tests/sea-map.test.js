@@ -7,9 +7,9 @@ import assert from 'node:assert/strict';
 import { config } from '../src/config.js';
 import { createRandom } from '../src/core/random.js';
 import { createIsland } from '../src/world/island.js';
-import { buildHeightmap } from '../src/world/heightmap.js';
+import { buildHeightmap, layoutLevel } from '../src/world/heightmap.js';
 import { fromHalfFloat, toHalfFloatNearest } from '../src/maths/index.js';
-import { buildSeaMap, seaMapLayers, seaMapLevels, waveSpeed } from '../src/water/sea-map.js';
+import { buildSeaMap, seaMapLevels, waveSpeed } from '../src/water/sea-map.js';
 import { createSurface } from '../src/water/surface.js';
 import { createSurf } from '../src/water/surf.js';
 
@@ -67,18 +67,25 @@ test('the map covers the coarsest grid, its samples on the lines of the grid, an
   }
 }));
 
-test('the shore: zero on the drawn waterline, + at sea, - on land, growing by a metre a metre, its way leading to the nearest waterline from either side', () => eachSea(({ name, map, ground }) => {
+test('the shore: zero on the drawn waterline, + at sea, - on land, growing by a metre a metre; the way inland leads to the nearest waterline from either side, and runs on across it', () => eachSea(({ name, map, ground }) => {
   const n = map.samples;
   let sloped = 0;
   let judged = 0;
   const walks = { 'at sea': { walked: 0, arrived: 0 }, 'on land': { walked: 0, arrived: 0 } };
+  let [crossings, whole] = [0, 0];
   for (let j = 1; j < n - 1; j++) {
     for (let i = 1; i < n - 1; i++) {
       const k = j * n + i;
       const d = map.shore[k];
       const h = ground[k];
       assert.equal(d > 0, h < 0, `${name} at ${i}, ${j}: height ${h}, shore ${d}`);
-      if (h < 0 !== ground[k + 1] < 0) assert.ok(Math.abs(d) <= map.texel, `${name} at ${i}, ${j}: the waterline lies next to it, ${d} m by the map`);
+      if (h < 0 !== ground[k + 1] < 0) {
+        assert.ok(Math.abs(d) <= map.texel, `${name} at ${i}, ${j}: the waterline lies next to it, ${d} m by the map`);
+        // Read between the two, as the GPU filters it: a whole way, not two halves cancelling.
+        const between = map.at(map.origin[0] + (i + 0.5) * map.texel, map.origin[1] + j * map.texel);
+        crossings++;
+        if (Math.hypot(between.inlandA, between.inlandO) > 0.9) whole++;
+      }
       const grad = Math.hypot(map.shore[k + 1] - map.shore[k - 1], map.shore[k + n] - map.shore[k - n]) / (2 * map.texel);
       judged++;
       if (grad > 0.8 && grad < 1.15) sloped++;
@@ -87,7 +94,7 @@ test('the shore: zero on the drawn waterline, + at sea, - on land, growing by a 
         walk.walked++;
         const a = map.origin[0] + i * map.texel;
         const o = map.origin[1] + j * map.texel;
-        const there = map.at(a + map.toShoreA[k] * Math.abs(d), o + map.toShoreO[k] * Math.abs(d)).shore;
+        const there = map.at(a + map.inlandA[k] * d, o + map.inlandO[k] * d).shore;
         if (Math.abs(there) < 1.5 * map.texel) walk.arrived++;
       }
     }
@@ -97,6 +104,7 @@ test('the shore: zero on the drawn waterline, + at sea, - on land, growing by a 
   for (const [where, { walked, arrived }] of Object.entries(walks)) {
     assert.ok(walked > 100 && arrived / walked > 0.95, `${name}: following the way to the shore reaches it from only ${((100 * arrived) / walked).toFixed(1)}% of ${walked} points ${where}`);
   }
+  assert.ok(crossings > 100 && whole / crossings > 0.95, `${name}: the way inland read on the waterline is whole at only ${((100 * whole) / crossings).toFixed(1)}% of ${crossings} crossings`);
 }));
 
 test('the swell: full over the open sea on the side it comes from, none over land, small in the lagoon behind the reef, and never more than the water allows', () => eachSea(({ name, map, ground }) => {
@@ -563,9 +571,54 @@ test('the map\'s mip levels: each texel the mean of the four under it, but how d
   for (let k = 0; k < map.samples * map.samples; k += 997) assert.ok(near(levels[0][0][4 * k + 1], map.depth[k]), `depth ${levels[0][0][4 * k + 1]}, not ${map.depth[k]}`);
 });
 
+// A made-up map `size` square: every value of(i, j, name), or 1 without `of`.
+const NAMES = ['shore', 'depth', 'swell', 'wind', 'inlandA', 'inlandO', 'breaks', 'reef', 'late', 'wayA', 'wayO', 'speed'];
+function madeUp(size, of) {
+  const values = (name) => (of ? Float32Array.from({ length: size * size }, (_, n) => of(n % size, Math.floor(n / size), name)) : new Float32Array(size * size).fill(1));
+  return Object.fromEntries(NAMES.map((name) => [name, values(name)]));
+}
+
+test('a map whose side halves to an odd one still has every mip level a texture its size has, each texel the mean of what it spans', () => {
+  for (const size of [12, 10]) {
+    // Land in the first three columns, then water a metre deeper each column on; the rest a slope.
+    const map = madeUp(size, (i, j, name) => (name === 'depth' ? (i < 3 ? -1 - j : i - 2) : i + 2 * j));
+    const mean = map.swell.reduce((sum, v) => sum + v, 0) / map.swell.length;
+    const count = Math.floor(Math.log2(size)) + 1;
+    const levels = seaMapLevels(map, toHalfFloatNearest, count).map((layers) => layers.map((texels) => Float32Array.from(texels, fromHalfFloat)));
+    assert.equal(levels.length, count, `${size} samples`);
+    levels.forEach(([first], level) => {
+      const side = Math.max(size >> level, 1);
+      const name = `${size} samples, level ${level}`;
+      assert.equal(first.length, 4 * side * side, `${name}: ${first.length / 4} texels, not ${side} square`);
+      // Each texel the mean of what it spans, so the whole level's mean is the map's.
+      let sum = 0;
+      for (let n = 0; n < side * side; n++) sum += first[4 * n + 2];
+      assert.ok(Math.abs(sum / (side * side) - mean) < 0.02, `${name}: a mean of ${sum / (side * side)}, not ${mean}`);
+      // How deep: the mean over the water it spans, if it spans any; else the land's.
+      for (let n = 0; n < side * side; n++) {
+        const d = first[4 * n + 1];
+        const water = (((n % side) + 1) * size) / side > 3;
+        assert.ok(water ? d >= 0.99 && d <= size - 3 + 0.01 : d < 0, `${name} at ${n}: ${d} m deep`);
+      }
+    });
+  }
+});
+
+test('every seed\'s sea map has every mip level a texture its size has', () => {
+  // The map's side as water/water.js gets it: the coarsest grid's, on the map's samples.
+  const { terrain } = config.world;
+  const last = terrain.levels.length - 1;
+  const sides = new Set(SEEDS.map((seed) => (layoutLevel(createIsland(createRandom(seed)), terrain, last).samples * terrain.levels[last].texel) / config.water.map.texel));
+  for (const side of sides) {
+    const count = Math.floor(Math.log2(side)) + 1;
+    const levels = seaMapLevels(madeUp(side), (v) => v, count);
+    assert.deepEqual(levels.map(([first]) => first.length / 4), Array.from({ length: count }, (_, level) => (side >> level) ** 2), `${side} samples`);
+  }
+});
+
 test('the layers the GPU reads hold each value where water/sea-map.wgsl looks for it', () => {
-  const map = { shore: [1], depth: [2], swell: [3], wind: [4], toShoreA: [5], toShoreO: [6], breaks: [7], reef: [8], late: [9], wayA: [10], wayO: [11], speed: [12] };
-  const [first, second, third] = seaMapLayers(map, (v) => v);
+  const map = { shore: [1], depth: [2], swell: [3], wind: [4], inlandA: [5], inlandO: [6], breaks: [7], reef: [8], late: [9], wayA: [10], wayO: [11], speed: [12] };
+  const [first, second, third] = seaMapLevels(map, (v) => v, 1)[0];
   assert.deepEqual([...first], [1, 2, 3, 4]);
   assert.deepEqual([...second], [5, 6, 7, 8]);
   assert.deepEqual([...third], [9, 10, 11, 12]);

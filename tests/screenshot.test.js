@@ -782,7 +782,7 @@ test('sea light problems: the far sea on the near sea\'s light, and a mistake th
 
 // ---------------------------------------------------------------- the sea's surface
 
-test('sea holes: counts what lies on the far plane from the given row down, and nothing above it', () => {
+test('sea holes: counts what lies on the far plane from the given row down, and nothing above it; nothing to count is not none', () => {
   const far = 1000;
   const distances = new Float32Array(4 * 4).fill(10);
   distances[1] = far; // in the sky's rows
@@ -791,6 +791,8 @@ test('sea holes: counts what lies on the far plane from the given row down, and 
   assert.equal(seaHoles(distances, 4, 4, 2, far), 2);
   assert.equal(seaHoles(distances, 4, 4, 0, far), 3);
   assert.equal(seaHoles(new Float32Array(16).fill(0.5 * far), 4, 4, 0, far), 0);
+  // No row left to judge: not a frame without holes.
+  assert.ok(Number.isNaN(seaHoles(distances, 4, 4, 4, far)));
 });
 
 // ---------------------------------------------------------------- waves fixture

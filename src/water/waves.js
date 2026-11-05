@@ -29,6 +29,10 @@ export function createWaves(ctx, spectrum) {
   const { size, cascades, loop } = spectrum;
   const stages = Math.log2(size);
   if (!Number.isInteger(stages)) throw new Error(`waves: an FFT of ${size} isn't a power of two`);
+  for (const c of cascades) {
+    const most = c.turns.reduce((m, v) => Math.max(m, v), 0);
+    if (most > MOST_TURNS) throw new Error(`waves: a wave turns ${most} times in the loop; the GPU reduces its phase exactly up to ${MOST_TURNS}`);
+  }
   const layers = 2 * cascades.length;
 
   const texture = new Texture(gpu, {
@@ -108,10 +112,6 @@ export function createWaves(ctx, spectrum) {
     };
   };
 
-  for (const c of cascades) {
-    const most = c.turns.reduce((m, v) => Math.max(m, v), 0);
-    if (most > MOST_TURNS) throw new Error(`waves: a wave turns ${most} times in the loop; the GPU reduces its phase exactly up to ${MOST_TURNS}`);
-  }
   const bytes = new ArrayBuffer(EVOLVE_BYTES);
   const numbers = { u: new Uint32Array(bytes), f: new Float32Array(bytes) };
   let last = null;

@@ -163,10 +163,6 @@ export function bandedShare({ width, height, data }, { minRun = 16, maxStep = 3 
   return (100 * banded.reduce((sum, b) => sum + b, 0)) / (width * height);
 }
 
-// How a still scene's image moves when the camera turns by `step` pixels'
-// worth on both axes (yaw and pitch) at the centre of the frame: per pixel
-// motion in pixels (dx right, dy down; larger towards the edges), plus that
-// turn in degrees for __CAPTURE__.render({ turn }). `fov` is vertical, in degrees.
 // The row (from the top, a fraction of rows) where the planet's horizon lies in a frame
 // `height` rows tall from `view` (views.js: its height, pitch and vertical fov), with
 // `groundRadius` in km: where the rim of the sea lies.
@@ -243,6 +239,10 @@ export function seaRepeat({ width, height, data }, { position, yaw, pitch, fov }
   return aa > 0 && bb > 0 ? ab / Math.sqrt(aa * bb) : NaN;
 }
 
+// How a still scene's image moves when the camera turns by `step` pixels'
+// worth on both axes (yaw and pitch) at the centre of the frame: per pixel
+// motion in pixels (dx right, dy down; larger towards the edges), plus that
+// turn in degrees for __CAPTURE__.render({ turn }). `fov` is vertical, in degrees.
 export function panShift(width, height, fov, step) {
   const f = height / 2 / Math.tan((fov * Math.PI) / 360); // focal length in pixels
   const angle = step / f;

@@ -137,6 +137,7 @@ export function create(ctx) {
       uCoralLight: { value: linear(settings.seabedCoral[1]) },
       uWeed: { value: linear(settings.seabedWeed) },
       uSeabedTile: { value: new Vector3(settings.seabedTile.size, settings.seabedTile.larger, quality.surfaceTexture) },
+      uSeabedTurns: { value: new Vector2(...settings.seabedTurns) },
       uSurfaceTiles: ctx.terrain.surfaces.uSurfaceTiles,
       uRisesLevel: { value: Math.log2(settings.seabedRises / settings.map.texel) },
       uRippleWander: { value: new Vector2(waveSettings.wander.reach, (2 * Math.PI) / waveSettings.wander.across) },
@@ -208,7 +209,7 @@ export function create(ctx) {
       if (disposed) return;
       map = built.map;
       const { samples, texel, origin } = map;
-      seaTexture = new Texture(gpu, { name: 'sea map', width: samples, height: samples, depth: 3, array: true, format: 'rgba16float', mips: true, data: true, sampler: { mag: 'linear', min: 'linear', mipmap: 'linear' } });
+      seaTexture = new Texture(gpu, { name: 'sea map', width: samples, height: samples, depth: 3, array: true, format: 'rgba16float', mips: true, data: true, mipsUploaded: true, sampler: { mag: 'linear', min: 'linear', mipmap: 'linear' } });
       if (built.levels.length !== seaTexture.mipLevelCount) throw new Error(`water: ${built.levels.length} levels of the sea map for a texture of ${seaTexture.mipLevelCount}`);
       built.levels.forEach((layers, level) => layers.forEach((texels, layer) => seaTexture.upload(texels, { layer, layers: 1, level })));
       material.uniforms.uSeaMap.value = seaTexture;

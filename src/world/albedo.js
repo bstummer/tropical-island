@@ -25,9 +25,6 @@ export function sandWetness(height, { film, dry, step }, wetHeight) {
 
 // m: how soft the step at the waves' reach is, at its sharpest (chunks/wet.wgsl wetProfile).
 const SHARP = 0.004;
-// m under the sea over which sand whitens and rock turns to rubble (world/terrain.wgsl).
-const SEABED_SAND = 0.15;
-const SEABED_ROCK = 2;
 
 // How much darker wet sand is, 0 dry to 1 as dark as wet sand, at this
 // wetness (chunks/sand.wgsl sandDark).
@@ -62,7 +59,7 @@ export function albedoOf(sand, rock, band, height, lush, sandy, surfaces, out = 
     const depth = -height;
     // The seabed is sand and rock (world/island.js groundOf), its sand whitening and its
     // rock turning to rubble just under the sea as world/terrain.wgsl has them.
-    const [whiter, rubble] = [smoothstep(0, SEABED_SAND, depth), smoothstep(0, SEABED_ROCK, depth)];
+    const [whiter, rubble] = water.seabedTurns.map((over) => smoothstep(0, over, depth));
     for (let c = 0; c < 3; c++) {
       const sandC = albedo.wetSand[c] + (water.seabedSand[c] - albedo.wetSand[c]) * whiter;
       const rockC = albedo.rock[c] + (water.seabedRock[c] - albedo.rock[c]) * rubble;

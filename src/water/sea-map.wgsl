@@ -41,7 +41,7 @@ fn seaAtLevel(xz: vec2f, level: f32) -> vec4f {
   return vec4f(read.xy, mix(vec2f(1.0), read.zw, kept));
 }
 
-// At world xz: the way to the shore, in the cove's frame; how hard the surf breaks
+// At world xz: the way inland, in the cove's frame; how hard the surf breaks
 // round here; how far the reef's crest is (m), + seaward of it.
 fn seaShoreAt(xz: vec2f) -> vec4f {
   let read = textureSampleLevel(uSeaMap, uSeaMapSampler, seaUv(xz), 1, 0.0);

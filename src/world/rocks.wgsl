@@ -24,6 +24,7 @@ struct Rocks {
   uDrySand: vec3f,
   uWetSand: vec3f,
   uSeabedRock: vec3f,
+  uSeabedTurns: vec2f, // m under the sea over which sand and rock turn to the seabed's, .x and .y
   uSeabedDeepest: f32, // m: below this the water hides whatever stands on the seabed wholly
 }
 
@@ -109,7 +110,7 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
   let against = (1.0 - smoothstep(drift - footprint, drift + footprint, above)) * (cover.x + rest);
   let lying = (cover.x * sand + rest * green) / max(cover.x + rest, 1e-3);
   r.albedo = mix(r.albedo, lying, against);
-  r.albedo = mix(r.albedo, rocks.uSeabedRock, smoothstep(0.0, 2.0, -aboveSea)); // rubble and algae, as the seabed's rock
+  r.albedo = mix(r.albedo, rocks.uSeabedRock, smoothstep(0.0, rocks.uSeabedTurns.y, -aboveSea)); // rubble and algae, as the seabed's rock
   r.normal = normalize(mix(r.normal, vec3f(0.0, 1.0, 0.0), 0.6 * against));
   // Right at the ground, half the sky is ground and rock.
   let low = 1.0 - smoothstep(0.0, 0.15 * in.vSize, above);

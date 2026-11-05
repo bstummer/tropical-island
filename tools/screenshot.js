@@ -652,7 +652,8 @@ function toolCheckTasks(context, fileUrl, query, outDir) {
         const bytes = Buffer.from(base64, 'base64');
         holes += seaHoles(new Float32Array(bytes.buffer, bytes.byteOffset, bytes.length / 4), width, height, from, config.camera.far);
       }
-      if (holes) problems.push({ kind: 'tool check', text: `sea surface: ${holes} pixels below the horizon show nothing drawn` });
+      if (Number.isNaN(holes)) problems.push({ kind: 'tool check', text: `sea surface: ${view}'s horizon lies below the frame (row ${from} of ${height}): no sea to judge` });
+      else if (holes) problems.push({ kind: 'tool check', text: `sea surface: ${holes} pixels below the horizon show nothing drawn` });
       return `${holes} pixels from ${below} rows below the horizon (row ${from} of ${height}) show nothing drawn, at ${times.length} times`;
     }),
     // The sea doesn't repeat from high up: its tiles would show as a lattice in the
@@ -1129,8 +1130,10 @@ export function seaLightProblems(s, { limit, mistaken }) {
 }
 
 // How many pixels from row `from` down a frame of distances (rows from the top, as
-// __CAPTURE__.depth gives them) lie on the far plane: where nothing was drawn.
+// __CAPTURE__.depth gives them) lie on the far plane: where nothing was drawn. NaN
+// when no row is left to judge.
 export function seaHoles(distances, width, height, from, far) {
+  if (!(from < height)) return NaN;
   let holes = 0;
   for (let n = Math.max(from, 0) * width; n < width * height; n++) {
     if (distances[n] >= 0.9 * far) holes++;
