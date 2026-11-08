@@ -37,7 +37,7 @@ struct Water {
   uGustSizes: vec2f, // the sides of the two reads of the tile the wind's gusts are told from, m
   uGustDrift: vec4f, // how each drifts with the wind, tiles/s
   uGustStrength: f32, // how much they say
-  uHighUp: vec4f, // from what height of the eye what is seen softens, up to what height (m); how much of the chop stays, how many mip levels softer the ripples are read
+  uHighUp: vec3f, // from what height of the eye the ripples soften, up to what height (m); how many mip levels softer they are read then
   uAureole: vec2f, // the sun's glow, as sky/sky.wgsl has it: how sharp its peak is, how strong
   uHorizonFade: f32, // the sine of how far above the rim of the sea it has gone over into the sky by 63%
   uHorizonFrom: vec2f, // from what share of the way to the rim it does, and by what share it does in full
@@ -46,6 +46,7 @@ struct Water {
   uMirrorBeyond: f32, // how far past the shore (m) a ray that meets nothing at its own pixel is taken to reach land
   uMirrorSteep: f32, // how much higher, in the square of its height per the variance of the slopes, a mirrored ray needs only one ray
   uSeconds: f32, // the time, wrapped as the waves' is
+  uGustSeconds: f32, // the time, wrapped at the gusts' loop
   uGlintMean: f32, // the tile's mean (textures/glints.js)
   uGlintSizes: vec3f, // the three reads of the tile: its side, m
   uGlintDrift: array<vec4f, 3>, // and how each drifts, tiles/s
@@ -54,6 +55,7 @@ struct Water {
   uFoamDrift: vec4f, // how each read of the tile drifts with the swell, tiles/s
   uFoamStands: vec4f, // how high whitewater stands off the water (m); how much ground that may hide, at most (m); from what distance it does, and in full (m)
   uFoamFacing: f32, // how much of the sun's light it takes with the sun on the horizon
+  uFoamBacklit: vec2f, // how much of the sun's light its thin tops let through, and how much of that goes on onwards (Henyey-Greenstein g)
 }
 
 @group(1) @binding(0) var<uniform> optics: WaterOptics;
@@ -105,7 +107,7 @@ fn vertexMain(in: VertexIn) -> Varyings {
     let patches = water.uPatches[c];
     let lod = max(log2(footprint * patches), 0.0);
     let read = select(rest, chopRest(rest), c == 1);
-    moved += reach[c] * textureSampleLevel(uWaves, uWavesSampler, read * patches, 2 * c, lod).xyz;
+    moved += reach[c] * textureSampleLevel(uWaves, uWavesSampler, wavesUv(read, patches, water.uWaveTexels), 2 * c, lod).xyz;
   }
 
   moved.y += surfAt(sea, seaShoreAt(rest), seaWaveAt(rest), 0.0, 0.0, rest, water.uSeconds).height;
@@ -137,16 +139,12 @@ fn seabedDepthAt(xz: vec2f, footprint: f32) -> f32 {
   return mix(seaDepthAt(xz, footprint), fine, terrainWeight(0, ao) * (1.0 - smoothstep(1.0, 3.0, footprint)));
 }
 
-// Where the ripples' tile is read: a slow wander, of no simple ratio to the tile,
-// so it never lines up with itself across the sea; it would show as a lattice in the
-// sun's glitter, above all as the water moves. The fragment's alone: the surface's
-// shape, whose ripples are a few cm tall, stays the plain sum JS knows (water/surface.js).
+// Where the ripples' tile is read: wandering (sea-map.wgsl wandered), or it would show
+// as a lattice in the sun's glitter, above all as the water moves. The fragment's
+// alone: the surface's shape, whose ripples are a few cm tall, stays the plain sum
+// JS knows (water/surface.js).
 fn rippleRest(rest: vec2f) -> vec2f {
-  let at = rest * water.uRippleWander.y;
-  return rest + water.uRippleWander.x * vec2f(
-    sin(dot(at, vec2f(0.946, 0.324))) + 0.5 * sin(dot(at, vec2f(-0.543, 1.503))),
-    sin(dot(at, vec2f(-0.365, 0.9))) + 0.5 * sin(dot(at, vec2f(1.574, 0.492))),
-  );
+  return wandered(rest, water.uRippleWander);
 }
 
 // How much of the ripples' slopes the wind's gusts leave here: patches it roughens and
@@ -219,18 +217,16 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
   let ground = max(abs(dx.x * dy.y - dx.y * dy.x), 1e-12); // the pixel's, m2
   let stretch = log2(max(longest / ground, 1.0)); // of the longer side over the shorter
   let foot = 0.5 * log2(longest) + water.uFootBias - clamp(water.uSharper - 0.25 * stretch, -1.0, water.uSharper);
-  // From high up the chop's crests, seen a few pixels wide and repeating with its
-  // tile, would crumple the sun's glitter into crossing lines, and ripples a pixel
-  // wide would crawl: they soften into what the surface mirrors, by the height of
-  // the eye, as a low view's far sea must keep them.
+  // From high up ripples a pixel wide would crawl: they soften into what the surface
+  // mirrors, by the height of the eye, as a low view's far sea must keep them.
   let high = smoothstep(water.uHighUp.x, water.uHighUp.y, frame.cameraPosition.y);
-  let wanted = vec3f(foot) + water.uLogPatches + vec3f(0.0, 0.0, high * water.uHighUp.w);
+  let wanted = vec3f(foot) + water.uLogPatches + vec3f(0.0, 0.0, high * water.uHighUp.z);
   let lods = max(wanted, vec3f(0.0));
   let ripples = rippleRest(in.vRest);
   // The swell's waves are many of its texels long (config.water.waves.swell.shortest): a plain read does.
-  let s0 = textureSampleLevel(uWaves, uWavesSampler, in.vRest * water.uPatches[0], 1, lods.x);
-  let s1 = wavesRead(chopRest(in.vRest) * water.uPatches[1], 3, wanted.y);
-  let s2 = wavesRead(ripples * water.uPatches[2], 5, wanted.z);
+  let s0 = textureSampleLevel(uWaves, uWavesSampler, wavesUv(in.vRest, water.uPatches[0], water.uWaveTexels), 1, lods.x);
+  let s1 = wavesRead(wavesUv(chopRest(in.vRest), water.uPatches[1], water.uWaveTexels), 3, wanted.y);
+  let s2 = wavesRead(wavesUv(ripples, water.uPatches[2], water.uWaveTexels), 5, wanted.z);
   // And the ripples again, much finer and turned, for what the eye sees up close.
   let finestWanted = wanted.z + water.uFinest.z;
   let finestLod = max(finestWanted, 0.0);
@@ -241,14 +237,18 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
   let capillaryWanted = finestWanted + water.uFinest.z;
   let capillarySay = 1.0 - smoothstep(1.0, 2.0, capillaryWanted);
   var capillary = vec2f(0.0);
+  // The wanders stretch the tiles where they are read, as much as two fifths: the slopes
+  // read there tilt the surface here only through that stretch.
+  let rippleStretch = wanderedStretch(in.vRest, water.uRippleWander);
   if (capillarySay > 0.0) {
-    capillary = capillarySay * textureSampleLevel(uWaves, uWavesSampler, FINEST_TURN * FINEST_TURN * ripples * water.uPatches[2] * water.uFinest.x * water.uFinest.x, 5, max(capillaryWanted, 0.0)).xy * FINEST_TURN * FINEST_TURN;
+    capillary = capillarySay * textureSampleLevel(uWaves, uWavesSampler, FINEST_TURN * FINEST_TURN * ripples * water.uPatches[2] * water.uFinest.x * water.uFinest.x, 5, max(capillaryWanted, 0.0)).xy * FINEST_TURN * FINEST_TURN * rippleStretch;
   }
   let sea = seaAt(in.vRest);
   var reach = cascadeReach(sea);
-  reach.z *= seaGusts(in.vRest, water.uSeconds);
-  let chop = 1.0 - (1.0 - water.uHighUp.z) * high;
-  var slopes = reach.x * s0 + reach.y * chop * s1 + reach.z * (s2 + water.uFinest.y * vec4f(finest.xy * FINEST_TURN, 0.0, 0.0));
+  reach.z *= seaGusts(in.vRest, water.uGustSeconds);
+  let chopped = vec4f(s1.xy * wanderedStretch(in.vRest, seaLayout.uChopWander), s1.zw);
+  let rippled = s2 + water.uFinest.y * vec4f(finest.xy * FINEST_TURN, 0.0, 0.0);
+  var slopes = reach.x * s0 + reach.y * chopped + reach.z * vec4f(rippled.xy * rippleStretch, rippled.zw);
   // The swell's long waves and how they break, their slope along the way they run.
   let shore = seaShoreAt(in.vRest);
   var foam = 0.0;
@@ -274,7 +274,7 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
   // What the pixel's waves too small for it add to what the surface mirrors.
   let lost = reach * reach * vec3f(
     unresolved(0, lods.x),
-    mix(unresolved(1, 7.0), unresolved(1, lods.y), chop * chop),
+    unresolved(1, lods.y),
     unresolved(2, lods.z) + water.uFinest.y * water.uFinest.y * unresolved(2, finestLod) + water.uCapillaries * water.uCapillaries * mix(unresolved(2, 7.0), unresolved(2, max(capillaryWanted, 0.0)), capillarySay * capillarySay),
   );
   let variance = 0.5 * (lost.x + lost.y + lost.z) + water.uFineSlopes + specularKernel(n);
@@ -346,7 +346,8 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
   }
   var radiance = (1.0 - mirrored) * leaving + mirrored * skyPart;
 
-  radiance += seaGlints(beam * seaGlitter(nSun, view, frame.uSunDirection, variance), in.vRest, dx, dy, ground, water.uSeconds);
+  // The sun is mirrored only where the land doesn't stand in front of it, as the sky.
+  radiance += (1.0 - landShare) * seaGlints(beam * seaGlitter(nSun, view, frame.uSunDirection, variance), in.vRest, dx, dy, ground, water.uSeconds);
 
   // Foam over all of it, a surface of its own.
   var foamCover = 0.0;
@@ -354,7 +355,7 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
     // Sharper than the pixel's longer side, or it smears across the eye's line.
     let lace = seaFoamCover(foam, in.vRest, water.uSeconds, wide * exp2(-min(0.5 * stretch, 1.5)));
     foamCover = lace.x;
-    radiance = mix(radiance, lace.y * foamLight(beam, sky), foamCover);
+    radiance = mix(radiance, lace.y * foamLight(beam, sky, view), foamCover);
   }
 
   // What it mirrors of the land comes through the air on screen as it is: the air

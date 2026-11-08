@@ -1,7 +1,8 @@
 // Tool fixture (waves.js): at each point of uPoints (world x, z), one per output
 // texel: uMode 0, what the sea knows there (water/sea-map.wgsl); 1, the water's
 // displacement there as its vertex shader adds it up, at the finest mips; 2, the surf there;
-// 3, how far the foam seen from far off jumps across the reef's crest.
+// 3, how far the foam seen from far off jumps across the reef's crest; 4, as 1 but
+// read where the texel's corner is, half a texel off (a mistake).
 
 #include "/chunks/fullscreen.wgsl"
 #include "/chunks/frame.wgsl"
@@ -12,6 +13,7 @@
 struct Check {
   uMode: i32,
   uPatches: vec3f,
+  uWaveTexels: f32, // across each cascade's texture
   uSeconds: f32, // wrapped as the waves' time is
 }
 
@@ -41,7 +43,8 @@ fn fragmentMain(in: Fullscreen) -> @location(0) vec4f {
   var moved = vec3f(0.0);
   for (var c = 0; c < 3; c++) {
     let read = select(xz, chopRest(xz), c == 1);
-    moved += reach[c] * textureSampleLevel(uWaves, uWavesSampler, read * check.uPatches[c], 2 * c, 0.0).xyz;
+    let uv = select(wavesUv(read, check.uPatches[c], check.uWaveTexels), read * check.uPatches[c], check.uMode == 4);
+    moved += reach[c] * textureSampleLevel(uWaves, uWavesSampler, uv, 2 * c, 0.0).xyz;
   }
   moved.y += surfAt(sea, seaShoreAt(xz), seaWaveAt(xz), 0.0, 0.0, xz, check.uSeconds).height;
   return vec4f(moved, 1.0);

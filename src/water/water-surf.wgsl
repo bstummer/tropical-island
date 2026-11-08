@@ -9,14 +9,18 @@ struct SurfSettings {
   uSurfWave: vec4f, // the most it stands per m of water; the smallest wave's share; the shares of its period behind its crest, and in front
   uSurfFoam: vec4f, // m it dies over running in; m seaward its foam starts; m that dies over; how much foam always lies on the crest
   uSurfBreak: vec4f, // how much foam what it lost brings; how fast a wave's fades in its period; the share of its period its foam runs ahead of it; the most it draws down per m of water
+  uSurfSets: vec4f, // the waves each of a set's two beats goes round over; how far each moves a wave's size
+  uSurfAlong: vec4f, // per beat: how a wave's size varies along its crest, rad/m, and how many turns it moves along it over the beat
+  uSurfWander: array<vec4f, 5>, // its front's wander, per term: m, and rad/m along x and z
 }
 
 @group(1) @binding(13) var<uniform> surf: SurfSettings;
 
 // The share of a full wave, in its set and along its length.
 fn surfSize(n: f32, across: f32) -> f32 {
-  let beat = clamp(0.5 + 0.35 * sin(2.0 * PI * n / 8.0) + 0.35 * sin(2.0 * PI * n / 5.0), 0.0, 1.0);
-  let along = 0.5 + 0.25 * sin(across * 0.031 + 2.0 * PI * 3.0 * n / 8.0) + 0.25 * sin(across * 0.0127 + 2.0 * PI * 2.0 * n / 5.0);
+  let sets = surf.uSurfSets;
+  let beat = clamp(0.5 + sets.z * sin(2.0 * PI * n / sets.x) + sets.z * sin(2.0 * PI * n / sets.y), 0.0, 1.0);
+  let along = 0.5 + 0.25 * sin(across * surf.uSurfAlong.x + 2.0 * PI * surf.uSurfAlong.y * n / sets.x) + 0.25 * sin(across * surf.uSurfAlong.z + 2.0 * PI * surf.uSurfAlong.w * n / sets.y);
   return (surf.uSurfWave.y + (1.0 - surf.uSurfWave.y) * beat * beat) * (0.6 + 0.7 * along);
 }
 
@@ -35,7 +39,11 @@ fn surfAt(sea: vec4f, shore: vec4f, wave: vec4f, hides: f32, wide: f32, xz: vec2
     return Surf(0.0, 0.0, 0.0);
   }
   // Its front wanders a few metres, at sizes from hundreds of metres to a few.
-  let wander = 3.0 * sin(dot(xz, vec2f(0.021, 0.013))) + 2.0 * sin(dot(xz, vec2f(-0.017, 0.037))) + 0.5 * sin(dot(xz, vec2f(0.21, 0.13))) + 0.4 * sin(dot(xz, vec2f(0.71, 0.43))) + 0.2 * sin(dot(xz, vec2f(-0.93, 1.37)));
+  var wander = 0.0;
+  for (var k = 0; k < 5; k++) {
+    let term = surf.uSurfWander[k];
+    wander += term.x * sin(dot(xz, term.yz));
+  }
   let period = surf.uSurfTiming.x;
   let deep = surf.uSurfTiming.y;
   let speed = wave.w;
@@ -73,7 +81,8 @@ fn surfAt(sea: vec4f, shore: vec4f, wave: vec4f, hides: f32, wide: f32, xz: vec2
   // A pixel across more than a good part of a wave sees what it holds on average, or it would blink as each goes by.
   let melts = smoothstep(0.15, 0.7, wide / (speed * period));
   let whiter = max(now - swell, 0.0) * fading + max(next - swell, 0.0) * coming;
-  let mean = max(mix(now, next, f) - swell, 0.0) * (1.0 - exp(-surf.uSurfBreak.y)) / surf.uSurfBreak.y;
+  // On average over a period: what follows a crest, and what runs ahead of the next, whose mean is toe x root pi / 2.
+  let mean = max(mix(now, next, f) - swell, 0.0) * ((1.0 - exp(-surf.uSurfBreak.y)) / surf.uSurfBreak.y + 0.8862 * surf.uSurfBreak.z);
   let lost = mix(whiter, mean, melts);
   let foam = shore.z * (1.0 - smoothstep(0.0, surf.uSurfFoam.y, reef - hides)) * smoothstep(0.0, 0.05, sea.z) * exp(min(reef + hides, 0.0) / surf.uSurfFoam.z) * (surf.uSurfFoam.w + surf.uSurfBreak.x * lost);
   // It draws down no more than the shallows spare: the reef's crest stays under.

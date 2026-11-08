@@ -114,6 +114,31 @@ test('the cascades hold bands that do not overlap, and every wave has a frequenc
   assert.ok(most < waves.chop.split, `the long waves reach ${most}, past the split at ${waves.chop.split}`);
 });
 
+test('on every preset the chop loses no band of its waves between its cascades, whichever way they run', () => {
+  for (const [name, { waterSize: size }] of Object.entries(config.quality.presets)) {
+    const { cascades } = spectrumOf(1, size);
+    // Along its way and across, from waves of 6 m to a metre: some cascade holds a wave
+    // there, or a cell of its grid away, as a band's edge runs between cells.
+    const holds = (c, i, j) => {
+      if (Math.abs(i) >= size / 2 || Math.abs(j) >= size / 2) return false;
+      const n = (j < 0 ? j + size : j) * size + (i < 0 ? i + size : i);
+      return c.amplitudes[4 * n] !== 0 || c.amplitudes[4 * n + 1] !== 0;
+    };
+    for (const degrees of [0, 30, 45, 90]) {
+      const [hx, hz] = direction(waves.chop.blows + degrees);
+      for (let k = 1; k <= 6; k += 0.05) {
+        const held = cascades.slice(1).some((c) => {
+          const dk = (2 * Math.PI) / c.patch;
+          const [i, j] = [Math.round((k * hx) / dk), Math.round((k * hz) / dk)];
+          for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) if (holds(c, i + di, j + dj)) return true;
+          return false;
+        });
+        assert.ok(held, `${name}: no wave of the chop ${((2 * Math.PI) / k).toFixed(2)} m long, ${degrees} degrees off its way`);
+      }
+    }
+  }
+});
+
 test('the height is real: a wave and its opposite are conjugate, so the sum at any time matches the two-sided sum', () => {
   const { cascades } = spectrumOf(5);
   const c = cascades[1];
@@ -132,6 +157,8 @@ test('it repeats after its loop, not before: frequencies are whole turns of it',
   const c = cascades[1];
   const w0 = (2 * Math.PI) / loop;
   for (const w of c.frequencies) assert.ok(Math.abs(w / w0 - Math.round(w / w0)) < 1e-3, `${w} isn't a whole number of turns`);
+  // The GPU's: whole turns, as it reduces the phase by them.
+  c.turns.forEach((turns, n) => assert.ok(Number.isInteger(turns) && Math.abs(c.frequencies[n] - turns * w0) < 1e-12, `${turns} turns for ${c.frequencies[n]}`));
   const at = (t) => heightOf(c, 12.3, -45.6, t);
   assert.ok(Math.abs(at(7) - at(7 + loop)) < 1e-3);
   assert.ok(Math.abs(at(7) - at(7 + 5)) > 1e-3);
@@ -256,6 +283,17 @@ test('the surface in JS scales each cascade by how much of it reaches a point, a
   const swelled = (swell) => createSurface(spectrum, { at: (a, o, out) => Object.assign(out, { swell, wind: 0, depth: 5 }) }, (x, z) => [x, z], waves.inJs, waves.ripplesLeast).reachInto(0, 0, [0, 0, 0]);
   assert.deepEqual(swelled(1), [1, 1, 1]);
   assert.deepEqual(swelled(0.2).map((v) => Number(v.toFixed(6))), [0.2, 0.04, waves.ripplesLeast]);
+});
+
+test('the sea mesh reaches past the far plane, so past the horizon wherever it is not cut by that, from 20 km round the island', () => {
+  const { leaf, reach } = config.water.mesh;
+  const levels = Math.ceil(Math.log2(reach / leaf)) + 1;
+  const half = (leaf * 2 ** (levels - 1)) / 2;
+  assert.ok(half >= config.camera.far + 20000, `the mesh reaches ${half} m from the origin, the far plane ${config.camera.far} m`);
+  // Where the horizon lies within the far plane, from up to that high the mesh reaches it.
+  const radius = config.sky.atmosphere.groundRadius * 1000;
+  const highest = config.camera.far ** 2 / (2 * radius);
+  assert.ok(highest > 500, `the far plane cuts the horizon from ${highest} m up`);
 });
 
 test('the sea mesh covers the ground once, neighbours a level apart at most, and takes nothing out unless asked', () => {

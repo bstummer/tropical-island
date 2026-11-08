@@ -21,9 +21,10 @@ const G = 9.81;
 // The waves of one cascade, N x N of them, row by row, as an FFT holds them:
 // k = (i, j) x 2 pi / patch for i, j up to N / 2 and (i - N, j - N) x 2 pi / patch
 // after. Per wave: `amplitudes` [re, im] of h0(k) and of the conjugate of h0(-k),
-// `frequencies` its angular frequency; `choppy`: how far crests lean.
+// `frequencies` its angular frequency, `turns` the same as whole turns in the loop
+// (for the GPU, which reduces its phase exactly by them); `choppy`: how far crests lean.
 function cascade(size, patch) {
-  return { size, patch, amplitudes: new Float32Array(4 * size * size), frequencies: new Float32Array(size * size), choppy: 0 };
+  return { size, patch, amplitudes: new Float32Array(4 * size * size), frequencies: new Float64Array(size * size), turns: new Float32Array(size * size), choppy: 0 };
 }
 
 // JONSWAP's power at angular frequency w for a peak at wp and peak enhancement gamma.
@@ -61,16 +62,20 @@ export function buildSpectrum(settings, size, rng, direction) {
   const cascades = patches.map((patch) => cascade(size, patch));
   const w0 = (2 * Math.PI) / loop;
   const nyquist = (patch) => (Math.PI * size) / patch;
+  // The ripples start where the long waves' cascade ends: at the split, or sooner
+  // where its grid holds no shorter waves along its axes (64 texels on low: the
+  // waves between would be lost but along its diagonals).
+  const split = Math.min(settings.chop.split, ((size / 2 - 1) * 2 * Math.PI) / patches[1]);
 
-  // Each sea's bands: the ripples start where the long waves' cascade ends.
+  // Each sea's bands.
   const seas = [
     { ...settings.swell, heading: direction(settings.swell.from).map((v) => -v), bands: [[0, 0, (2 * Math.PI) / settings.swell.shortest]], choppy: settings.swell.choppy, target: 0 },
     {
       ...settings.chop,
       heading: direction(settings.chop.blows),
       bands: [
-        [1, 0, settings.chop.split],
-        [2, settings.chop.split, nyquist(patches[2])],
+        [1, 0, split],
+        [2, split, nyquist(patches[2])],
       ],
       choppy: settings.chop.choppy,
     },
@@ -114,7 +119,7 @@ export function buildSpectrum(settings, size, rng, direction) {
       const target = cascades[c];
       target.choppy = sea.choppy;
       const dk = (2 * Math.PI) / target.patch;
-      const { amplitudes, frequencies } = target;
+      const { amplitudes, frequencies, turns } = target;
       for (let j = 0; j < size; j++) {
         for (let i = 0; i < size; i++) {
           const n = j * size + i;
@@ -127,7 +132,8 @@ export function buildSpectrum(settings, size, rng, direction) {
           // out, the field stays real.
           if (k === 0 || i === size / 2 || j === size / 2) continue;
           // Also where this way has no power: its opposite's runs at this frequency.
-          frequencies[n] = Math.round(Math.sqrt(G * k) / w0) * w0;
+          turns[n] = Math.round(Math.sqrt(G * k) / w0);
+          frequencies[n] = turns[n] * w0;
           const a = Math.sqrt(power(c, kx, kz) * scale * dk * dk);
           amplitudes[4 * n] += a * xi[0];
           amplitudes[4 * n + 1] += a * xi[1];

@@ -32,6 +32,20 @@ test('over shallow water the albedo follows the seabed: more than the sea over s
   });
 });
 
+test('across the waterline the albedo runs on with no step, from the wet sand above it into the sea\'s over the depth the ground gives way to the water', () => {
+  const [, under] = config.water.groundFade;
+  for (const [sand, rock] of [[1, 0], [0, 1], [0.5, 0.5]]) {
+    let last = albedoOf(sand, rock, 0, 0.05, 0, 0, surfaces);
+    for (let height = 0.04; height > -under - 0.2; height -= 0.01) {
+      const now = albedoOf(sand, rock, 0, height, 0, 0, surfaces);
+      now.forEach((v, c) => assert.ok(Math.abs(v - last[c]) < 0.05, `sand ${sand}, channel ${c}: from ${last[c]} to ${v} at ${height.toFixed(2)} m`));
+      last = now;
+    }
+  }
+  // Just under the sea, sand is still about the wet sand above it.
+  albedoOf(1, 0, 0, -0.01, 0, 0, surfaces).forEach((v, c) => assert.ok(Math.abs(v - albedo.wetSand[c]) < 0.02, `channel ${c}: ${v} 1 cm under the sea`));
+});
+
 test('the green is its living green where all of it is green, grass on open ground and the leafy understory on lush; its bare ground where none is, sand, soil or litter as its shares say', () => {
   const near = (a, b) => a.every((v, c) => Math.abs(v - b[c]) < 1e-12);
   const all = (v) => [v, v, v];
@@ -151,7 +165,7 @@ test("the map over a grid: the sea's albedo over deep water, more over shallows,
   };
   for (let n = 0; n < layout.samples * layout.samples; n++) {
     if (level.heights[n] < -config.water.seabedFade[1]) assert.deepEqual(Array.from(map.slice(4 * n, 4 * n + 3)), surfaces.sea.map(Math.fround));
-    else if (level.heights[n] < 0) surfaces.sea.forEach((sea, c) => assert.ok(map[4 * n + c] >= Math.fround(sea)));
+    else if (level.heights[n] < -config.water.groundFade[1]) surfaces.sea.forEach((sea, c) => assert.ok(map[4 * n + c] >= Math.fround(sea)));
     assert.equal(map[4 * n + 3], 1);
   }
   // The beach's middle, 16 m up from the water, is dry sand; 120 m behind it green.

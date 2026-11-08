@@ -7,8 +7,9 @@
 //      HDR target.
 //   3. after-opaque pass: meshes in pass 'afterOpaque' into the same target.
 //      They may read the opaque scene through `opaque` (water: what stands
-//      under the surface, and how deep): the opaque pass then resolves into a
-//      texture of its own, and this one into the HDR target's colour. The sky
+//      under the surface, and how deep): the opaque pass's samples then resolve
+//      into textures of their own (opaque-resolve.wgsl), and this pass into the
+//      HDR target's colour. The sky
 //      draws last in it (renderOrder skyOrder), only where nothing else did.
 //   4. translucent pass: meshes marked with translucent() into a layer of their
 //      own, in linear light, depth-tested against everything above.
@@ -50,9 +51,10 @@
 //                     their materials: blending, no depth writes, and sceneOutput()
 //                     writing linear, premultiplied colour. Returns node.
 //   opaque            { color, depth }: the opaque scene, resolved, compressed like the HDR target
-//                     (sceneRadiance() reads the colour back as radiance times the
-//                     exposure, as sceneOutput() takes it), with no sky in it and alpha
-//                     0 where nothing drew, and its depth (one sample
+//                     and its samples weighted by their alpha, so colour / alpha is
+//                     what the samples that count hold (sceneRadiance() reads that back
+//                     as radiance times the exposure, as sceneOutput() takes it), with
+//                     no sky in it and alpha 0 where nothing drew, and its depth (one sample
 //                     a pixel, texture_depth_2d), for materials of meshes in pass
 //                     'afterOpaque' only: a pass can't read what it draws into, so no
 //                     other material may bind them.
@@ -70,6 +72,7 @@ import { Vector2, Vector3, Vector4 } from '../maths/index.js';
 import outputShader from './output.wgsl';
 import compositeShader from './composite.wgsl';
 import depthShader from './depth-resolve.wgsl';
+import opaqueResolveShader from './opaque-resolve.wgsl';
 import { Material, TRANSLUCENT_BLEND } from '../gpu/material.js';
 import { createTarget } from '../gpu/texture.js';
 import { lookup } from '../core/params.js';
@@ -123,6 +126,28 @@ export function createFrame(ctx, display) {
     new Material({ name: 'post-depth-resolve', shader: depthShader, uniforms: { uDepth: { value: sceneTarget.depth } }, colorWrite: false }),
   );
   depthResolve.material.depthWrite = true;
+  // The same depth, and the opaque scene's colour weighted by alpha, for the after-opaque pass.
+  const opaqueResolve = renderer.fullscreen(
+    new Material({ name: 'post-opaque-resolve', shader: opaqueResolveShader, uniforms: { uDepth: { value: sceneTarget.depth }, uSamples: { value: sceneTarget.msaa } } }),
+  );
+  opaqueResolve.material.depthWrite = true;
+  // What it draws into: the opaque scene's colour, and the layer's depth, which is `opaque.depth`.
+  const opaqueResolved = {
+    name: 'opaque resolved',
+    get width() {
+      return opaqueTarget.width;
+    },
+    get height() {
+      return opaqueTarget.height;
+    },
+    samples: 1,
+    format: 'rgba16float',
+    depthFormat: 'depth32float',
+    layers: 1,
+    color: opaqueTarget.color,
+    msaa: null,
+    depth: layerTarget.depth,
+  };
 
   const size = { width: 1, height: 1 };
   const listeners = new Set();
@@ -220,7 +245,7 @@ export function createFrame(ctx, display) {
       return outputTarget?.color ?? null;
     },
     keepDepth: false,
-    outputMaterials: [output.material, composite.material, depthResolve.material],
+    outputMaterials: [output.material, composite.material, depthResolve.material, opaqueResolve.material],
     tonemap,
     onResize(fn) {
       listeners.add(fn);
@@ -276,6 +301,7 @@ export function createFrame(ctx, display) {
         renderer.compile(scene, camera, layerSignature, { pass: 'translucent' }),
         composite.compile({ format: 'rgba16float', samples: 1 }),
         depthResolve.compile(layerSignature),
+        opaqueResolve.compile(layerSignature),
         output.compile(outputSignature),
         ...[...compiles].map((compile) => compile()),
       ]).then((lists) => lists.flat());
@@ -295,11 +321,13 @@ export function createFrame(ctx, display) {
       const resolveDepth = () => depthResolve.render(sizedTarget(layerTarget), { clearColor: [0, 0, 0, 1], clearDepth: 0 });
 
       // The after-opaque pass draws on the opaque pass's samples and depth, and
-      // reads the opaque scene resolved into a texture of its own.
-      const opaque = use.afterOpaque ? { resolveInto: sizedTarget(opaqueTarget).color } : { keepSamples: false, keepDepth: depthAfter };
+      // reads the opaque scene resolved into textures of its own.
+      const opaque = use.afterOpaque ? { resolve: false } : { keepSamples: false, keepDepth: depthAfter };
       renderer.render(scene, camera, sceneTarget, { pass: 'opaque', clearColor: [0, 0, 0, 0], clearDepth: 0, ...opaque });
       if (use.afterOpaque) {
-        resolveDepth();
+        sizedTarget(opaqueTarget);
+        sizedTarget(layerTarget);
+        opaqueResolve.render(opaqueResolved, { clearDepth: 0 });
         for (const pass of opaqueReaders) pass(renderer);
         renderer.render(scene, camera, sceneTarget, { pass: 'afterOpaque', keepSamples: false, keepDepth: depthAfter });
       }
@@ -337,6 +365,7 @@ export function createFrame(ctx, display) {
       output.dispose();
       composite.dispose();
       depthResolve.dispose();
+      opaqueResolve.dispose();
     },
   };
 }

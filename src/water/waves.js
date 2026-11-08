@@ -17,6 +17,11 @@ import mipsShader from './waves-mips.wgsl';
 
 const CELL_BYTES = 32; // two vec4f: waves-evolve.wgsl's Cell
 const SLOT = 256; // bytes between uniforms in one buffer, as a uniform's offset must align to
+const EVOLVE_BYTES = 32; // waves-evolve.wgsl's Evolve, padded
+// The time's coarse part, in shares of the loop (waves-evolve.wgsl): whole turns of a wave up
+// to 2^24 / 2^11 / 2, for times up to two loops (the fixture's), times it stay a float's whole.
+const LOOP_STEPS = 2048;
+const MOST_TURNS = 2 ** 24 / LOOP_STEPS / 2;
 
 export function createWaves(ctx, spectrum) {
   const { gpu } = ctx;
@@ -24,6 +29,10 @@ export function createWaves(ctx, spectrum) {
   const { size, cascades, loop } = spectrum;
   const stages = Math.log2(size);
   if (!Number.isInteger(stages)) throw new Error(`waves: an FFT of ${size} isn't a power of two`);
+  for (const c of cascades) {
+    const most = c.turns.reduce((m, v) => Math.max(m, v), 0);
+    if (most > MOST_TURNS) throw new Error(`waves: a wave turns ${most} times in the loop; the GPU reduces its phase exactly up to ${MOST_TURNS}`);
+  }
   const layers = 2 * cascades.length;
 
   const texture = new Texture(gpu, {
@@ -59,7 +68,7 @@ export function createWaves(ctx, spectrum) {
 
   const perCascade = cascades.map((c) => ({
     amplitudes: buffer('waves amplitudes', c.amplitudes.byteLength, STORAGE, c.amplitudes),
-    frequencies: buffer('waves frequencies', c.frequencies.byteLength, STORAGE, c.frequencies),
+    turns: buffer('waves turns', c.turns.byteLength, STORAGE, c.turns),
     cells: [0, 1].map(() => buffer('waves cells', size * size * CELL_BYTES, GPUBufferUsage.STORAGE)),
   }));
 
@@ -90,7 +99,7 @@ export function createWaves(ctx, spectrum) {
     const mipsIn = Array.from({ length: levels - 1 }, (_, l) => passes.mips.group([mipView(l), mipView(l + 1)]));
     return {
       perCascade: perCascade.map((p, c) => ({
-        evolve: passes.evolve.group([uniform(evolveUniforms, c, 16), p.amplitudes, p.frequencies, p.cells[0]]),
+        evolve: passes.evolve.group([uniform(evolveUniforms, c, EVOLVE_BYTES), p.amplitudes, p.turns, p.cells[0]]),
         // Stage by stage, each reading what the last wrote: 2 log2(size) in all, an even
         // number, so the last writes the buffer the store reads.
         fft: Array.from({ length: 2 * stages }, (_, n) => {
@@ -103,7 +112,7 @@ export function createWaves(ctx, spectrum) {
     };
   };
 
-  const bytes = new ArrayBuffer(16);
+  const bytes = new ArrayBuffer(EVOLVE_BYTES);
   const numbers = { u: new Uint32Array(bytes), f: new Float32Array(bytes) };
   let last = null;
   const workgroups = (n, per) => Math.ceil(n / per);
@@ -111,17 +120,21 @@ export function createWaves(ctx, spectrum) {
   return {
     texture,
     compiled,
-    // Sums the waves for time t, unless they stand there already.
-    compute(t) {
-      const wrapped = t - loop * Math.floor(t / loop);
+    // Sums the waves for time t, unless they stand there already. `wrap` false: as
+    // given, up to two loops, for the fixture to hold a time a loop on to the time.
+    compute(t, { wrap = true } = {}) {
+      const wrapped = wrap ? t - loop * Math.floor(t / loop) : t;
       if (wrapped === last) return;
       last = wrapped;
       groups ??= makeGroups();
+      const share = wrapped / loop;
+      const coarse = Math.floor(share * LOOP_STEPS) / LOOP_STEPS;
       cascades.forEach((c, n) => {
         numbers.u[0] = size;
         numbers.f[1] = (2 * Math.PI) / c.patch;
-        numbers.f[2] = wrapped;
-        numbers.f[3] = c.choppy;
+        numbers.f[2] = coarse;
+        numbers.f[3] = share - coarse;
+        numbers.f[4] = c.choppy;
         queue.writeBuffer(evolveUniforms, SLOT * n, bytes);
       });
       const encoder = device.createCommandEncoder({ label: 'waves' });

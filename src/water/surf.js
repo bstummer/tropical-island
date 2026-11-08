@@ -20,9 +20,9 @@ import { waveSpeed } from './sea-map.js';
 
 // A wave's share of a full one, in its set and along its length. All the periods
 // divide the waves' loop (config.water.waves), so the sets go on across it.
-function sizeOf(n, across, least) {
-  const beat = Math.min(Math.max(0.5 + 0.35 * Math.sin((2 * Math.PI * n) / 8) + 0.35 * Math.sin((2 * Math.PI * n) / 5), 0), 1);
-  const along = 0.5 + 0.25 * Math.sin(across * 0.031 + (2 * Math.PI * 3 * n) / 8) + 0.25 * Math.sin(across * 0.0127 + (2 * Math.PI * 2 * n) / 5);
+function sizeOf(n, across, { least, sets, beat: by, along: [[rate0, turns0], [rate1, turns1]] }) {
+  const beat = Math.min(Math.max(0.5 + by * Math.sin((2 * Math.PI * n) / sets[0]) + by * Math.sin((2 * Math.PI * n) / sets[1]), 0), 1);
+  const along = 0.5 + 0.25 * Math.sin(across * rate0 + (2 * Math.PI * turns0 * n) / sets[0]) + 0.25 * Math.sin(across * rate1 + (2 * Math.PI * turns1 * n) / sets[1]);
   return (least + (1 - least) * beat * beat) * (0.6 + 0.7 * along);
 }
 
@@ -32,7 +32,7 @@ const edge = (from, to, x) => {
 };
 
 export function createSurf(settings, [wayX, wayZ]) {
-  const { period, height, shoals, limit, dips, fades, least, back, front, fall, ahead, run, always, wave, trail, toe } = settings;
+  const { period, height, shoals, limit, dips, fades, back, front, fall, ahead, run, always, wave, trail, toe } = settings;
   const deep = waveSpeed(Infinity, period);
   return function at({ swell, depth, breaks, reef, late, speed }, x, z, t, out = {}) {
     out.foam = 0;
@@ -40,13 +40,14 @@ export function createSurf(settings, [wayX, wayZ]) {
     out.slope = 0;
     if (swell <= 0 || reef >= fades[1]) return out;
     // How far along in its wave this place is. Its front wanders a few metres, at sizes from hundreds of metres to a few.
-    const wander = 3 * Math.sin(x * 0.021 + z * 0.013) + 2 * Math.sin(x * -0.017 + z * 0.037) + 0.5 * Math.sin(x * 0.21 + z * 0.13) + 0.4 * Math.sin(x * 0.71 + z * 0.43) + 0.2 * Math.sin(x * -0.93 + z * 1.37);
+    let wander = 0;
+    for (const [m, kx, kz] of settings.wander) wander += m * Math.sin(x * kx + z * kz);
     const phase = (t - (x * wayX + z * wayZ) / deep - late - wander / speed) / period;
     const n = Math.floor(phase);
     const f = phase - n;
     const across = x * wayZ - z * wayX;
-    const now = sizeOf(n, across, least);
-    const next = sizeOf(n + 1, across, least);
+    const now = sizeOf(n, across, settings);
+    const next = sizeOf(n + 1, across, settings);
 
     // How tall each stands here: taller as it slows, no more than what's left of the swell, or the water lets it.
     const rises = height * (deep / speed) ** shoals;

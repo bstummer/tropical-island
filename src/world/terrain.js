@@ -28,7 +28,7 @@
 // made of them or lies on them, their tiles' averages filled once `ready`
 // resolved; greenAt: whether the green inland is living green or bare ground
 // at world x, z, as drawn (world/green.js), once `ready` resolved: 1 green, 0 bare.
-import { Box3, Frustum, Matrix4, Vector3, Vector4, toHalfFloat } from '../maths/index.js';
+import { Box3, Frustum, Matrix4, Vector2, Vector3, Vector4, toHalfFloat } from '../maths/index.js';
 import shader from './terrain.wgsl';
 import HeightmapWorker from './heightmap-worker.js?worker&inline';
 import { Material } from '../gpu/material.js';
@@ -122,8 +122,9 @@ export function create(ctx) {
     uRock: { value: linear(albedo.rock) },
     uSeabedSand: { value: linear(config.water.seabedSand) },
     uSeabedRock: { value: linear(config.water.seabedRock) },
+    uSeabedTurns: { value: new Vector2(...config.water.seabedTurns) },
     uSeabedDeepest: { value: config.water.seabedFade[1] },
-    uUnderSea: { value: new Vector3(...config.water.groundFade, config.water.troughs) },
+    uUnderSea: { value: new Vector4(...config.water.groundFade, config.water.troughs, 0) },
     ...tilesUniforms(tiles),
     ...surfaceUniforms({ sand: { grainMean: new Vector3() }, rock: { mean: new Vector4() }, green: { grassMean: new Vector3(), grassCover: 0, litterCover: 0 }, glints: 1 }),
   };
@@ -274,9 +275,14 @@ export function create(ctx) {
     frustum.setFromProjectionMatrix(viewProjection);
     const [ca, co] = island.toCove(camera.position.x, camera.position.z);
     const cam = [ca, camera.position.y, co];
+    // With the eye over the water's surface, the surface hides what lies under it; under it, or
+    // unsure, nothing is left out. In a swell's trough the eye can be over it and under the still sea.
+    const { x, y, z } = camera.position;
+    const over = ctx.water ? ctx.water.over(x, y, z) : y > 0;
+    surfaces.uUnderSea.value.w = over ? 1 : 0;
     lod.select(cam, ranges, (a0, o0, size, min, max) => {
       // Wholly under the sea, it is the water's to draw (water/water-seabed.wgsl).
-      if (leftToWater(max, config.water.groundFade) && camera.position.y > 0) return false;
+      if (over && leftToWater(max, config.water.groundFade)) return false;
       box.makeEmpty();
       let far = 0;
       for (const [a, o] of [[a0, o0], [a0 + size, o0], [a0, o0 + size], [a0 + size, o0 + size]]) {

@@ -38,9 +38,11 @@ struct Terrain {
   uRock: vec3f,
   uSeabedSand: vec3f,
   uSeabedRock: vec3f,
+  uSeabedTurns: vec2f, // m under the sea over which sand and rock turn to the seabed's, .x and .y
   // m under the sea: the ground gives way to the seabed the water draws (water-seabed.wgsl)
-  // from .x to .y, and no trough between the waves shows it below .z.
-  uUnderSea: vec3f,
+  // from .x to .y, and no trough between the waves shows it below .z; .w 1 while the eye
+  // is over the water's surface (world/terrain.js), which then hides what lies below that.
+  uUnderSea: vec4f,
 }
 
 @group(1) @binding(0) var<uniform> terrain: Terrain;
@@ -92,13 +94,13 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
   let aboveSea = vWorldPos.y + planetDrop(vWorldPos.xz);
   let tall = fwidth(vCentre.y + planetDrop(vCentre.xz)); // how much aboveSea changes across the pixel
   // Ground the water covers whatever its waves do, across the pixel, needn't be shaded.
-  let hidden = aboveSea + 2.0 * tall < -terrain.uUnderSea.z && frame.cameraPosition.y > 0.0;
+  let hidden = aboveSea + 2.0 * tall < -terrain.uUnderSea.z && terrain.uUnderSea.w > 0.5;
   // How much of the pixel lies above the sea: below it the water's surface
   // mirrors, and it adds the haze. As soft as the pixel is tall, so the sand's
   // sheen ends where the water begins without stair-steps.
   let overSea = smoothstep(-min(tall, 0.03), max(tall, 1e-3), aboveSea);
   // The sand on the seabed is whiter than the beach's, from just under the sea.
-  let wetSand = mix(terrain.uWetSand, terrain.uSeabedSand, smoothstep(0.0, 0.15, -aboveSea));
+  let wetSand = mix(terrain.uWetSand, terrain.uSeabedSand, smoothstep(0.0, terrain.uSeabedTurns.x, -aboveSea));
 
   var info = vec4f(0.0);
   var cover = vec4f(0.0);
@@ -151,7 +153,7 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
       r.albedo = rockAlbedo(terrain.uRock, w);
     }
     // Rock under the sea turns to rubble and algae over its first metres.
-    r.albedo = mix(r.albedo, terrain.uSeabedRock, smoothstep(0.0, 2.0, -aboveSea));
+    r.albedo = mix(r.albedo, terrain.uSeabedRock, smoothstep(0.0, terrain.uSeabedTurns.y, -aboveSea));
   }
   let soft = 1.0 - cover.y; // sand and green
   if (cover.x > 0.0 && soft > cover.x) {

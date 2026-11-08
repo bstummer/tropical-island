@@ -10,10 +10,13 @@
 //   Dxx = -kx kx/k L H     Dzz = -kz kz/k L H   (how the sideways moves pile up)
 // L: how far crests lean (`choppy`).
 
+#include "/chunks/pi.wgsl"
+
 struct Evolve {
   uSize: u32,
   uBase: f32, // 2 pi / the patch
-  uTime: f32, // s, wrapped at the spectrum's loop
+  uLoopHi: f32, // the time as a share of the spectrum's loop, cut down to a whole number of 2048ths (water/waves.js)
+  uLoopLo: f32, // and what that leaves
   uChoppy: f32,
 }
 
@@ -25,7 +28,7 @@ struct Cell {
 
 @group(0) @binding(0) var<uniform> evolve: Evolve;
 @group(0) @binding(1) var<storage, read> amplitudes: array<vec4f>;
-@group(0) @binding(2) var<storage, read> frequencies: array<f32>;
+@group(0) @binding(2) var<storage, read> turns: array<f32>; // each wave's whole turns in the loop
 @group(0) @binding(3) var<storage, read_write> cells: array<Cell>;
 
 fn timesI(c: vec2f) -> vec2f {
@@ -45,7 +48,11 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
   let k = max(length(wave), 1e-6);
 
   let a = amplitudes[n];
-  let phase = frequencies[n] * evolve.uTime;
+  // Reduced exactly before the sine: a wave turns thousands of times in the loop, and
+  // its whole turns times the time's coarse part make a float exactly, whose fraction is
+  // then exact too; what is left is a few turns at most, which sin and cos take finely.
+  let turned = turns[n];
+  let phase = 2.0 * PI * (fract(turned * evolve.uLoopHi) + turned * evolve.uLoopLo);
   let c = cos(phase);
   let s = sin(phase);
   // h0 e^(-i phase) + conj(h0(-k)) e^(i phase)

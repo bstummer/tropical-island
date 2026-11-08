@@ -721,3 +721,19 @@ test('angles in degrees and radians', () => {
   assert.equal(maths.clamp(5, 0, 1), 1);
   assert.equal(maths.clamp(-5, 0, 1), 0);
 });
+
+test('half floats rounded to the nearest: never further off than one cut down, never more than half a step, and the same where cutting is exact', () => {
+  const { toHalfFloat, toHalfFloatNearest, fromHalfFloat } = maths;
+  const s = stream('half-nearest').next;
+  for (let n = 0; n < 5000; n++) {
+    const v = (s() - 0.5) * 2 ** (s() * 34 - 18);
+    const [cut, near] = [fromHalfFloat(toHalfFloat(v)), fromHalfFloat(toHalfFloatNearest(v))];
+    assert.ok(Math.abs(near - v) <= Math.abs(cut - v), `${v}: ${near} further than ${cut}`);
+    const step = Math.abs(fromHalfFloat(toHalfFloat(v) + 1) - cut);
+    assert.ok(Math.abs(near - v) <= step / 2 + 1e-12 * Math.abs(v), `${v}: ${near} more than half a step off`);
+    assert.equal(Math.sign(near) || 0, Math.abs(v) < 2 ** -25 ? Math.sign(near) || 0 : Math.sign(v), `${v}: ${near} changed sign`);
+  }
+  for (const v of [0, 1, -2, 0.5, 65504, -65504, 2 ** -24]) assert.equal(toHalfFloatNearest(v), toHalfFloat(v), `${v}`);
+  assert.equal(fromHalfFloat(toHalfFloatNearest(1.0009)), 1 + 2 ** -10, 'up when nearer');
+  assert.equal(fromHalfFloat(toHalfFloatNearest(1.0004)), 1, 'down when nearer');
+});
