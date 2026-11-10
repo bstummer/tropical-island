@@ -4,9 +4,18 @@
 
 #include "/chunks/noise.wgsl"
 
+// A cell of a grid that repeats every `period` cells, both whole numbers, wrapped into
+// [0, period), exactly. Not cell - period * floor(cell / period): some GPUs divide by a
+// reciprocal (Intel's), so a cell on a whole number of periods can land a hair under it
+// and hash as another cell than the one it repeats, a seam.
+fn tileWrap(cell: vec2f, period: f32) -> vec2f {
+  let p = i32(round(period));
+  return vec2f(((vec2i(round(cell)) % p) + p) % p);
+}
+
 // A cell's hash, in [-1, 1]: the same for every repeat of the cell.
 fn tileHash(cell: vec2f, period: f32, seed: vec2f) -> vec2f {
-  return noiseHash22(cell - period * floor(cell / period) + seed); // GLSL's mod(cell, period)
+  return noiseHash22(tileWrap(cell, period) + seed);
 }
 
 // Gradient noise, roughly [-1, 1], repeating every `period` cells.

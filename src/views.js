@@ -14,6 +14,10 @@
 // disabled: optional true: kept, and found by name (?view=, the screenshot tool's --views), but left
 //           out of every run over the views: captures, their checks, the benchmark and the tests.
 //
+// At most MAX_ENABLED views are enabled at once (tests/views.test.js holds it): CI captures every
+// enabled view, with its checks, on SwiftShader, and more would make it take too long. Enable the
+// views a stage works on and disable others, which keeps them for later.
+//
 // In a dev build, press P to log the current camera as an entry ready to paste here.
 
 const all = [
@@ -38,6 +42,7 @@ const all = [
   },
   {
     name: 'jungle-edge',
+    disabled: true,
     position: [2.76, 6.67, -48.95],
     yaw: -22.8,
     pitch: 9,
@@ -107,6 +112,7 @@ const all = [
   },
   {
     name: 'open-sea',
+    disabled: true,
     position: [-110, 9, 400],
     yaw: -15,
     pitch: -6,
@@ -117,6 +123,7 @@ const all = [
   },
   {
     name: 'reef',
+    disabled: true,
     position: [3.11, 2.64, -11.59],
     yaw: 168,
     pitch: -0.6,
@@ -127,6 +134,7 @@ const all = [
   },
   {
     name: 'surf',
+    disabled: true,
     position: [-61, 3, 227],
     yaw: 165,
     pitch: -3,
@@ -137,16 +145,18 @@ const all = [
   },
   {
     name: 'air-pass',
+    disabled: true,
     position: [-100, 70, 60],
     yaw: 161.6,
     pitch: -15,
     fov: 60,
     timeOfDay: 11,
     brief: 'Late morning from the air over the lagoon, looking out through the pass: the reef flat either side of it, the crest, the channel leading out, the deep blue beyond. No block, seam or jag in anything under the water.',
-    crops: { pass: [0.5, 0.35], flat: [0.2, 0.42] },
+    crops: { pass: [0.5, 0.66], flat: [0.2, 0.64] },
   },
   {
     name: 'air-headland',
+    disabled: true,
     position: [110, 300, 330],
     yaw: 0,
     pitch: -75,
@@ -156,6 +166,7 @@ const all = [
   },
   {
     name: 'air-rocks',
+    disabled: true,
     position: [13.45, 31.28, 229.86],
     yaw: 229.8,
     pitch: -14.5,
@@ -165,6 +176,7 @@ const all = [
   },
   {
     name: 'air-sun',
+    disabled: true,
     position: [-100, 300, 1000],
     yaw: 44.45,
     pitch: -59.4,
@@ -174,6 +186,7 @@ const all = [
   },
   {
     name: 'lagoon-sun',
+    disabled: true,
     position: [-60, 25, 120],
     yaw: 44.45,
     pitch: -59.4,
@@ -233,7 +246,19 @@ const all = [
     brief: "Early morning from just above the low point at the far end of the bay, along the beach to the headland: the sun low behind the hills on the left, whose cool shade still lies over the back of the beach and the headland's face while the first light warms the sand and the lagoon; the shade's edge soft across the beach.",
   },
   {
+    name: 'sun-over-hills',
+    disabled: true,
+    position: [-520, 2.5, -1800],
+    yaw: 162.4,
+    pitch: 2,
+    fov: 40,
+    timeOfDay: 'golden-hour',
+    brief: "Golden hour from a boat in the lagoon on the far side of the island, the low sun just over the hills and a low cliff in front of them: the sun's path of glitter across the water, held back over the cliff's image in the water, where the cliff's long shadow lies.",
+    crops: { path: [0.5, 0.75] },
+  },
+  {
     name: 'sand-edge',
+    disabled: true,
     position: [-45, 4.53, -38.95],
     yaw: -93.4,
     pitch: -6,
@@ -281,6 +306,8 @@ const all = [
     brief: "Late morning at eye height in a dip near the summit, between its rough humps, a rocky one on the right: the ground's skyline up close, which must curve, not break into straight pieces.",
   },
 ];
+
+export const MAX_ENABLED = 8;
 
 export const views = all.filter((v) => !v.disabled);
 

@@ -159,7 +159,7 @@ fn fragmentMain(in: Fullscreen) -> @location(0) vec4f {
     // The cells searched: 3x3 about the point's, or the 2x2 nearest it.
     let span = select(2, 3, s == 0);
     let first = floor(p) - select(step(fract(p), vec2f(0.5)), vec2f(1.0), s == 0);
-    let wrapped = first - n * floor(first / n); // GLSL's mod(first, n)
+    let wrapped = tileWrap(first, n);
     // The cells whose leaves can reach the point, by a circle about each a
     // little over half its length, and its shade: packed four bits each, x +
     // 4y. Only those are worked out in full, by a loop that ends when they do,
@@ -206,7 +206,7 @@ fn fragmentMain(in: Fullscreen) -> @location(0) vec4f {
   let n = cellsAcross(grid.x);
   let cell = vec4f(litter.uTile / n, grid.y, 37.0 * f32(s), grid.z);
   let kinds = vec2f(grid.w, grid.w + select(0.0, TWIGS_SHARE, s == 2));
-  var inside = -leaf(uv * n, top.zw, top.zw - n * floor(top.zw / n), cell, kinds, broad, LEAFLETS - broad, TWIGS - broad, &pile, &frame, &size); // GLSL's mod(top.zw, n)
+  var inside = -leaf(uv * n, top.zw, tileWrap(top.zw, n), cell, kinds, broad, LEAFLETS - broad, TWIGS - broad, &pile, &frame, &size);
 
   // Its own random numbers, keyed by its place in the pile and tone.
   let key = pile * 1013.0;

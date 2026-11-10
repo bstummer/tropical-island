@@ -706,7 +706,7 @@ export const water = {
   // horizon from any eye under about 800 m, where the far plane cuts it first;
   // its nodes morph over their band's last `morph`; `tallest`: m, the most the
   // waves move a point any way, for culling; `over`: m over the surface as JS sums it
-  // a point has to stand to be surely over the surface drawn (config.capture.waves.surface, with room).
+  // a point has to stand to be surely over the surface drawn (past config.capture.waves.inJs, how far that may lie from JS's sum).
   mesh: { leaf: 8, reach: 240000, morph: 0.3, tallest: 6, over: 0.3 },
   // The variance per axis of the slopes of waves too small for any cascade,
   // which a mirror of the sun always spreads by. `glitterCeiling`: the most the

@@ -1,13 +1,17 @@
 // Invariants for viewpoints and config.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { views, findView } from '../src/views.js';
+import { MAX_ENABLED, views, findView } from '../src/views.js';
 import { config } from '../src/config.js';
 import { sunPath } from '../src/sky/sun.js';
 import { createRandom } from '../src/core/random.js';
 import { createIsland } from '../src/world/island.js';
 
 const SEA_LEVEL = 0;
+
+test('at most MAX_ENABLED views are enabled at once, or CI takes too long', () => {
+  assert.ok(views.length <= MAX_ENABLED, `${views.length} views enabled (at most ${MAX_ENABLED}): disable some in src/views.js`);
+});
 
 test('view names are unique kebab-case', () => {
   const names = views.map((v) => v.name);

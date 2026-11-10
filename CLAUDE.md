@@ -86,7 +86,8 @@ For every change that can affect pixels:
   `package-lock.json` pins the same Playwright, and with it the same Chromium (`info.json` records it).
 - A new area or feature gets views in `src/views.js` (fly there in dev, press P, paste), each with a `brief`:
   one line on what the shot is for (focal point, where the sun sits, the mood), which reviews judge it against.
-  Keep existing views stable so history stays comparable.
+  Keep existing views stable so history stays comparable. At most 8 are enabled at once (`MAX_ENABLED`), or CI
+  takes too long: enable the views a stage works on and disable others (`disabled: true`), which keeps them.
 
 ## 5. Testing
 
@@ -236,7 +237,9 @@ it. A new system's async work goes behind `ready`, or behind `settled()` when it
   - Uniform arrays hold `vec4f` elements (`gpu/reflect.js` refuses others); booleans in uniforms are `u32`.
   - Y points down: fragment positions and texture rows count from the top. Code that reads a texture back by
     position, or uses the fragment's y, says which way it counts.
-  - `%` truncates: where negatives can occur, write `x - y * floor(x / y)`.
+  - `%` truncates: where negatives can occur, write `x - y * floor(x / y)`. Whole numbers that must wrap
+    exactly (a tile's cells) wrap as integers, `tileWrap()` (`textures/tileable.wgsl`): some GPUs divide by
+    a reciprocal, so `x / y` can land a hair under a whole number and `floor` takes a whole `y` off.
   - Nothing may depend on the order of atomic operations.
   - Readbacks are async (`texture.read()`): what depends on one lands whole, behind `ready` or `settled()`.
 - Tessellate large planes (water, ground skirts): GPUs clip and interpolate giant triangles differently.

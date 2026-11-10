@@ -214,6 +214,20 @@ test('the surface in JS: still where nothing reaches, moving where the sea does,
   assert.ok(Math.abs(moving.displacement(x, z, t)[1] - h) < 0.01);
 });
 
+test("ctx.water.over()'s room covers how far the surface drawn may lie from JS's sum, and the open sea's waves move a point no further than the culls allow", () => {
+  const { mesh } = config.water;
+  assert.ok(mesh.over > config.capture.waves.inJs, `over() leaves ${mesh.over} m; the drawn surface may lie ${config.capture.waves.inJs} m off JS's sum`);
+  let most = 0;
+  for (const seed of [1, 2, 3, 4, 5]) {
+    const surface = createSurface(spectrumOf(seed), open, (x, z) => [x, z], waves.inJs, waves.ripplesLeast);
+    for (let i = 0; i < 200; i++) {
+      const d = surface.displacement(37.3 * i, -23.9 * i, 4.7 * i);
+      most = Math.max(most, ...d.map(Math.abs));
+    }
+  }
+  assert.ok(most < mesh.tallest, `a point moved ${most} m (tallest ${mesh.tallest})`);
+});
+
 test('the shorter a wave of the chop the wider it spreads, down to its least; the swell keeps its lobe', () => {
   const kp = 0.3;
   const { chop, swell } = waves;
