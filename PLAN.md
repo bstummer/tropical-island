@@ -420,8 +420,9 @@ timing is what the rest builds on), 7.5 and 7.6, then 7.7 and 7.8.
 - The wetness has one input for sand, rock and the rocks (`chunks/wet.wgsl`): drive `wetness` and its film
   there (7.3), and keep `washed`, where the waves reach, which the ripples and swash marks follow, so
   drying sand doesn't grow ripples. Spray darkens rock to 2 m above the sea (`chunks/rock.wgsl`): waves
-  breaking on it should drive that (7.7). A real waterline has beach cusps, scalloped by the swash every
-  20–40 m (7.8).
+  breaking on it should drive that (7.7). A real waterline has beach cusps, scalloped by the swash about
+  one and a half times as far apart as it runs up: 5 to 7 m here, where an open coast's lie 20–40 m apart
+  (7.8).
 - Measured in the cove: the beach's face rises 7 to 8.5 cm a metre at the waterline (5.7 towards the
   headland) and the seabed falls 5.5 to 7, so the wet sand's zone (0.35 m up) is about 4.5 m of beach, and
   the water is ankle-deep 2 m out and knee-deep at 7. The reef's waves come 11.25 s apart, in sets.
@@ -431,6 +432,21 @@ timing is what the rest builds on), 7.5 and 7.6, then 7.7 and 7.8.
   of the eye on high and 0.5 m within 18 m on medium and low, coarser beyond: a wave a hand high keeps its
   shape from the vertices only close to. SwiftShader frames stood at 7.4 of their 8 s at the end of Stage
   6, and a shader's every line costs there at every pixel it draws.
+- What nature does here, from the research: a wave that runs 0.3 m up this beach takes about 6 s over it,
+  fastest at its start, the backwash about half as long again as the uprush, so between the reef's waves
+  the sand lies glassy for a few seconds. The sheet is millimetres thick. Waves this long on a beach this
+  flat don't curl: a low glassy hump steepens in its last metre and collapses into a thin bore. Behind a
+  reef the sea's level at the shore also swings a few cm over half a minute to two, which moves the whole
+  zone the waves wash. A film of water mirrors 6% of the sky 3 m from a standing eye, a third at 10 m and
+  over half at 20 m: the mirror is the middle distance's, and at one's feet wet sand is dark. The net of
+  light in ankle-deep water comes from wavelets of 3 to 10 cm; the ripples' texture has texels of 13 cm
+  (26 on low), finer only where it is read again smaller.
+- Research to start from: Hogg and Pritchard 2004 (a swash's path and its sheet's depth), Stockdon et al.
+  2006 (how far waves run up), Lekner and Dorf 1988 (why wet sand is darker, and by how much), Lagarde
+  2013 (wet surfaces as they dry), Wallace 2011 and Yuksel and Keyser 2009 (caustics from the surface's
+  own shape), Dupuy and Bruneton 2012 (foam's cover and light), Vlachos 2010 (a pattern carried by a flow),
+  Malan 2022 (a breaking wave as one shape moving along its front). No shipped renderer found simulates
+  the beach's edge: each moves it by a formula of the distance or the time to the shore.
 - Tried while planning, and thrown away: the water's mesh laid on the beach's face as a sheet with the
   sea's own mirror. It joined the sea with no seam and mirrored the headland; from above a clear sheet
   barely showed, as it reads by the dark sand under it, its foam and what it mirrors at a low angle; and a
