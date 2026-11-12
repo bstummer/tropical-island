@@ -43,6 +43,7 @@ import { createSurfaceTiles, tilesUniforms } from '../textures/surfaces.js';
 import { sandUniforms } from '../textures/sand.js';
 import { rockUniforms } from '../textures/rock.js';
 import { greenUniforms } from '../textures/green.js';
+import { FOAM_LEVELS, foamLevelsUniform } from '../textures/foam-levels.js';
 import { createLod, createMeshHeight, lodRanges } from './lod.js';
 import { DETAIL, GREEN, gridGeometry, INLAND, leftToWater, nodeBounds, ROCK, SAND, WET } from './terrain-nodes.js';
 
@@ -109,10 +110,12 @@ export function create(ctx) {
   const patchSeeds = [patchRng.int(0, 0xffffff), patchRng.int(0, 0xffffff)];
   const patches = greenPatches(settings.green, patchSeeds);
   // The ground's surfaces, shared with what is made of them or lies on them.
-  // The tiles' averages are read back from the GPU: zeros until `ready`.
-  const surfaceUniforms = ({ sand, rock, green, glints }) => ({
+  // The tiles' averages and the foam's levels are read back from the GPU: until `ready`,
+  // zeros, 1 for the glints' mean and evenly spaced levels for the foam.
+  const surfaceUniforms = ({ sand, rock, green, glints, foam }) => ({
     uGlintMean: { value: glints },
-    ...sandUniforms(sand, sandSettings, looks.wetHeight, config.sky.sun.sunsetYaw),
+    uFoamLevels: { value: foamLevelsUniform(foam) },
+    ...sandUniforms(sand, sandSettings, looks.wetHeight, config.sky.sun.sunsetYaw, config.water.glitter),
     ...rockUniforms(rock, rockSettings),
     ...greenUniforms(green, albedo, greenSettings, patchSeeds),
   });
@@ -126,7 +129,7 @@ export function create(ctx) {
     uSeabedDeepest: { value: config.water.seabedFade[1] },
     uUnderSea: { value: new Vector4(...config.water.groundFade, config.water.troughs, 0) },
     ...tilesUniforms(tiles),
-    ...surfaceUniforms({ sand: { grainMean: new Vector3() }, rock: { mean: new Vector4() }, green: { grassMean: new Vector3(), grassCover: 0, litterCover: 0 }, glints: 1 }),
+    ...surfaceUniforms({ sand: { grainMean: new Vector3() }, rock: { mean: new Vector4() }, green: { grassMean: new Vector3(), grassCover: 0, litterCover: 0 }, glints: 1, foam: Array.from({ length: FOAM_LEVELS }, (_, j) => 2 - (2 * j) / (FOAM_LEVELS - 1)) }),
   };
   const materialUniforms = { ...uniforms, ...drawn.uniforms, ...surfaces };
 

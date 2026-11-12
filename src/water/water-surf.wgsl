@@ -12,9 +12,14 @@ struct SurfSettings {
   uSurfSets: vec4f, // the waves each of a set's two beats goes round over; how far each moves a wave's size
   uSurfAlong: vec4f, // per beat: how a wave's size varies along its crest, rad/m, and how many turns it moves along it over the beat
   uSurfWander: array<vec4f, 5>, // its front's wander, per term: m, and rad/m along x and z
+  uSurfStands: vec2f, // how much of the swell a crest lets through where its whitewater still stands off the water seen from far off, and where none does
 }
 
 @group(1) @binding(13) var<uniform> surf: SurfSettings;
+
+// How far along the swell's way, per metre seaward of the crest, its whitewater is looked
+// for on the crest: the swell may cross the crest's line at a slant, up to 48 degrees.
+const SURF_CREST_REACH: f32 = 1.5;
 
 // The share of a full wave, in its set and along its length.
 fn surfSize(n: f32, across: f32) -> f32 {
@@ -75,9 +80,19 @@ fn surfAt(sea: vec4f, shore: vec4f, wave: vec4f, hides: f32, wide: f32, xz: vec2
   let fading = exp(-f * surf.uSurfBreak.y);
   let toe = (1.0 - f) / surf.uSurfBreak.z;
   let coming = exp(-toe * toe);
-  // Seen from far off, what stands off the water hides the ground behind it, as if the wave broke sooner.
-  let hidden = reef / max(hides, 1e-3);
-  let swell = sea.z * (1.0 - smoothstep(0.0, 0.25, hidden) * (1.0 - smoothstep(0.25, 1.0, hidden)));
+  // Seen from far off, what stands off the water hides the ground behind it, as if the wave
+  // broke sooner: up to `hides` m seaward of the crest, where the crest holds the swell back,
+  // read past it along the way the swell runs. Where the crest's line runs on through water
+  // too deep to hold it, past a reef's end, nothing stands there to hide anything. A band
+  // narrower than the pixel spreads over it, as much on average: near the eye it has none,
+  // and a full one a hair wide would whiten single pixels along the crest's line, in dashes.
+  let hidden = reef / max(max(hides, wide), 1e-3);
+  var band = smoothstep(0.0, 0.25, hidden) * (1.0 - smoothstep(0.25, 1.0, hidden)) * min(hides / max(wide, 1e-4), 1.0);
+  if (band > 0.0) {
+    let crest = seaAt(xz + surf.uSurfWay.xy * (SURF_CREST_REACH * reef + 2.0 * seaTexel())).z;
+    band *= 1.0 - smoothstep(surf.uSurfStands.x, surf.uSurfStands.y, crest);
+  }
+  let swell = sea.z * (1.0 - band);
   // A pixel across more than a good part of a wave sees what it holds on average, or it would blink as each goes by.
   let melts = smoothstep(0.15, 0.7, wide / (speed * period));
   let whiter = max(now - swell, 0.0) * fading + max(next - swell, 0.0) * coming;

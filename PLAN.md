@@ -12,8 +12,11 @@ The plan is loose on purpose. Each stage says what to achieve and how to tell wh
 build it. Any technique it names is only a suggestion: the AI picks the approach at each step. Keep it that
 way when editing the plan: write goals and checks, not techniques. When reality disagrees with the plan (a
 stage turns out bigger than expected, an approach looks bad, the order is wrong), change the plan and note
-why in the stage's notes. The plan keeps no session log: git has the history, and what is open lives in
-each stage's notes (known flaws, open questions).
+why in the stage's notes.
+
+Keep the notes short. A finished stage keeps a few lines on what it built and a list of what is still open;
+what got fixed, and how, goes: git has the history, and module headers say how things work. What a later
+stage needs goes in that stage's notes, once.
 
 ## How to work a stage
 
@@ -29,9 +32,9 @@ each stage's notes (known flaws, open questions).
    every later capture. Give each new view a brief (CLAUDE.md §4).
 6. Finish to CLAUDE.md §11 (verify, compare sheet reviewed, tests, views, docs).
 7. Review the result harshly before the user does. Go through every view against its brief and
-   CLAUDE.md's list of things that break the spell: the stills, plus the motion strips, zoomed crops and
-   banding views once Stage 1 has built them. List everything that still falls short, including what got
-   worse. A subagent that hasn't seen the code makes a good second pair of eyes.
+   CLAUDE.md's list of things that break the spell: the stills, the motion strips, zoomed crops and
+   banding views. List everything that still falls short, including what got worse. A subagent that hasn't
+   seen the code makes a good second pair of eyes.
 8. Hand over: set the stage to `review` and give the user the capture label, the compare sheet, the frame
    cost and the list of known flaws. Make sure the user can open the images, even when the session ran in
    a cloud container. Name what needs the user's eyes or ears: motion in the running game, sound, feel,
@@ -53,20 +56,20 @@ when a choice is about taste or scope rather than engineering (see Open question
   Fake whatever is far away.
 - **Always shippable.** Every stage ends with `main` deployable and `npm run verify` green. Replace the
   placeholder piece by piece, and delete each placeholder part in the stage that replaces it.
-- **Budget as you go.** From Stage 1 on, every capture reports each view's frame cost against limits in
-  `config.js`. Note each stage's cost in its notes and put its knobs in the quality presets. GPU time on the
-  machine a session runs on says little about a mid-range laptop, so the counts and their limits are the
-  guide, plus the benchmark results the user brings back from real machines. The limits are guesses until
-  Stage 11 calibrates them, so ask the user to run the benchmark after each stage that adds a lot of cost
-  (water, plants), not only at Stages 11 and 18. Don't leave performance to the end.
+- **Budget as you go.** Every capture reports each view's frame cost against limits in `config.js`. Note
+  each stage's cost in its notes and put its knobs in the quality presets. GPU time on the machine a
+  session runs on says little about a mid-range laptop, so the counts and their limits are the guide, plus
+  the benchmark results the user brings back from real machines. The limits are guesses until Stage 11
+  calibrates them, so ask the user to run the benchmark after each stage that adds a lot of cost (water,
+  plants), not only at Stages 11 and 18. Don't leave performance to the end.
 - **Works on any machine.** A session may run anywhere, including a cloud container with no GPU, where
   SwiftShader is the only renderer. Nothing in the workflow may depend on one machine's hardware, and
   captures must stay fast enough on SwiftShader to take in every session. SwiftShader runs every line of
   a shader at every pixel, branches or not (measured in Stage 4.3): code a pixel skips still costs it
   there, so heavy code that only some pixels need goes in a shader variant of its own.
 - **Motion is part of the look.** If a thing looks right frozen but moves wrong, it isn't done. A single
-  frame can't show motion: the AI judges it from motion strips and shimmer scores (Stage 1), and the user
-  judges it in the running game.
+  frame can't show motion: the AI judges it from motion strips and shimmer scores, and the user judges it
+  in the running game.
 
 ## Status
 
@@ -98,7 +101,8 @@ Status values: `todo`, `in progress`, `review` (built and handed to the user), `
 it). Only the user moves a stage to `done`. A stage the user sends back returns to `in progress`.
 
 Captures are deterministic, so checking out the commit that approved a stage (find it with `git log`; a
-git worktree works) and capturing with the same args and backend recreates the approved images. To compare them with a new capture, both sides need the same Chromium build (CLAUDE.md §4).
+git worktree works) and capturing with the same args and backend recreates the approved images. To compare
+them with a new capture, both sides need the same Chromium build (CLAUDE.md §4).
 
 ---
 
@@ -109,1361 +113,242 @@ views, at midday and at golden hour.
 
 ### 1. HDR frame and measurement
 
-The image pipeline that every later stage is judged through, and the tools that let the AI judge it. The
-AI sees only still images, and fine flaws hide in a scaled-down contact sheet, so this stage gives it ways
-to see motion, detail and cost. Split it into sub-steps.
-
-Image pipeline and groundwork:
-
-- The scene renders into an HDR target. A post pass in `post/` owns tonemapping, exposure, dithering,
-  anti-aliasing and output colour space.
-- Bright things (sun disk, glitter) can go well above 1.0 and roll off gracefully instead of clipping.
-- The frame is open to later systems. They will add passes of their own (shadows, reflections and the
-  like) and need the screen size, without rewiring `main.js` each time.
-- Choices that bind every later material are made here, before any real material exists: the
-  anti-aliasing approach (with foliage and sun glitter in mind), and enough depth precision for the whole
-  range, from a leaf near the lens to the horizon. Whatever they ask of materials goes into CLAUDE.md §8.
-- Teardown is checked. Nothing calls `dispose()` today, so it is untested. The automated run tears down
-  everything a quality change would rebuild, builds it again with another preset, and fails on leaked GPU
-  resources. Every later system then keeps teardown working, and Stage 16's quality switch can rely on it.
-
-Measurement in the game:
-
-- A readout of frame time and draw calls (GPU time where the browser exposes it) that also works in the
-  built game, not just the dev server, plus a benchmark mode that runs through the views and prints a
-  summary the user can paste into a session, saying which GPU, browser, resolution and preset it ran on.
-  That is how numbers from real machines reach the AI.
-
-Measurement in `tools/screenshot.js` (pure parts get tests):
-
-- **Motion:** a strip of frames at stepped `t` values, and frames at a frozen `t` with sub-pixel camera
-  turns that expose shimmer and aliasing. (Moving the camera by centimetres shifts near things by many
-  pixels, which a score can't tell apart from aliasing.) A per-view shimmer score from the
-  turned frames goes in `info.json`, so flicker shows up as a number, and the tool warns above a limit in
-  `config.js`.
-- **Detail:** zoomed crops of chosen regions, and a contrast-boosted copy of each view that
-  makes banding and dithering visible.
-- **Cost:** per view in `info.json`: draw calls, triangles, shader programs, render passes, a measure of
-  fragment work (such as overdraw), and texture and render-target memory. These numbers are the same on
-  every backend, so they work in CI and cloud sessions. Limits per quality preset live in `config.js`, and
-  the tool warns above them. Add GPU time where hardware GL exposes timer queries.
-- **Proof:** each measurement is shown to catch its problem on a deliberately bad case (something that
-  shimmers, an undithered gradient, a scene over the limits). The placeholder can't prove the tools on its
-  own: nothing in it shimmers or goes over a limit, and the banding it shows (water and sand) goes away in
-  this stage. The bad cases are fixtures for the tools, not views, so normal captures stay clean.
-- **Speed:** captures stay fast on SwiftShader (see Principles), and `npm run verify` stays a quick gate.
-  `info.json` records how long each capture took, and the tool warns above a time budget in `config.js`.
-- **Done when** the placeholder renders through post with no banding and no new visible flaws (every pixel
-  may change); the tool produces motion strips, shimmer scores, crops, banding views and cost numbers, each
-  proven on a bad case; teardown is checked; the readout and benchmark work in the built game; and
-  CLAUDE.md is corrected wherever this stage made it wrong, including that tonemapping and colour-space
-  output now live in post.
-
-Sub-steps, in order. Each one ends with `npm run verify` green and `main` shippable, and fixes whatever it
-made untrue in CLAUDE.md. The tools come first, so the pipeline change in 1.4 is judged with them.
-
-- [x] **1.1 Capture groundwork.** The tool works from any working directory (on Windows it failed every
-  capture when the shell's drive letter was lowercase, `c:\`, flagging its own page as a network
-  request). One page load can render extra frames (other `t` values, sub-pixel camera turns) without
-  reloading, so the measurements below stay fast. `info.json` records each capture's time, with a warning
-  above a budget in `config.js`. Check: the game's pixels are identical to `stage1-before`.
-- [x] **1.2 Detail and motion.** Crops, banding views, motion strips and shimmer scores, each proven on a
-  bad case.
-- [x] **1.3 Cost.** The cost numbers, their limits per preset and the warnings, proven on a scene over the
-  limits.
-- [x] **1.4 HDR frame.** The image pipeline and the choices that bind every material. Thin dark shapes
-  against a bright sky stay anti-aliased after tonemapping: backlit fronds against a sunset depend on it.
-  The look of the tonemapping is a matter of taste, so show the user candidates side by side and let them
-  pick. Check: the banding views show no bands, no shimmer score went up, and the compare sheet shows no
-  new flaw.
-- [x] **1.5 Teardown.** The teardown check, proven on a system that leaks on purpose.
-- [x] **1.6 Readout and benchmark.** Both work in the built game, and the screenshot tool's player-mode
-  run exercises them, so breaking either fails `verify`. Then the user runs the benchmark on the machines
-  they have, for the first real numbers.
+Done. The scene renders into an HDR target, and post owns tonemapping, exposure, dithering and the output
+colour space (CLAUDE.md §8). The screenshot tool measures what stills hide: motion strips, shimmer as the
+camera turns (and, since 5.1, moves), zoomed crops, banding views, cost counts against limits per preset,
+and each capture's time against a budget, each proven on a fixture built to fail it. A teardown check fails
+on leaked GPU resources. The readout (F3) and the benchmark (`?bench=1`) work in the built game, and the
+player-mode run exercises them. Sub-steps: 1.1 capture groundwork, 1.2 detail and motion, 1.3 cost, 1.4
+HDR frame, 1.5 teardown, 1.6 readout and benchmark.
 
 ### 2. Sky, sun and atmosphere
 
-- A physically motivated sky for every hour of daylight, with a sun disk. The horizon colour matches the
-  haze on distant land and sea.
-- One shared lighting model used by every material: sunlight, sky ambient, and aerial perspective (fog).
-  Later materials plug into it rather than inventing their own. The light state lives in one place that
-  every material reads and that survives a quality change, and this stage decides how Stage 5's shadows
-  will plug in.
-- Settle the frame's structure for what comes after the sky, while little depends on it yet. Water, foam
-  and spray need the opaque scene's colour and depth behind them; translucent layers over bright ones
-  must blend as they would in linear light (today they don't, CLAUDE.md §8); bloom and god rays need a
-  chain of post effects before the output. Prove the blending with a fixture.
-- The sun's path is art-directed. It sets over the sea straight ahead of the beach, which Stage 3 lays out
-  to match (see Decisions), and midday has to look good too.
-- `sky/` owns time of day. It doesn't pass on its own and covers daylight only (see Decisions). This stage
-  defines the daylight range and what sunrise, midday, golden hour and sunset mean in hours, in one place
-  that later stages and captures use. The time changes only when it's set: by `?time=` now, by a dev
-  control in this stage, and by the in-game settings from Stage 16.
-- Changing the time while the game runs updates everything that depends on it, not only at boot. A check
-  proves it: a time changed at runtime renders the same as that time set at boot. Every later system that
-  depends on the time stays under that check.
-- **Done when** sunrise, midday, golden hour and sunset captures all look believable, the horizon dissolves
-  into haze, the time can't be set to night, the runtime check passes, and the placeholder sky is gone.
-
-Sub-steps, in order. Each one ends with `npm run verify` green and `main` shippable, and fixes whatever it
-made untrue in CLAUDE.md. The groundwork comes first, so the sky and the light are built once, in their
-final place, and judged by the runtime check from the start.
-
-- [x] **2.1 Time of day.** `sky/` takes over the time. The daylight range and the named times (sunrise,
-  midday, golden hour, sunset) are defined in one place, and views and captures can ask for a time by
-  name. The sun's path follows from them, setting in a fixed direction that Stage 3 turns the beach
-  towards. Nothing can set a time outside daylight: not the URL, a view or the dev control, which changes
-  the time while the game runs. The runtime check joins `verify`, proven on a system that reads the time
-  only at boot. Check: tests cover the range and the named times, and the compare sheet shows nothing but
-  the sun's new path.
-- [x] **2.2 Frame structure.** What comes after the sky gets its place in the frame now: the opaque scene's
-  colour and depth for whatever draws after it, translucent layers that blend as they would in linear
-  light (also over bright ones), and a chain of post effects before the output. None of it costs anything
-  in a frame that doesn't use it. The sky draws after the opaque scene, so sky hidden behind land costs
-  nothing (Stage 1 left it drawing first). A fixture proves the blending: translucent layers over
-  backgrounds from dark to as bright as the sun come out as the same mix done in linear light. Check: the
-  island's pictures stay the same, teardown stays clean, and the stage's notes record what the new passes cost.
-- [x] **2.3 Sky.** A physically motivated sky with a sun disk replaces the placeholder sky, for every hour
-  of daylight. Sunrise, midday, golden hour and sunset each look believable and distinct. The sun disk
-  has a clean edge and a soft glow, and the sky shows no bands, also in the deep blue overhead and the
-  sunset gradients. Exposure follows the light, so sunrise isn't murky and midday isn't blown out. Add a
-  telephoto view towards the sun over the sea at sunset as the stage's close-up. How high the midday sun
-  stands and how deep the blue goes are a matter of taste: show the user candidates side by side. Check:
-  captures at the four named times, with clean banding views and no shimmer at the sun's edge, and
-  captures still quick on SwiftShader.
-- [x] **2.4 Light and haze.** The shared lighting model: sunlight, sky ambient and aerial perspective, all
-  fed by the sky, so light, sky and haze agree at every hour. The light state lives in one place that
-  every material reads, survives a quality change and follows a time change. Stage 5's shadows and
-  Stage 10's cloud shadows have a defined place to plug in. The placeholder land and water use the model
-  until Stages 3 and 6 replace them, so captures show it. Distant land and sea dissolve into the horizon
-  haze, with no seam where the sea meets the sky. A test scene shows the light without the island:
-  neutral and coloured objects from arm's length out to the far haze. Check: at every named time the
-  telephoto view shows no seam at the horizon, neutral objects read neutral at midday and warm at golden
-  hour, and the runtime check still passes.
+Done. `sky/` owns the time of day: daylight only, with the named times (sunrise, midday, golden hour,
+sunset) defined in one place and the sun setting straight ahead of the beach (Decisions). The time changes
+only when it is set: by `?time=`, a view, the `,` and `.` keys (in every build since 2026-11-12) and, from
+Stage 16, the settings menu. A check proves that a time changed at runtime renders as the same time set at
+boot; every system that depends on the time stays under it. The frame has the opaque scene's colour and
+depth for what draws after it, translucent layers blended in linear light, and a chain of post effects. A
+physical sky with a sun disk, and one shared lighting model (sunlight, sky ambient, aerial perspective) fed
+from one light state: neutral objects read neutral at midday and warm at golden hour, and far land and sea
+dissolve into the horizon haze. Sub-steps: 2.1 time of day, 2.2 frame structure, 2.3 sky, 2.4 light and
+haze.
 
 ### 3. Island shape
 
-- `world/island.js` holds the height function: pure, Node-importable, tested. The layout is art-directed
-  around a hero cove: a crescent beach, a lagoon, a reef where surf breaks, a headland, and green hills
-  behind. The beach faces the sunset (see Decisions). The rest of the island exists in coarse form so the
-  overview and the horizon work.
-- Design the seabed as carefully as the land. The water reads depth from it: sand shelf, channels, reef,
-  drop-off.
-- The seed changes the island, but the game uses one seed for now, and the views are framed on it (see
-  Decisions).
-- Keep the island's size easy to change. Performance will decide the final size (see Decisions). Resizing
-  leaves the cove and its views where they are.
-- The heightmap goes to the GPU as a texture (CLAUDE.md §6). Terrain holds up close to the camera and stays
-  cheap far away. Placement zones run from wet sand to jungle.
-- Invariant tests over seeds 1–20 (CLAUDE.md §5).
-- Move the existing views onto the cove once, here, keeping their names, and keep them stable after that.
-  Add a view from the beach out to sea at golden hour, into the setting sun: the shot the cove is laid
-  out for.
-- Every view gets a `brief` (CLAUDE.md §4). Write the briefs for the cove views with the user. Once every
-  view has one, make the views test require it.
-- Rough walking: a toggle that puts the camera at eye height on the terrain, so the user can judge the
-  cove's scale from the ground long before Stage 14 builds real walking.
-- Hilltops catch the last light at sunset. Known from Stage 2: the light is the same at every height
-  today, while a low sun is several times stronger on a hilltop than on the beach.
-- **Done when** the placeholder mound is gone, the overview's landforms read as a tropical island, the views
-  frame the cove, each with a brief the user agreed, and the user has checked the cove's scale on foot.
-
-Sub-steps, in order. Each one ends with `npm run verify` green and `main` shippable, and fixes whatever it
-made untrue in CLAUDE.md. The layout comes first and is judged on a map before anything renders it, and
-the user walks the cove before the views are framed on it: until then, changing the layout is cheap.
-
-- [x] **3.1 Layout.** `world/island.js` holds the height function and the placement zones, with the cove
-  art-directed and the rest of the island coarse. The seabed is designed with the land: sand shelf,
-  lagoon, channels, the reef and a pass through it, the drop-off. The island's size is one setting. A
-  top-down map (relief, depths, zones, where the views stand) lets the user and the AI judge the layout
-  before anything renders it. How high the hills stand, how far out the reef lies and where the headland
-  sits are a matter of taste: show the user candidates as maps side by side. Check: invariant tests over
-  seeds 1–20, each seen red once: the zones run in order from the shore and cover every point once, the
-  beach faces the sunset, the reef stays under water, deep sea rings the island, and resizing leaves the
-  cove's heights unchanged. The pictures don't change (nothing draws the island yet).
-- [x] **3.2 Terrain.** The island replaces the placeholder mound: land and seabed drawn from the heightmap
-  on the GPU, with no facets at eye height, cheap in the distance, and no cracks, popping or crawling
-  ridgelines. The GPU's heights agree with `island.js` at sample points, checked in the browser and
-  proven on a deliberate offset. Until Stage 6, the placeholder water shows the depth below it in its
-  colour, so the lagoon and the reef read from above. The views move onto the new land, keeping their
-  names, and a test keeps them above the terrain. Rough walking arrives here, so the user can judge the
-  scale on foot. Boot stays quick: a verify run loads the page dozens of times. Check: shimmer and cost
-  within their limits, captures within their time budget on SwiftShader, teardown clean. Then the user
-  walks the cove; what they find goes back into 3.1's layout before 3.4 frames the views.
-- [x] **3.3 Light by height.** Sunlight depends on the height of the point it falls on, as the atmosphere
-  says, so hilltops catch the last light while the beach lies in the low sun's dimmer light. Check: the
-  GPU's sunlight at sample heights agrees with direct marches through the atmosphere, the runtime time
-  check still passes, and the overview at sunset shows lit hilltops above a dimmer shore.
-- [x] **3.4 Views and briefs.** The final framing. The existing views keep their names; a new view looks
-  from the beach into the setting sun at golden hour, the shot the cove is laid out for; a close-up
-  shows the ground at the camera's feet. The AI drafts a brief for every view and the user agrees them,
-  then the views test requires one. Check: every view judged against its brief at midday and at golden
-  hour.
+Done. `world/island.js` holds the height function and the placement zones, pure and tested over seeds
+1–20. The cove is art-directed: a crescent beach facing the sunset, a lagoon, a reef 200–300 m out with a
+pass, the headland on the left and steep green ridges behind (Decisions); the rest of the island is
+coarser. The seabed is designed with the land. The island's size is one setting, and `npm run map` shows
+the layout. The terrain draws the heightmap on the GPU, and sunlight depends on height, so hilltops catch
+the last light. Every view has a brief the user agreed. Rough walking (G) puts the camera at eye height.
+Sub-steps: 3.1 layout, 3.2 terrain, 3.3 light by height, 3.4 views and briefs.
 
 ### 4. Ground surfaces and rocks
 
-- Procedural texture generators in `textures/`. Surfaces: sand (dry, damp, wet, with ripples and fine
-  grain near the camera), soil, grass base and rock. Blends follow height, slope and zone. No visible
-  tiling.
-- Procedurally shaped rocks and boulders, including the headland.
-- Shade takes its light from below from the ground around it. Known from Stage 2: the lighting assumes the
-  far sea below everything today; sand instead brings shade at noon from 3.3 stops below sunlit ground to
-  about 1.5, and from blue to warm.
-- Known from Stage 3: the zones are worked out twice, and they disagree along the edges between bands.
-  `island.zoneOf` swings the sand's and the palm belt's edges with noise and judges rock by the exact
-  slope; the terrain's shader uses fixed bands and the drawn grid's slope (about 5% of the cove's sandy
-  land differs). Settle one definition, which the GPU and placement (Stages 8–9) share, before building
-  surfaces on it. The terrain's info texture has no channel left. Rock judged by the mip-averaged slope
-  fades on sharp ridges in the distance, where slopes either side average out. Sand lies on slopes up to
-  54° where the beach meets the headland, though sand holds to about 34°.
-- Known from 4.2: at golden hour the beach reads a flat, muddy brown, whatever the sand: level ground gets
-  a sixth of the low sun's light, and the exposure keeps the evening dark (Decisions). What the
-  sand does with a low sun (ripples catching it, wet sand mirroring the sky) has to carry the evening.
-- Known from 4.3 (an outside review): the ripples keep one spacing and direction everywhere, without
-  forks; between 20 and 120 m the beach has only drifts and wind streaks to show, and beyond that its
-  plain albedo; at 16:30 the sand reads khaki rather than golden (Stage 11's grade may answer it).
-- Known from 4.4: the rock is basalt (Decisions), its relief a field in world space at three scales
-  over a detail tile laid along the axes it faces most (`chunks/rock.glsl`), so no cliff smears; layers
-  of lava flows, streaks down the faces; sand and soil fill its hollows where it gives way to them.
-  Within 200 m it has its tile and lichen, beyond its relief alone, by a cheaper shader. Its outline is
-  still the heightmap's smooth curve, and from a few hundred metres a cliff reads more draped than
-  jointed, its ribs rounded: columns, overhangs and fallen blocks need 4.5's rocks. Where rock pokes
-  through sand it leaves a pepper of black specks; the volcano's steep patches still show as blotches
-  from the overview until plants (Stages 8–9) frame them.
-- Known from 4.5: about 2,000 rocks in the cove (`world/rocks.js`): basalt blocks and fallen columns
-  (`rock-shapes.js`), placed by kind (`rock-placement.js` on `world/scatter.js`), each sunk until its base
-  lies under the ground all round, and moved down each frame as far as the mesh as drawn lies below that
-  ground across it (`chunks/terrain-mesh.glsl`, which the terrain fixture checks against its JS twin), so
-  they stay sunk near and far; sand or soil drifts against their foot. Without shadows (Stage 5) a rock on
-  the sand looks set down on it rather than sitting in it. Up close the blocks are faceted and fairly
-  regular, and the surface detail on their flat facets is faint; the cliffs' outline above their foot is
-  still the heightmap's smooth curve. Rocks stand only round the cove (`config.world.rocks.reach`).
-- Known from 4.6: the green inland (`chunks/green.glsl`) is living green over bare ground in patches,
-  by how lush the ground is (lush in hollows, open on ridges) and how sandy its soil (behind beaches),
-  both kept per sample with the ground (`island.lushOf`, `groundOf`'s `sandy`) for placement too; near
-  the camera, grass and leaf litter tiles (`textures/green.js`). It is painted flat: at standing height
-  it reads as a dense, even lawn strewn with leaves, its tufts and leaves showing within about 15 m;
-  the grass tile is stylised close up (every tuft a star) and the leaves are all of one outline. Seen at
-  a slant the green hid the bare ground between it, standing in for plants' height, until 4.8 took
-  that out (it changed the ground as the camera moved). The jungle reads green from afar, as its canopy will. Bare
-  patches 20–60 m off read as soft spots. A thin strip of green runs between the beach and the
-  headland's foot in the `rocks` view, a sliver of ground between sand and steep rock (4.1's rules).
-- Known from 4.7 (after an outside review): the ground's wetness has one input (`chunks/wet.glsl`):
-  wet sand keeps its sheen to the horizon (far pieces that reach down to it draw it, TERRAIN_WET), the
-  seabed has no film, and rock gets wet where sand does. The green's patches stay put and JS knows
-  them (`world/green.js`); seen at a slant the bare ones took on the green rather than shrink, which
-  took most of the freckles off the far hills (until 4.8). The grass tile holds its colour factor, so mipmaps keep
-  the green's colour near the camera. Lichen keeps its share at any distance (now 3% of what faces up,
-  as the user picked bare basalt), and sand or soil fills rock's hollows in the share the ground says,
-  following the shading: the soot of specks off the `rocks` shelf is mostly gone, a fringe of crumbs
-  stays at its edges, and tan spots show on the steep cliff (4.8 found them lichen, not soil). Sand and sandy soil lie no
-  steeper than sand holds anywhere (the coarse grids judged slopes too gently): far cliffs and the
-  volcano's gullies gained rock. Rocks: about 700 in the cove (most of the old 2,000 lay on the reef),
-  none with a gap under it or inside another, none out at sea, and none drawn under two pixels: they
-  sink away first. The surfaces' five tiles share one texture array; the detail ranges and the rocks
-  scale with the presets; the game compiles its shaders while the start screen shows. SwiftShader
-  frames cost 5–25% more (0.8–2.7 s): `rocks` is 0.16 s over its 2.5 s budget.
-- Known from 4.8 (the user's picks from candidates side by side, Decisions): wet sand runs from a thin
-  film at the water through tan to a lobed swash line where the last waves reached, its width changing
-  along the beach, then a smooth face the high tide washed, then ripples; a low sun breaks into glitter
-  on the backwash's rumples, so in `into-the-sun` its path runs up the beach. Dry sand is whiter, its
-  drifts and ripple sorting stronger. The cliff's tan spots were lichen (a bug gave its orange kind
-  nearly all of it): now an even tint, a thin crust, on what faces up. Rock meets sand and soil along its
-  relief, stepping up as low ledges, not by its grain (the soot). The rocks are blockier, placed anew.
-  The green no longer changes as the camera moves (the user found it: bare ground took on the green at
-  a slant, and the edges frayed only near the camera); the patches fixture checks it from near and far.
-  The scrub is denser, the palm belt and jungle nearly closed, bare soil brown, and stands of 2.5, 9
-  and 40 m, lighter and drier or darker and deeper, last into the distance. The litter keeps its
-  albedo at every pixel size (within 0.5%, was 4–5% light), and its dead leaves stay put as the
-  camera comes near (the user found them appearing out of grey within a few metres): masks of which
-  leaves show at each share, mipmapped, so the same leaves shrink with distance until they fade into
-  the average 5–8 m out. The `green-tiles` fixture holds `greenTile` and the leaves on the GPU to
-  their twins. `overview` shimmer 0.55% → 0. New view `sand-edge`. SwiftShader, against the bug
-  fixes: `rocks` 4% dearer (2.9 s), `jungle-edge` 7% (3.1 s, the leaves' masks), the rest within 3%;
-  `sand-edge` takes 4.0 s, a quarter of it the leaves' masks; `rocks`, `overview`, `jungle-edge` and
-  `sand-edge` are over 2.5 s (Stage 5's notes: cheapen the green's near detail). Known flaws, after an outside review of the pictures: the shelf's rock reads
-  as smooth mats with rounded outlines; bare
-  soil as brick-red ovals in the middle distance, orange at golden hour; outcrops on the green slopes as
-  near-black blots; the scrub still ends in a carpet's edge with a soft rim (plants, Stages 8–9); the wet
-  band as a thin tan outline from afar; `into-the-sun`'s foreground lost its ripples to the smooth face;
-  the backwash's rumples have one scale; at golden hour the beach's sheen is a flat smear cut at the
-  wet/dry line; the stands' lighter side reads lime at 9.5 h; no grain shows at standing height; the
-  ripples keep one wavelength; the rock's crack net has one scale; a pale stripe of sand at the rocks'
-  feet. The near/far check's albedo limit is absolute, so it sees green or bare turning to sand but not
-  a small change between green and bare in the palm belt and jungle.
-- **Done when** a close-up of sand holds up, no tiling shows from any view, and nothing looks plastic.
+Done. What the ground is at each point (its zone, how sandy, rocky and lush) is worked out once: the GPU
+draws it and JS placement reads the same answer. Albedos come from measured values, and shade takes its
+light from below from the ground around it. Sand runs from dry to a film of water through one wetness input
+(`chunks/wet.wgsl`), for Stage 7 to drive. The rock is basalt. About 700 procedural rocks stand round the
+cove (`world/rocks.js`, `config.world.rocks.reach`), sunk into the mesh as drawn, placed by rules Stages 8–9
+reuse. The green inland is soil, grass base and leaf litter in patches JS knows (`world/green.js`). Nothing
+on the ground changes with where the camera stands. The look is the user's picks (Decisions). Sub-steps:
+4.1 one ground, 4.2 albedos and the light from below, 4.3 sand, 4.4 rock surfaces, 4.5 rocks and boulders,
+4.6 soil and grass base, 4.7 harden, 4.8 the look.
 
-Sub-steps, in order. Each one ends with `npm run verify` green and `main` shippable, and fixes whatever it
-made untrue in CLAUDE.md. What the ground is comes first, so the surfaces and Stages 8–9's placement build
-on one definition of it; then the albedos and the light from below, so the surfaces are tuned once under
-the final light; then the surfaces, hero first. The `stage4-before` capture shows plain colours: sand like
-cardboard in low sun, a wet band of even brown, airbrushed edges from sand to grass, cliffs smeared down
-their faces, rock on the ridges in blotches like camouflage, a flat green lawn at the jungle's edge.
-
-- [x] **4.1 One ground.** What the ground is at each point (its zone, how sandy, how rocky) is worked out
-  once and shared: the GPU draws it, and JS placement reads the same answer, fast enough to place plants
-  by the hundred thousand (Stage 8). Sand lies only as steep as sand holds; rock stays rock on sharp
-  ridges far away. The map shows the ground as drawn. Check: invariant tests over seeds 1–20, each seen
-  red once: the zones keep their order from the shore and cover every point once, and no sand is steeper
-  than sand holds; the GPU and JS agree on the ground at sample points, checked in the browser and proven
-  on a deliberate offset. The pictures keep their plain colours, with the edges moved.
-- [x] **4.2 Albedos and the light from below.** Each surface gets its albedo, from measured values, and
-  shade takes its light from below from the ground around it: sand on the beach, green inland, the sea
-  over water. The surfaces' detail (4.3–4.6) keeps to these albedos on average. How light the sand is
-  (white coral sand or golden) and the air's clarity (Open questions) are a matter of taste: show the user
-  candidates side by side, at noon and at golden hour. Check: the light fixture shows the light from below
-  following the ground under it, and the runtime time check still passes.
-- [x] **4.3 Sand.** The hero surface: dry, damp and wet sand, with ripples and fine grain near the camera,
-  varied at every scale so it never repeats, without sparkle or crawl. The sand can look any wetness, from
-  dry to the mirror sheen just after a wave drains, so Stage 7 only has to drive it; until then the
-  wetness follows the height above the sea. A test scene shows the ground's surfaces without the island:
-  level and steep, from the camera's feet to far away, in high and low sun. Check: the `sand` close-up
-  holds up at its time and at midday, the beach views show no tiling, shimmer, banding and cost stay within
-  their limits, and captures within their time budget on SwiftShader.
-- [x] **4.4 Rock surfaces.** Rock where the ground is steep and along rocky shores: cliffs without smears
-  down their faces, the same rock near and far, darker where the sea wets it. Which rock the island shows
-  (dark basalt, weathered and lichened, or paler) is a matter of taste: show the user candidates side by
-  side. Check: the headland reads as rock, not plastic, in every view that shows it; shimmer and cost
-  within their limits.
-- [x] **4.5 Rocks and boulders.** Procedurally shaped rocks break the heightmap's smooth outlines: at the
-  headland's foot, along rocky shores, scattered inland. They are the first things placed on the ground, by
-  rules Stages 8–9 reuse. They sit in the ground, not on it, near and far (the far mesh strays from
-  `heightAt`: Stage 8's notes), and stay cheap far away. The `rocks` close-up (from 4.4) stands at the
-  headland's foot by the water. Check: invariant tests over seeds: rocks only where the ground allows them, none floats,
-  no view starts inside one; shimmer and cost within their limits.
-- [x] **4.6 Soil and grass base.** The ground inland, where Stages 8–9 grow plants: the sandy scrub behind
-  the beach, the palm belt and the jungle floor, as soil, grass base and leaf litter. The edges from sand
-  to green follow the ground (4.1) and hold up close. From the overview the hills read varied, neither
-  flat nor tiled. Check: the `jungle-edge` foreground holds up, no tiling shows from any view, and cost
-  stays within its limits. Then the user runs the benchmark: the ground fills most of every frame.
-- [x] **4.7 Harden.** An outside review of 4.1–4.6 (2026-10-24) found `verify` red in CI, bugs in the
-  surfaces and rocks, and traps for the stages after. `verify` passes on SwiftShader, in CI too, with room
-  to spare, and `main` publishes again. Nothing on the ground changes with where the camera stands: the
-  green's patches and the line where it meets the sand stay put as the camera moves, and JS knows them
-  for Stage 9; lichen covers the same share near and far; the green keeps its colour near the camera.
-  Wet sand keeps its sheen to the horizon, the seabed under water has no film, and wet meets dry without
-  stair-steps. The wetness has one input, which Stage 7 drives, and what the waves shape (ripples, swash
-  marks) follows where they reach, not how wet the sand is now. No specks where rock meets sand, and no
-  sand on cliffs anywhere on the island. No rock is drawn smaller than two pixels, none shows air under
-  its edge or lies inside another, and what Stages 8–9 place can keep clear of them. The detail ranges and
-  the rocks scale with the presets, the game compiles its shaders before it starts, and the terrain's
-  shader leaves texture units free for shadows, caustics and cloud shadows. Check: tests for each, each
-  seen red once; the GPU checks reach the rocks' offsets and the light from below; captures within their
-  budget on SwiftShader.
-- [x] **4.8 The look, again.** Waits for Stage 4b: the port matches the build before 4.8, and the look
-  is tuned once, in WGSL. What the review saw first in the pictures: the wet band reads as a flat
-  grey kerb, the edge from sand to green as a cut-out lying on the sand, the shelf in `rocks` as soot
-  sprayed on sand, the `sand` close-up as khaki without grain at midday, and the wet glint as lacquer;
-  tan spots on the `rocks` cliff, and blocks that show as pyramids and cards. Each is a matter of
-  taste: show the user candidates side by side. Check: every view against the stage's Done line, at
-  its time and at golden hour. Done 2026-10-28: see Known from 4.8.
+Known flaws:
+- Sand: the ripples keep one wavelength and direction, and the backwash's rumples one scale; no grain shows
+  at standing height; from 20 to 120 m the beach shows only drifts and streaks; the wet band reads as a thin
+  tan outline from afar; at golden hour the beach's sheen is a flat smear cut at the wet/dry line, and at
+  16:30 the sand reads khaki rather than golden (Stage 11's grade may answer it); `into-the-sun`'s
+  foreground lost its ripples to the smooth face the high tide washed; a pale stripe of sand at the rocks'
+  feet.
+- Rock: the shelf in `rocks` reads as smooth mats with rounded outlines; the crack net has one scale;
+  cliffs keep the heightmap's smooth outline, draped rather than jointed from a few hundred metres; rocks up
+  close are faceted and fairly regular; outcrops on the green slopes read as near-black blots.
+- Green: bare soil reads as brick-red ovals in the middle distance, orange at golden hour; the scrub ends in
+  a carpet's edge with a soft rim (plants, Stages 8–9); the stands' lighter side reads lime at 9.5 h; the
+  green is painted flat, a dense lawn at standing height, its grass tile stylised close up and its leaves
+  all of one outline.
+- The near/far check's albedo limit is absolute, so it misses a small change between green and bare.
 
 ### 4b. WebGPU port
 
-Move the game from three.js's WebGL renderer to raw WebGPU, with hand-written WGSL and a small renderer
-of the project's own. three stays only as a maths library. **Nothing changes visually:** the island looks
-exactly as it does in the last WebGL build, and every check still passes and still catches its bad case.
-New capabilities, such as compute, arrive in the stages that need them, not here. The port comes before
-4.8, and `main` takes no change to the picture while it runs: anything that must land on `main` meanwhile
-lands on the branch too, and the baseline is captured again.
+Done. The game moved from three.js's WebGL renderer to raw WebGPU, with hand-written WGSL and a renderer of
+the project's own (`src/gpu/`), and nothing changed visibly: every view matched the last WebGL build within
+a few levels, and every check still caught its bad case. The conventions it settled are in CLAUDE.md §8,
+and the choices in Decisions. On the user's desktop GPU it was at least as fast as WebGL on every view.
+The GPU timer sums the passes' own durations (`core/gpu-stats.js`): a span from the first pass to the last
+counted the GPU waiting on the CPU.
 
-**Decisions** (2026-10-24, in Decisions below): raw WebGPU with hand-written WGSL and a renderer of the
-project's own, replacing the WebGL2 decision of 2026-10-20; three for maths only; WebGPU only, with no
-WebGL fallback; MSAA 4 samples on every preset; reversed 32-bit float depth everywhere.
-
-**Ground rules**
-- Work on a branch. `main` stays on WebGL and shippable until the port matches, then merge once.
-- Leave the pure JS untouched: island, heightmap, LOD, scatter, rock placement, sun, light maths, albedo
-  and the workers. Keep the views and config values, except MSAA and the depth fallback.
-- Port shader by shader, keeping function names, structure and comments, so a GLSL→WGSL diff reads side
-  by side.
-- No tuning and no improvements. A visible difference from the baseline is a bug, unless it's explained
-  and logged.
-- Use core WebGPU only. Don't require optional features (`shader-f16` and `float32-filterable`).
-  `timestamp-query` is used where available, and the GPU time reads "n/a" without it.
-- Stop and ask the user if a new dependency looks necessary, if captures can't be made reproducible, or
-  if a check has to be loosened.
-
-**Known facts and pitfalls** (measured in the 2026-10-24 sessions, or standard WebGPU):
-- On SwiftShader (Linux), WebGPU renders at the same speed as WebGL, gives identical pixels across runs,
-  and supports everything the frame needs:
-  - 4× MSAA `rgba16float` with resolve;
-  - `depth32float` with compare `greater`;
-  - alpha-to-coverage;
-  - reading multisampled depth in a later pass;
-  - rendering into slices of a 3D texture;
-  - compute writing 3D storage textures;
-  - timestamp queries.
-- Launch flags: `--enable-unsafe-webgpu --enable-features=Vulkan --use-vulkan=swiftshader
-  --use-webgpu-adapter=swiftshader`. Without the first one there's no adapter.
-- **Windows** (Playwright's headless shell, Chromium 156):
-  - WebGPU gets the real GPU (D3D12) only with `--disable-dawn-features=use_dxc`. The headless shell
-    ships without `dxcompiler.dll`, so creating the device fails without the flag; with it, Dawn compiles
-    with FXC, and the probe's MSAA, depth, alpha-to-coverage and readback ran without validation errors.
-  - There is no SwiftShader WebGPU on Windows: no adapter at all under the flags above, nor with a
-    fallback adapter, `--enable-unsafe-swiftshader`, other ANGLE back ends or without the GPU sandbox.
-    So WebGPU captures on SwiftShader come from Linux only: CI, a cloud session, or a Linux container
-    on a Windows machine. `--gl auto` on Windows means the real GPU, and `--gl swiftshader` there must
-    say where to get SwiftShader instead of handing over another adapter.
-  - A Linux container on Windows (Ubuntu 24.04 in Docker Desktop, with the pinned Chromium) has it: the
-    flags above give the SwiftShader adapter, and a test frame came out byte-identical across launches.
-- **CI time.** On `adee91b` the build job took 22 of its 30 minutes, 20 of them captures (4.8–9.2 s a
-  frame on SwiftShader). Captures can't get slower in the port without the job outgrowing its limit.
-- **WGSL has no preprocessor.**
-  - Variants (`#ifdef TERRAIN_SAND`, the `defines` objects) become `override` constants. A branch on an
-    override set to `false` cost nothing on SwiftShader, the same as removed code.
-  - `vite-plugin-glsl` already resolves `#include` in `.wgsl` files. Keep it, and add `.wgsl` to the
-    hot-swap pattern in `vite.config.js`.
-- **Uniformity.** WGSL rejects `fwidth`/`dpdx`, and texture reads that compute their own detail level
-  (`textureSample`), inside branches that vary per pixel. Take derivatives before any branch, as
-  `terrain.frag` already does. Inside branches, read with `textureSampleGrad` or `textureSampleLevel`.
-  Use `diagnostic(off, derivative_uniformity)` only where it's proven harmless.
-- **Y-axis and origins.** Framebuffer and texture origins are top-left in WebGPU. Anything that renders
-  to a texture and samples it, or reads `gl_FragCoord.y` (the dither, the overdraw counter, readbacks),
-  must be checked for flips.
-- **Uniform buffers.** WGSL alignment rules apply (a `vec3` takes 16 bytes). Put the shared light state
-  (`ctx.frame.uniforms` today) in one uniform buffer bound to every scene pipeline.
-- **Readbacks.** `copyTextureToBuffer` needs `bytesPerRow` to be a multiple of 256, and `mapAsync` is
-  async. This applies to the sky probe, the texture generators and the captures.
-- **Depth.** WebGPU has no automatic depth resolve. The after-opaque pass (water) reads multisampled
-  depth directly, or the frame resolves it in a pass of its own.
-- **Determinism.** No results that depend on the order of atomic operations: on SwiftShader, an
-  atomic-append list came out in a different order every run. Later GPU culling uses prefix sums.
-- **Projection.** Use `Matrix4.makePerspective(..., WebGPUCoordinateSystem, true)` and
-  `Frustum.setFromProjectionMatrix` with the same coordinate system.
-- **Canvas.** Configure it with the preferred format and `alphaMode: 'opaque'`. The output pass keeps
-  doing sRGB encoding and dithering by hand.
-- **Not yet known:** whether GitHub's runners have the Vulkan loader WebGPU needs (prove it in W.1),
-  and whether a Linux container on Windows gives the same bytes as CI.
-
-**Found in the code** (a survey of `adee91b` while planning, 2026-10-24):
-- **Waits on the GPU.** The game reads the GPU back and waits in two places: the sky's light probe on
-  every time change, and the ground tiles' averages at boot. WebGPU readbacks are async, so the time
-  change becomes async: it lands a few frames late, all of it in one frame. No frame mixes two times'
-  light, and a capture's frame at another time still waits for it. The tiles' averages go behind
-  `ready`. Today's stall on a time change (Stage 12's note) goes with it.
-- **GLSL and WGSL differ where a port looks the same:**
-  - `mod` floors, but WGSL's `%` truncates. It has 4 uses, in tile wrapping, with negative cells.
-  - A float converted to an int saturates in WGSL.
-  - `atan(y, x)` becomes `atan2`.
-  - `dpdy` has the opposite sign to `dFdy`, because y points down. It has 6 uses, tangent frames
-    among them.
-  - Fragment positions count from the top. That matters for the output's dither and the readback
-    passes. Tables written and read by fragment position need no flip; fullscreen passes that work
-    from clip space do.
-  - A uniform array can't be sized by an override (`LOD_LEVELS`, the maths fixture's `DIRECTIONS`).
-- **three does more than draw.** It handles the scene graph and its layers, and the draw order
-  (renderOrder, then program and material; the overdraw counts follow it). It also caches programs,
-  generates mipmaps, resolves MSAA depth and copies it into the translucent pass. It provides a basic
-  material, which six fixtures use, and `withSceneOutput()` builds on it. Each needs a counterpart of
-  the project's own, or goes. Mipmaps made another way change the texture detail far off: they must
-  filter as WebGL's did.
-- **Some checks test things that go.** The leaky fixture's `scene.fog` has no scene left to sit in.
-  The depth fallback has no fallback left. "A bad WebGL call" and "a lost context" become a validation
-  error and a lost device. Each check is replaced by its WebGPU counterpart, which doesn't loosen it.
-- **Noise level.** Different shader compilers round differently. The hash avoids `sin()`
-  (`chunks/noise.glsl`), so its patterns can't jump. "Matches `webgl-final`" means: no difference
-  visible in the compare sheet, and every view within a few levels, measured. Anything above that is
-  explained or fixed.
-
-Sub-steps, in order. Each ends with tests, build and check green, plus the checks named. The full
-`verify` is green from W.4 on. Each system's GLSL goes in the step whose WGSL port matches the
-baseline: on the branch nothing runs it any more, and `adee91b` keeps it for side-by-side reading.
-
-- [x] **W.0 Baseline.**
-  - Fix CI first: since "Add more beaches" `verify` has failed because the benchmark check times out at
-    60 s on SwiftShader, so the live site is still Stage 3. Then `main` is green.
-  - On that commit, capture `webgl-final` with `--gl swiftshader`: all views, and the four named times on
-    the `horizon` and `overview` views.
-  - Add this stage to PLAN.md and reopen the WebGL2 decision.
-  - Done 2026-10-24. 4.7 had already fixed CI: `verify` passed on `adee91b` and the live site shows
-    Stage 4. The baseline is `adee91b` on SwiftShader WebGL, Chromium 156.0.8078.4, 1600×900:
-    `webgl-final` (all views, with `--checks`, so its `info.json` holds every check's numbers),
-    `webgl-final-<time>` for each named time (`--views horizon,overview --time <time>`), and
-    `webgl-final-tonecard`, `-gradient` and `-blend` (`--views beach --fixture <name>`, the blend at
-    `--exposure 2` as its check takes it). `screenshots/` isn't committed: a machine without them
-    recreates them byte for byte from `adee91b` (a git worktree) with the same args and Chromium build
-    (CLAUDE.md §4).
-- [x] **W.1 Device, frame and tools.** The foundation every later step is checked with.
-  - WebGPU device setup, and the "needs WebGPU" note. The game still opens from `file://`.
-  - Errors: shader compile messages, validation errors, a lost device and uncaptured errors. All reach
-    the error overlay and fail a capture.
-  - A renderer of the project's own in place of three's:
-    - shaders with includes and overrides, hot-swapped in dev as today;
-    - the light state in one uniform buffer that every scene pipeline binds;
-    - a draw list with the frame's passes and three's draw order;
-    - textures with mipmaps;
-    - readbacks.
-  - The frame:
-    - the HDR target (4× MSAA `rgba16float`, reversed `depth32float`);
-    - its passes: opaque, after-opaque, translucent in linear light, composite, the post chain;
-    - the output pass (tonemap, sRGB, dither) and the fullscreen pass.
-
-    The depth fallback and MSAA 2 are never ported.
-  - The capture contract (`ready`, extra frames, readback), and the screenshot tool's launch flags and
-    backend detection.
-  - A Windows session can make SwiftShader captures that match CI's bytes, so every step compares with
-    `webgl-final` without waiting for CI.
-  - The compare sheet gives, per view, how many pixels differ by how many levels.
-  - The fixtures that need no world, on a basic material of the project's own: `tonecard`, `gradient`,
-    `blend`, `broken`, `shimmer`, `silhouette`, `depth`.
-  - Check:
-    - `tonecard`, `gradient` and `blend` match `webgl-final` and pass;
-    - the `shimmer`, `silhouette` and `depth` checks pass;
-    - the errors check catches a broken shader out of sight, a validation error, a lost device and
-      blending outside the translucent pass;
-    - a push of the branch shows WebGPU working in CI, and a capture there is byte-identical to the
-      same capture made locally.
-  - Done 2026-10-24. Windows makes SwiftShader captures in a Linux container (`tools/linux.js`, Docker),
-    where `webgl-final` came out byte for byte again. `tonecard`, `gradient` and `blend` match it within
-    a level.
-- [x] **W.2 Sky and light.**
-  - The atmosphere's tables:
-    - transmittance;
-    - multiple scattering;
-    - sky view;
-    - the 3D aerial table;
-    - sunlight by height.
-  - The probe and the light state from it, and the shared lighting chunks.
-  - The sky drawing last on the far plane, and the placeholder water.
-  - A time change lands whole (see above).
-  - Check:
-    - the `maths`, `haze` and `light` checks pass at their current limits and still catch their
-      deliberate mistakes;
-    - the runtime time check passes, and `stale-time` is still caught;
-    - the `horizon` view matches the baseline at every named time.
-  - Done 2026-10-24. At every named time under 0.2% of the horizon's pixels differ, by 1–2 levels,
-    apart from a one-row step in the horizon line at the frame's left edge. The light lands in the
-    readback's callback, so a frame never shows half of it.
-- [x] **W.3 Ground.**
-  - The heightmap's and the ground's textures, the LOD mesh with instancing, and the terrain's
-    variants as overrides.
-  - The generated tiles (sand, rock, green) with mipmaps, their averages behind `ready`, and the
-    bounce map.
-  - Check:
-    - the `terrain`, `surfaces` and `patches` checks pass and still catch their deliberate mistakes;
-    - the `beach`, `shoreline`, `jungle-edge`, `overview`, `into-the-sun` and `sand` views match
-      `webgl-final`, far ground included;
-    - captures take no longer than `webgl-final`'s.
-  - Done 2026-10-24. 92–99.8% of each view's pixels are identical to `webgl-final`, and at most 0.44%
-    are more than 8 levels off: single pixels of fine detail (the rock's streaks, glints, the green's
-    dithered edges) where float rounding crosses a threshold, and edges (see the known flaws). No
-    shape moved. Three traps cost time:
-    - 8-bit mips round halves to even in WebGL, but up in a WebGPU render pass, so every level came out
-      brighter. `gpu/mipmap.wgsl` now rounds as WebGL did, which reproduces its levels exactly.
-    - A uniform array of `f32` or `vec2f` doesn't have GLSL's layout (it broke the mesh's height and
-      the rocks' offsets). Uniform arrays now hold `vec4f`, and `gpu/reflect.js` refuses others.
-    - Frames took 50% longer on SwiftShader until the heights were read with one `textureGather`
-      instead of four `textureLoad`s, which Dawn bounds-checks one by one. Now 545–575 ms a frame,
-      against WebGL's 502–617 in the same container.
-- [x] **W.4 Rocks, measurements and teardown.**
-  - Rocks and their offsets pass.
-  - Cost counts (draws, triangles, passes, pipelines, memory) and overdraw.
-  - GPU time via timestamp queries.
-  - The readout (F3), and the benchmark, which names the adapter.
-  - Teardown, with the `leaky` and `heavy` fixtures in WebGPU's terms.
-  - Check:
-    - the full `npm run verify` is green on SwiftShader, locally and in CI, and CI's build job takes no
-      longer than on `adee91b`;
-    - every view and named time matches `webgl-final`;
-    - the cost numbers match `webgl-final`'s, or each difference is explained;
-    - every tool check still catches its bad case;
-    - the quality change (high → low → high) leaks nothing and gives the same picture.
-  - Done 2026-10-24. The cost numbers equal `webgl-final`'s on every view (draws, triangles, passes,
-    overdraw, texture memory), apart from these:
-    - 26 pipelines against 25 programs: the frame's depth resolve, a blit in three, is a pipeline made
-      up front.
-    - 0.13 MB more in render targets: a second set of transmittance and multiple-scattering tables,
-      so a time change lands whole.
-
-    Overdraw was 1% off until the draw order was three's again. Under reversed depth, three negates
-    the depth it sorts by, which the port had missed: opaque meshes drew far to near and transparent
-    ones near to far (`gpu/scene.js drawOrder`, tested).
-
-    CI's build job took 12.5 and 24.9 minutes on two runs of the same code. GitHub's runners differ
-    about twofold in speed, in every view, check and test alike, and `adee91b`'s run (21.7 minutes)
-    landed in between. In the same container, frames take as long as WebGL's. CI's captures are
-    byte-identical to the container's.
-- [x] **W.5 Cut-over.**
-  - Delete what's left of three's renderer and of WebGL: the depth fallback's fixture, check and
-    `nearFallback`, `?depth=`, and the MSAA knob.
-  - Add a lint to `npm run check` so three is imported for maths only.
-  - Review the port from outside: a reader who hasn't seen it compares the WGSL with `adee91b`'s GLSL.
-  - Update CLAUDE.md:
-    - §2: three for maths only;
-    - §3: flags, `--gl`;
-    - §4: where SwiftShader captures come from (Linux only, see above);
-    - §6: architecture;
-    - §7: `ctx.frame`;
-    - §8: WGSL, uniformity, overrides, MSAA 4, reversed depth everywhere, no atomic-order dependence,
-      Y origin;
-    - §9: shader files.
-  - Update the README with browser requirements, and PLAN.md's Decisions, and the later stages'
-    notes that the port made untrue (three's shadow pitfalls in Stage 5, the Firefox depth fallback and
-    WebGL context loss in Stage 18).
-  - Hand over to the user:
-    - run the benchmark on real hardware, compared with the last WebGL build on the same machine;
-    - open the game in Chrome, Edge, Firefox (Windows) and Safari 26;
-    - merge to `main`.
-  - Done 2026-10-24, but for the hand-over. Two readers compared every WGSL file with `adee91b`'s GLSL
-    and found no transcription error. A third reviewed the renderer; fixed from it:
-    - `frame.opaque.depth` was the multisampled depth the after-opaque pass draws into, which it can't
-      read. Now it is the depth resolved to one sample, as WebGL gave it, and the blend fixture checks it.
-    - Player mode waits for the sky's first light: the first frames were black.
-    - A sky that fails to land its light, and shaders that fail to compile outside the scene, now say so.
-
-    A second round, at the user's request, took four other angles: the JS around the shaders; the
-    checks themselves; WebGPU's layout and semantics; and both builds run side by side under 75
-    conditions the captures don't cover (presets, sizes, tonemaps, exposures, times, seeds, fixtures).
-    Fixed from it:
-    - the draw order and the mip rounding (W.3, W.4);
-    - in dev, a shader fixed after an error now restarts the game, as WebGL's did;
-    - `reflect.js` refuses layouts and values it would get wrong silently;
-    - the three.js lint catches dynamic and unspaced imports;
-    - the errors check proves the tool still recognises the browser's own WebGPU warnings;
-    - player mode compares what its canvas shows with the capture of the same view (0.2 levels off);
-    - shader modules join the teardown's counts;
-    - a game that never starts drawing fails the tool instead of hanging it.
-
-    The user's benchmark (GTX 1660 Ti, 2562×1237, `high`):
-    - Both builds hold 60 fps on every view, with the same draws, triangles and passes.
-    - GPU ms across all views: 6.1 and 6.7 on WebGL; 6.4–6.6 on WebGPU. WebGPU was faster where sky and
-      sea fill the frame, and slower where ground does.
-    - Some of that was the timer, not the GPU. WebGPU's timer ran from the frame's first pass to its
-      last, so it counted the GPU waiting for the CPU between passes: headless on that GPU, a quarter of
-      the span (5.6 ms busy in 7.5). WebGL's timer saw the frame as one stream.
-    - The timer now sums the passes' own durations (`core/gpu-stats.js`). Rerun on `02249b2`: 5.05 ms
-      across all views in both runs, 21% less than WebGL's. Every view takes less GPU time (horizon
-      −48%, sand −5%), and so do the slowest frames (p95 6.7 against 8.4 ms). WebGL's timer may count
-      some idle time too, so WebGPU is at least as fast, not exactly 21% faster.
-
-**Known flaws** (for review):
-- WebGL stored its targets bottom-up, WebGPU top-down, and two things follow. Edges and detail differ
-  from WebGL's in single pixels; nothing is better or worse. Rendering the frame upside down would match
-  WebGL, at the cost of a flip in every pass from then on, so the port doesn't.
-  - MSAA's sample pattern is mirrored. Edges at shallow angles get other coverage: the silhouette
-    fixture has 0.85% of pixels more than 8 levels off.
-  - With an odd drawing-buffer height (the low and medium presets at 900 rows), derivatives pair other
-    rows, so footprint-filtered detail shifts by a row. The rocks view at low has 2.1% of pixels more
-    than 2 levels off, against 1.9% at an even height.
-- The low preset has 4 samples now (Decisions), so its render targets take 46.9 MB at 1600×900 instead
-  of 31.9.
-- Behaviours of three's renderer that nothing uses yet are missing: a change of render state needs
-  `needsUpdate`, double-sided transparent meshes draw in one pass, a mirroring transform doesn't flip
-  the front face, alpha-to-coverage needs a target with samples, and a destroyed texture keeps its cached
-  bind groups. `gpu/material.js` says so where it bites. A drawing buffer beyond the device's limit
-  (8192 px) fails instead of shrinking.
-- Speed on real hardware and the four browsers are untried (the hand-over).
-
-**Done when** `verify` is green on WebGPU in CI. The compare sheet against `webgl-final` shows no visible
-change on any view or named time, and every check proves itself on its bad case as before. No WebGL code
-remains. The docs describe the new conventions. The user has run the benchmark on their machine and seen
-the game in each browser.
+Known gaps: behaviours of three's renderer that nothing uses yet are missing, and `gpu/material.js` says
+so where they bite. A change of render state needs `needsUpdate`; double-sided transparent meshes draw in
+one pass; a mirroring transform doesn't flip the front face; alpha-to-coverage needs a target with
+samples; a destroyed texture keeps its cached bind groups. A drawing buffer past the device's limit
+(8192 px) fails instead of shrinking (Stage 18).
 
 ### 4c. Maths of our own
 
-Remove three.js, the game's last runtime dependency. Since Stage 4b it does maths only: vectors, matrices,
-rotations, colours, culling shapes and half floats. Each becomes a small module of the project's own. This
-is about dependencies and control, not speed: the frame rate is set on the GPU, and the maths costs
-microseconds a frame. **Nothing changes:** every picture stays byte-identical, nothing gets slower and
-nothing gets less correct. The stage comes before Stage 5, whose shadows bring the most new maths (the
-sun's cameras), so that maths is written once, on the project's own modules. 4.8 can come before or after it.
+Done. three.js is gone: `src/maths/` holds the vectors, matrices, rotations, colours, culling shapes and
+half floats the game uses, and every capture stayed byte-identical. `tests/maths.test.js` holds them to
+three r186's answers to the last bit, recorded as hashes (`tests/fixtures/maths/three-answers.json`); to
+find the number that differs, install three for the moment (`npm i --no-save three@0.186.1`) and run with
+`THREE_MATHS=compare`. The answers hold while the engine's `sin`, `cos`, `tan`, `asin` and `atan2` stay
+V8's. The build fails on any module from outside `src/`, and the lint names the file and line.
 
-**Decision** (2026-10-24, in Decisions below): no runtime dependencies; three goes.
-
-**Ground rules**
-- Not one bit of any picture changes. Captures are deterministic, so on the same backend every capture
-  equals the baseline's, and so do `info.json`'s measurements, timings aside. A difference is a bug in the
-  new maths.
-- Only what the game uses, as the game uses it: no API for its own sake. Later stages add what they need,
-  with tests. Call sites read as clearly as before.
-- The pure JS keeps its logic (island, heightmap, LOD, scatter, rock placement, sun, light maths, albedo);
-  only where its maths comes from changes.
-- Where the project's code follows three's, it keeps three's MIT notice, in the source and in the built file.
-- Stop and ask the user if a picture can't be kept identical, or a check would have to be loosened.
-
-**Found in the code** (a survey of `51774eb`, 2026-10-24):
-- 29 files in `src/` import three (14 of them fixtures), and so do 3 tests. They use:
-  - `Vector2`, `Vector3` and `Vector4`; `Matrix3` (normal matrices); `Matrix4` (compose, invert, multiply,
-    the reversed perspective, look-at, a rotation); `Quaternion`; `Euler`, of which only the camera's
-    angles, in `YXZ` order, are read; `Color`;
-  - `Box3`, `Sphere` and `Frustum`, to cull the terrain's nodes, the rocks and every mesh;
-  - `MathUtils` (degrees, clamp) and `DataUtils` (half floats);
-  - `WebGPUCoordinateSystem`, which changes nothing under reversed depth: three takes the same path for
-    either clip space then.
-- The maths reaches the pictures four ways, and a difference in the last bit can move any of them:
-  - the camera's and the meshes' matrices, in every draw's uniforms;
-  - culling and the draw order (the overdraw counts follow it);
-  - rock placement, where rotations decide where each rock sits, how deep it sinks and whether it shows;
-  - half floats in the heightmap's and the fixtures' textures, and the sRGB colours of the placeholder water
-    and the fixtures.
-
-  three computes in doubles on plain numbers, so plain JS reproduces its bits, but only in its order of
-  operations: `degToRad(x)` is `x * (π / 180)`, not `x * π / 180`.
-- **Half floats truncate.** three's `toHalfFloat` drops the bits a half float can't keep (and clamps at
-  ±65504, with a warning). JS's own `Math.f16round` and `Float16Array` round to nearest, which moves texels.
-- **The renderer reads three's shapes.** `gpu/reflect.js` packs a uniform from a vector's `x, y, z, w`, a
-  colour's `isColor` and `r, g, b`, and a matrix's column-major `elements`. Systems set uniforms with
-  `fromArray`, and the capture reads them with `toArray`. `gpu/scene.js` keeps a node's angles and its
-  quaternion in step through three's private `_onChange` hooks.
-- **Degenerate inputs take branches that random inputs seldom reach:** normalizing a zero vector, a rotation
-  between opposite directions, a pitch of ±90° turned back into angles, inverting a singular matrix, half
-  floats beyond their range or below their smallest normal.
-- **Some tests use three as an independent reference:** `tests/image.test.js` checks `panShift` with three's
-  own camera. Once three goes, they need a reference other than the code they check.
-- **Licence.** `gpu/geometry.js` and `core/camera.js` already follow three's code. The built file carries
-  three's MIT notice only because three is bundled (`vite.config.js` keeps legal comments).
-- `tools/check-build.js`'s lint lets `src/` import three's maths only, by name, and forbids three's clocks
-  and random helpers.
-
-Sub-steps, in order. Each one ends with `npm run verify` green, `main` shippable, and captures
-byte-identical to `maths-before`.
-
-- [x] **M.0 Baseline.** On `main` as it stands, capture `maths-before` as W.0 captured `webgl-final`: every
-  view with `--checks`, the named times on `horizon` and `overview`, and the `tonecard`, `gradient` and
-  `blend` fixtures. Time the JS that uses the maths most: at boot (placing the rocks) and each frame
-  (culling, the draw order, the matrices). Timings compare only on one machine, so a later session on
-  another machine times the baseline's commit again. Record the built file's size.
-  - Done 2026-10-24 on `51774eb`: `maths-before` on SwiftShader (the Linux container, Chromium 156.0.8078.4,
-    1600×900) and `maths-before-hw` on the session machine's GPU, each the whole set. Two hardware runs of
-    one build came out byte-identical, so hardware captures served as the quick check. The built file:
-    700.0 KB raw, 160.0 KB gzip.
-- [x] **M.1 The maths.** Modules of the project's own for everything the survey lists. Every function gives
-  three's answer to the last bit: tests compare the two on seeded inputs and on every degenerate case
-  above, each test seen red once. Other tests hold the maths to what it should do, without three: an
-  inverse undoes its matrix, angles turned into a rotation and back come out the same, a sphere inside the
-  frustum is kept and one outside is culled, half floats keep exactly what they can hold. Nothing uses the
-  new modules yet.
-  - Done: `src/maths/` (index.js exports them, with three's MIT notice). `tests/maths.test.js` runs 18 case
-    sets, 199,683 numbers, each giving three r186's answers to the last bit; the answers are recorded as
-    hashes in `tests/fixtures/maths/three-answers.json`, and with three installed for the moment
-    (`npm i --no-save three@0.186.1`), `THREE_MATHS=compare` names the first number that differs.
-  - The inputs come from a generator of the test's own and are made without `Math.pow`, whose results V8
-    changed in Node 24; the sRGB curve, which takes `Math.pow`, is held to three's formula by a test of its
-    own. The answers hold on Node 20.19, 22.12 and 24.21.
-  - Of 64 deliberate mistakes in the maths, all but two turn the tests red; those two can't change a
-    result (doubling is exact, and exponents below −26 give zero either way).
-- [x] **M.2 Switch-over.** Every import of three in `src/` moves to the new modules, one area at a time:
-  rock placement; the renderer, scene graph and camera; the systems and fixtures. The tests that used three
-  as a reference get one that isn't the code they check. Check: after each area, the compare sheet says
-  "identical" for every view, named time and fixture, and `info.json`'s measurements are unchanged; the
-  quality change leaks nothing; the JS timed in M.0 is no slower.
-  - Done. Rock placement was checked on its own output: 6,330 rocks over nine seeds, every number
-    identical. The other two areas went over before one capture. On both backends all 148 PNGs of the set
-    (views, crops, banding, shimmer, motion, overdraw) are byte-identical to `maths-before`, `info.json`'s
-    measurements are equal, and the compare sheet says "identical" on every view. The hardware run's
-    player mode failed, as on the baseline (M.3, found on the way).
-  - `tests/image.test.js` checks `panShift` against the game's own camera, and `tests/rock-placement.test.js`
-    turns points by a rotation matrix of its own; each goes red when broken on purpose.
-  - Timed in turns, ten runs each (82 rounds) on an otherwise idle machine. Placing the cove's rocks (715 on
-    the timing script's coarser grids; the game's own give 703) took 82.6 ms with three and 81.4 ms after
-    (medians). A frame's culling, draw order and matrices took 103.9 and 105.0 µs: the same within noise.
-    A sum over the frame's results (normal matrices, what was culled) came out the same.
-- [x] **M.3 Removal.** three leaves `package.json` and the lockfile. Once it is gone, the tests still hold
-  the maths to three's answers on their cases. The lint has one rule for imports: `src/` imports only its
-  own files, with a fail fixture (CLAUDE.md §5); the rules for three's clocks and random helpers go with
-  three. An outside reader compares each function with three's original and checks that the tests reach its
-  branches. CLAUDE.md is corrected where it says three: §2 (dependencies, the lint), §3 (`npm run check`),
-  §6 (where the maths lives, `gpu/`), §8 (colours, the projection, frustums). Check: `package.json` has no
-  `dependencies`; `npm ci` on a clean checkout and `verify` are green, also in CI; the built file no longer
-  bundles three and still carries its MIT notice for the code that follows three's; its size is recorded
-  against M.0's.
-  - Done. `package.json` has no `dependencies`.
-  - The guarantee is the build's: it fails when it bundles any module from outside `src/` and `index.html`,
-    whatever brought it in (`checkModules`, called from `vite.config.js`). A build with an import hidden from
-    the lint behind a line continuation failed this way.
-  - The lint's rule (`own-imports`) is the early warning, with a file and a line. It checks every module
-    a file names, wherever it sits: `from '…'`, `import '…'`, `import(…)` and `import.meta.glob(…)`. It
-    passes only relative paths, with forward slashes, into `src/`.
-  - A test trips the lint with packages, `node:` modules, quoted names, imports nested in classes and
-    functions, glob character classes, type arguments, absolute paths, backslashes and paths out of `src/`.
-    Words such as `'import'` must not trip it. (Source rules are tested with trees of files, not HTML
-    fixtures.)
-  - A regex reads text, not JavaScript, so contrived code still gets past the lint; the build stops it.
-  - Three rounds of outside readers, six in all; none found a difference in any number the game computes.
-    - They read every function against three's.
-    - They fuzzed against three's own code: 413,000 checks in the first round and 50 million numbers in
-      the second, ordinary, extreme and non-finite.
-    - They compared the old code with the new on every view's camera, the geometry, 20 seeds of rocks and
-      20,000 sequences of the scene graph's rotations.
-    - They re-recorded three's answers byte for byte.
-    - They checked every claim here against the captures and logs.
-    - The last of them tried to slip imports past the lint, which led to the build's check.
-
-    Fixed from them:
-    - half floats become numbers through three's tables;
-    - an `update` flag counts only when `true`, as in three;
-    - `Euler.set` refuses an unknown order before changing anything;
-    - the camera's `reversedDepth` flag went (the draw order assumes reversed depth, as the projection does);
-    - the lint's gaps, and a hole the first fix of them opened (it now matches modules, not clauses), and
-      the build's module check behind it;
-    - tests for exact ties, nearly opposite directions, non-finite inputs, what a change call sees and what
-      the maths refuses, and the test's independence from the engine's `Math.pow`;
-    - the rock test's rotation of its own;
-    - comments that said wrong things.
-  - The built file: 617.3 KB raw, 137.1 KB gzip (83 KB less), with three's notice from `src/maths/index.js`
-    and none of three's code. A fresh copy of the working tree (nothing is committed yet) installs from the
-    lockfile with `npm ci` and passes test, build and check.
-  - The final captures of the final code are byte-identical to `maths-before`, measurements included:
-    - `maths-final`, from `verify` in the Linux container after `npm ci` there, on the working tree;
-    - `maths-final-hw`, from `verify` on the GPU.
-  - Found on the way: player mode looked for the start screen 30 browser frames after the page loaded, which
-    a busy machine's boot outlasts. It failed on the unchanged baseline too. Now it looks once the game draws,
-    and it still catches a start screen that never shows (a build that hides it fails).
-
-**Known flaws** (for review):
-- On purpose, the maths refuses what the game doesn't use. `Color` throws on CSS names, `#rgb`, `rgb(…)`
-  and `hsl(…)`, which three parsed, and on `null`, objects and other strings, where three left the colour
-  white. Euler orders other than XYZ and YXZ throw, where three supported all six. A later stage that needs
-  more adds it, with tests.
-- The recorded answers say which case set differs, not where. Finding where needs three for the moment
-  (`npm i --no-save three@0.186.1`, `THREE_MATHS=compare`). They hold while the engine's `sin`, `cos`,
-  `tan`, `asin` and `atan2` give what V8's have since 2016; the file records the V8 it was made on.
-- The bits of a NaN written into a `Float32Array` (a readback) depend on how the engine compiled the call,
-  so the tests compare values, not those bits.
-- The switch-over took two areas before one capture, not one at a time; the capture came out identical.
-- CI hasn't run it yet: that needs a push. The container's `verify` is CI's, byte for byte (Stage 4b).
-
-**Done when** the game has no runtime dependencies; every view, named time and fixture is byte-identical to
-`maths-before` on the same backend; the maths' tests reach every branch they replace and hold it to three's
-answers without three installed; nothing timed in M.0 got slower; and CLAUDE.md says how things are. The
-GPU does the same work as before, so the user's review needs no benchmark or browser runs.
+The maths does only what the game uses and refuses the rest: `Color` takes no CSS names or `rgb(…)`, and
+`Euler` only the orders XYZ and YXZ. A stage that needs more adds it, with tests.
 
 ### 5. Shadows
 
-- Sun shadows across the whole depth range: soft penumbrae, stable when the camera moves (no shimmering),
-  long and soft at low sun. Objects sit on the ground instead of floating.
-- Shadow quality scales with the quality presets.
-- Plant shadows come with the plants in Stage 8. Build the shadow system so leaves can later cast
-  leaf-shaped shadows.
-- Known from Stage 4b: there are no built-in shadows; the shadow maps are the project's own, drawn in a
-  `frame.beforeScene()` pass. Depth is reversed, so a depth bias takes the opposite sign to the usual.
-  Anything whose vertex shader moves it (the terrain's morph, the rocks' offsets, later leaves and waves)
-  needs a depth material that moves it the same way.
-- Known from Stage 4: rocks (`world/rocks.js`) need shadows near and far, and cast them on the sand they
-  sit in; their vertex shader moves each by its offset onto the mesh as drawn, which a shadow pass must
-  take too, or it casts every rock's shadow from where its instance starts. The light from below
-  (`groundAlbedo()` in `skyIrradiance()`) assumes the ground around is in the sun, so shade under a canopy
-  or a cloud gets it in full. Until there are shadows, golden hour has no cool shade anywhere: everything
-  is warm.
-- Known from Stage 2: new light uniforms (the shadows') go in `ctx.frame.uniforms` and
-  `chunks/frame-struct.wgsl`, which every scene material binds at group 0. Capture mode's pre-compile
-  (`frame.compile()`) covers the scene's passes and the frame's own materials: a shadow pass's
-  materials must join it. The sky is in the opaque pass, so a shadow pass has to leave it out.
-- Known from Stage 3: the terrain's morph and the planet's bend (`chunks/planet.wgsl`) measure from the
-  frame's `cameraPosition`, which in a shadow pass is the light's camera. The terrain picks its nodes
-  once a frame, for the main camera, into the meshes' shared instance buffers: a shadow pass reusing
-  them would miss casters out of view, such as the volcano with the sun behind it. The mesh's shape
-  depends on where the camera is (its levels of detail), so whatever draws it must agree on that camera.
-- Known from the optimization review (2026-10-25), for the renderer (`src/gpu/`):
-  - Each `renderer.render()` encodes and submits its own pass, so uniforms written between passes apply
-    in order: a frame is 3 submits, and 37 when the sky's tables follow the camera's height. Cascades
-    multiply passes. One command encoder a frame needs a slot per pass for what changes between passes
-    (the materials' uniform buffers, and the objects' slots, which start at 0 every pass), as a ring
-    with dynamic offsets.
-  - Group 0 (`chunks/frame.wgsl`) binds the frame's tables to every scene material, also in a pass that
-    draws into one of them. A shadow map can't go there: give it, and whatever else the frame draws into,
-    a group of its own, bound by the passes that read it.
-  - The sky's 3D aerial table takes 32 render passes, one a slice (WebGL had no compute). Make it one
-    compute pass once the renderer has compute pipelines.
-  - A system with many meshes keeps their instances in one set of attributes, each mesh drawing its
-    range (`gpu/geometry.js` Attribute, `firstInstance`): the terrain and the rocks do. A shadow pass
-    that needs other instances than the main view's needs ranges of its own.
-- **Done when** low-sun captures show long, soft shadows from the rocks and terrain, with no acne, no
-  detached shadows and no hard edges, and the camera-offset captures show no shimmer, the camera turned
-  or moved (5.1).
+Done. Two kinds of shadow, multiplied in `sunVisibility()` (`chunks/shadows.wgsl`):
+- The island's own shade (`world/shade.js`): per time of day, over the whole island, how much of the sun's
+  disk each point sees over its horizon, worked out in workers and landing with the sky's light
+  (Decisions). Under a wide shade the light from below dims, and shade turns cool at golden hour. JS knows
+  it, and the GPU agrees.
+- Shadow maps round the camera (`sky/cascades.js`: 4, 3 and 2 cascades out to 100, 80 and 50 m on high,
+  medium and low) of what stands on the ground (rocks; the terrain casts none): sharp at a caster's foot,
+  softer away from it, twice as soft as the sun's disk makes them (Decisions). The ground reads them only
+  where a caster's shadow can fall (`ctx.shadows.from`, `sky/shadow-reach.js`).
 
-Sub-steps, in order. Each one ends with `npm run verify` green and `main` shippable, and fixes whatever it
-made untrue in CLAUDE.md. The frame learns to draw shadows in a test scene whose answers JS knows before
-the island casts any; then the island's own relief, which shades at every distance, and the rocks; then
-the look, judged at low sun in every view. Room comes first: shadows cost every lit pixel, and four views
-are over the capture budget already.
+The test scene `?fixture=shadows` holds both to JS. Sub-steps: 5.1 room and a camera that moves, 5.2
+shadows in a test scene, 5.3 the island's own shade, 5.4 rocks in the sun, 5.5 the look.
 
-- [x] **5.1 Room, and a camera that moves.** Every view captures within its frame budget on SwiftShader
-  again, with room for shadows: `rocks`, `overview`, `jungle-edge` and `sand-edge` are over 2.5 s (Known
-  from 4.8; the green's near detail costs most). No view looks worse. The screenshot tool moves the camera
-  as well as turning it, so shimmer from movement, which shadows are prone to, is measured from here on.
-  Check: the compare sheet shows nothing a viewer would notice, or what changed, reviewed; every view's
-  frame time and its margin; a test scene that crawls only when the camera moves proves the new
-  measurement catches it.
-- [x] **5.2 Shadows in a test scene.** The frame draws the sun's shadows. A fixture stands test casters on
-  level and sloping ground under a high and a low sun: a block, a thin pole, an overhang, and a cut-out
-  with holes, as a leaf will be; JS knows where their shadows fall. Shadows lie where JS puts them, start
-  at their caster's foot, leave lit surfaces as lit as without shadows (no acne, also at a grazing sun),
-  let the sun through the cut-out's holes, and fade over soft edges, sharper where they touch their caster
-  and softer away from it, without noise. A caster whose vertex shader moves it casts from where it is
-  drawn. Every lit material takes the shadows, the sun's glints too. Shadows scale with the quality
-  presets. Check: the fixture's checks in `--checks`, each seen red on a deliberate mistake (a shadow
-  pushed off its caster, acne, a caster cast from where its instance starts, a cut-out cast solid); the
-  pipelines made before the first frame include the shadows'; the quality change and teardown checks
-  still pass.
-- [x] **5.3 The island's own shade.** The ridges, the volcano, the headland's cliffs and the flats' old
-  beach ridges shade the land at every distance, from the camera's feet to the overview: softer the
-  further the shade falls from what casts it, the same wherever the camera stands, and following the time
-  of day when it is set. Under a wide shade the light from below dims as well, as the ground around is in
-  shade too, and shade at golden hour turns cool. JS knows which ground lies in the island's shade, and
-  the GPU agrees. Check: invariant tests over seeds 1–20, each seen red once (among them: a lower sun from
-  the same direction never lights ground a higher one shaded); a GPU check against the JS twin at sample
-  points, proven on a deliberate offset; the time-change reproducibility checks pass; a new view shows the
-  ridges' shade lying across the cove at a low sun.
-- [x] **5.4 Rocks in the sun.** Rocks cast shadows on the ground they sit in and on each other, from where
-  they are drawn (moved onto the mesh as drawn, sunk as they shrink), out as far as their shadows show;
-  rocks out of view cast into it when a low sun throws their shadows long. They take the island's shade
-  like the ground under them. Check: the rocks fixture proves the shadow pass casts each rock from where
-  the main view draws it, and fails on its deliberate mistakes; a new close-up of rocks on the sand at a
-  low sun, and `rocks` at golden hour, show rocks sitting in the ground; cost within limits.
-- [x] **5.5 The look.** Every view at its own time and at golden hour against the Done line: soft edges and
-  no hard ones, no acne, no detached shadows, no seam where near shadows meet far ones, cool shade at
-  golden hour, nothing crawling as the camera moves or turns. Left from 5.2: edges sharper where a shadow
-  touches its caster and softer away from it, weighed against what it costs, and the test scene's sloping
-  ground. How soft shadows are, as the sun's own disk makes them or softer, is a matter of taste: show the
-  user candidates side by side, near and far, at noon and at golden hour. Each preset within its frame-cost limits. Check: the Done line; shimmer under
-  movement within its limit at every view; the user runs the benchmark and looks for crawling in the
-  running game.
+- 5.1: what a SwiftShader frame costs, switching one thing off at a time: the green 23–28% where it fills
+  the frame (its near detail 12–15%), rock's relief up to 31% (`rocks`), the shadow maps 17–19%, sand's
+  detail up to 10%. The user raised the capture budget instead (Decisions); a pass over the terrain
+  shader's cost waits, and would help real GPUs too.
 
-Done out of order: 5.3 and 5.4 before 5.2's test scene, which then caught a bug in each; 5.1 last.
-
-- Known from 5.1 (2026-10-29): the views over budget are slow for more than the green's near detail.
-  Switching one surface off at a time on SwiftShader (scratch builds, same machine, frames taken in turn):
-  the green costs 11–30% of a frame (13% of `overview`, which has none of its near detail: its stands'
-  noise and patches), rock's relief 5–33% (`rocks` 33%, `overview` 15%), sand's detail 0–12%; reading a
-  frame back costs 0.1 s of 3. Room needs a pass over the terrain shader's cost, which would help real
-  GPUs too (the benchmark on the user's machines will say how much). The user raised the frame budget to
-  4 s instead (2026-10-29); the cost pass waits. SwiftShader frames against it, in the Linux container:
-  `sand-edge` 3.7 s, `jungle-edge` 3.5, `overview`, `rocks` and `rock-shade` 3.3, `shoreline` 2.8,
-  `morning-shade` 2.7, `beach` and `into-the-sun` 2.1, `sand` 1.8, `horizon` 0.8: all within it, the
-  least margin 7%. The user saw no shadow move with the camera in the running game.
-  The tool moves the camera as well as turning it: two walking steps of 2.5 cm to its right, each frame
-  foretold from the one before by the scene's depth, leaving out what comes out from behind something
-  (`shimmer-move.png`; within shimmer's limit). Every view scores 0.00–0.01% on hardware and on
-  SwiftShader. The test scene `crawl` (stripes that keep to where the camera stands on one half, as the
-  shadows of a map that follows it without snapping to its texels would) crawls on 11% of that half, on
-  none of the other, and not at all as the camera turns. With the shadow maps' snapping switched off for
-  a trial, `rock-shade` went from 0.004% to 0.02% only: through the filter, a map that follows the
-  camera unsnapped moves its edges by fractions of a texel at these resolutions. The moved frames make a
-  SwiftShader run about 12% longer.
-- Known from 5.2–5.4 (2026-10-29): two kinds of shadow, multiplied in `sunVisibility()`
-  (`chunks/shadows.wgsl`). The island's own shade (`world/shade.js`): per time of day, over the whole
-  island, the share of the sun's disk each point of the ground sees over its horizon, from a hull sweep
-  in rows turned to the sun, worked out in bands by a pool of workers and landing with the sky's light
-  (`ctx.sky.follow`): a time change takes about a quarter of what one worker took, and more than before
-  Stage 5, when it was the sky's alone (Decisions); 2 m apart (4 m on low), so edges near the camera blur
-  over a texel or two; soft
-  as the sun's disk (twice it since 5.5). What stands above the ground reads the shade's top
-  instead, and misses the outer half of a far ridge's soft edge where the ground just beyond grazes the
-  sun's line (on rocks, hard to see; palms' crowns stand high enough to read it right). The light from
-  below dims under it. The shadow maps round the camera (`sky/cascades.js`): 4, 3 and 2 cascades out to
-  100, 80 and 50 m on high, medium and low, of what stands on the ground (rocks; the terrain casts none),
-  filtered over a fixed tent of about three texels until 5.5 softened them by their casters' distance. At a grazing sun a point is read 1.5 texels up its normal, which
-  moves a long shadow's end by tenths of a metre. The terrain's far pieces (past sand's detail, 120 m)
-  skip the maps, so a far rock casts nothing onto them. The test scene (`?fixture=shadows`) stood on
-  level ground only until 5.5; the GPU check that a rock's shadow pass draws it where its view does is the test
-  scene's moved block (same shader, same uniforms), not the rocks fixture. Group 0 now binds 13 textures
-  of the 16 a shader is sure to have (the rocks' pipelines 15): Stage 6's water and Stage 10's cloud
-  shadows will need some of the island shade's channels or a texture array. A caster whose vertex shader
-  moves it must set `frustumCulled = false` (CLAUDE.md §8): the test scene found the renderer culling one
-  where its mesh sat. The test scene also caught ground past a map's far end read as shaded (fixed).
-  Cost: render passes 3 to 7, texture memory 85 to 127 MB, render targets 89 to 153 MB on high;
-  SwiftShader frames 9–15% dearer (the island's shade 4–9%, the maps 3–8%): in the Linux container, 7
-  or 8 of the 11 views over the 2.5 s budget (`sand-edge` 3.7 s, `jungle-edge` 3.5, `overview`, `rocks`
-  and `rock-shade` 3.3–3.4, `shoreline` 2.8, `morning-shade` 2.7, `beach` 2.2–2.8 between runs), against
-  5 of 9 before. The
-  test scene's feet stand 3 cm out from the blocks, and 3 mm more a metre from the camera: closer, under
-  a high sun, SwiftShader and a GPU disagreed on one. New views `rock-shade` and `morning-shade`.
-- Known from 5.5 (2026-10-29): the maps' shadows are as soft as the sun's disk makes them, twice widened
-  (Decisions): sharp where they touch their caster, softer further out. How far the caster is comes
-  from the coarsest map that holds a point (its 4 x 4 texels round it, weighted so it changes smoothly);
-  then the finest map, its filter (3 x 3 reads) spread from half a texel to one as the penumbra takes,
-  or past that the two maps whose filters at their widest come closest to it, mixed. Its limits:
-  - The maps can soften no further than the coarsest one's filter, about 27 cm each way on every
-    preset, reached about 30 m from a caster; and no sharper than the finest one's where a point lies:
-    2 cm each way 5–16 m from the camera on high, 6 cm at 16–45 m, so far rocks' feet stay that soft.
-  - A long edge under a low sun shows a soft sawtooth (`rock-shade`, the big rock's shadow's far end):
-    the texels of the map it reads, stretched along the sun's way, move the edge by half a texel. A
-    filter can't even out steps much longer than itself, and those along an edge that runs almost with
-    the texels' rows run a dozen texels and more; it shrinks them only as far as it spans more texels,
-    at a cost growing with the square of that. Three reads a side instead of two made them a third
-    smaller beside the penumbra (2026-10-29). Turning the maps' frame 45° moved them, no smaller: the
-    edges that show them are the shadows of rocks' top edges, at any angle. Gone, they would take maps
-    filtered before they are read (moments, or coverage, so a wide filter is one read), or smoothing
-    over frames: a project of its own.
-  - A gap a few texels across in the map that softens it comes out dimmer than the sun's disk would
-    leave it. With three reads a side the map a penumbra reads has texels 1.5 times finer for it, so a
-    gap the sun's disk lets full sun through stays open; narrower ones dim, as they should, if sooner.
-  The test scene (`?fixture=shadows`) has sloping ground, one patch facing the sun and one turned from
-  it at a grazing light, each with a block standing in it, and a wall 25 m high whose shadow's sides are
-  measured at 15 distances each: every penumbra 0.87–1.27 times what the sun's disk makes there (or the
-  maps' filter, where that is sharper or softer; 0.79–1.33 at softness 1, 2 and 3 with the earlier
-  filter, on a GPU and on SwiftShader alike); as sharp far out as at the foot, the soft ones fall to
-  0.12–0.41; as soft at the foot as far out, the sharp ones rise to 6.9–8.3. Its card stands low, so under a low sun its holes cast spots
-  close by, and a spot counts where the map that softens it holds the hole two texels clear of its edge.
-  Presets, all within their limits: low 5 passes, 48 MB render targets, 85 MB textures; medium 6, 91,
-  141; high 7, 153, 141 (the textures 14 MB more on each since the terrain's were packed, below). Shimmer at most 0.05% turning and 0.004% moving on a GPU.
-  The outside review (an agent that hadn't seen the code, over every view at its own time, golden hour
-  and midday) found shade cool and attached on sand, soft, without acne or a seam between near and far,
-  and the volcano's long shade from above the best of it. What it found short, kept for later:
-  - Shade on dark ground is near black at golden hour: basalt under the headland's own shade in
-    `rock-shade` (sRGB 0–3 per channel), shaded grass from above. Not this step's: the same before it.
-    The light is physical (dark rock, half a blue sky, exposure set by the sunlit sand); how much to
-    lift it is for the grade (Stage 11) or the hours (Stage 12).
-  - The sand drifted against a rock's foot (Stage 4) reads as a pale collar under a shaded face at
-    midday, a pedestal more than a rock sunk in sand. At golden hour the lit strip at the big rock's
-    foot in `rock-shade` is sand the sun reaches past the rock's side: right.
-  - At the waterline in `morning-shade`, the hills' shade edge smears into streaks: its 2 m samples
-    seen at a grazing angle. The lit sand there reads cool for a brief that says the first light warms
-    it (7:45, the sun 23° up).
-  - Not shadows: the sun's disk in `horizon` reads flat; the green's edge on the sand speckles at
-    grazing angles in `shoreline` (its shimmer measures 0.05%); rock patches on the hills read as
-    decals with dark rims; the placeholder water's glowing ring round the coast at golden hour.
-  Still open from 5.2–5.4: the island's shade 2 m apart (4 m on low); rocks past the maps' reach cast
-  nothing.
-- Known from the user's review of 5.5 (2026-10-29), who asked for room first, then the flaws fixed that
-  cost nothing and the sawtooth and dim gaps (the island's shade near the camera and rocks past the
-  maps left for later): what a SwiftShader frame costs, switching one thing off at a time side by side:
-  the green 23–28% (`sand-edge`, `jungle-edge`; its near detail 12–15%, patches 4–9%, stands 2–5%), the
-  shadow maps 17–19% (`overview` 7%), rock's relief 31% of `rocks`, sand's detail up to 10%. Two cuts
-  that save real GPUs the same work, the pictures as they were:
-  - The ground reads the maps only where a caster's shadow can fall: what casts tells `ctx.shadows`
-    where it stands (spheres), and per time of day the cells of the ground their shadows reach
-    (`sky/shadow-reach.js`) pick, per piece of the terrain, a shader with the maps or without. Every
-    view came out byte for byte the same with and without, at its own time, golden hour and sunrise.
-    8–12% where rocks are few, none in `rock-shade`. A caster that doesn't say where it stands casts
-    no shadow on the ground (CLAUDE.md §8).
-  - Pieces with no ground but sand and rock draw the green as its plain average, which shows nowhere
-    on them (`INLAND`, `world/terrain-nodes.js`): 3–9%; a few far pixels mixing green in from past
-    their piece move by up to 28 levels at 5x, not seen at 1x.
-  The terrain draws 32 variants instead of 12 (47 pipelines of the 64 allowed), and a few more draws.
-  The three reads a side cost 0–2% on top.
-  The container's `verify` afterwards, against the one at hand-over: `sand-edge` 3.76 s (-8%),
-  `rock-shade` 3.70 (0%), `jungle-edge` 3.68 (-5%), `rocks` 3.61 (-3%), `overview` 3.43 (-3%),
-  `shoreline` 2.78 (-14%), `morning-shade` 2.71 (-10%), `into-the-sun` 2.12 (-12%), `beach` 2.00 (-19%),
-  `sand` 1.74 (-17%), `horizon` 0.89: all within the 4 s budget, the least margin 6%. The run takes 11%
-  longer all the same: each page compiles 20 more of the terrain's pipelines, on SwiftShader 7 s to
-  10 s a page load. More room would come from the green's near detail and rock's relief, which keep
-  their look only as they are read now (their tiles filtered over a slanted footprint).
-  Fixed at no frame cost:
-  - What stands on the ground (rocks) goes from the ground's share of the island's shade at its foot to
-    the share at its height over 2 m (`world/shade.js` ABOVE_GROUND): rocks at a shade's edge are no
-    longer lit where the ground round them isn't, nor dark at the foot where it is lit.
-  - Each terrain level's info and ground are one texture of two layers (the ground's bytes as half
-    floats), so group 0 binds 11 textures, the rocks 13, of the 16 a shader is sure to have: room for
-    Stage 6's water and Stage 10's cloud shadows. Texture memory 127 to 141 MB on high.
+Known flaws:
+- The maps soften no further than about 27 cm each way (reached about 30 m from a caster), and no sharper
+  than the finest map's texels where a point lies (on high 2 cm at 5–16 m from the camera, 6 cm at
+  16–45 m). Gaps a few texels across dim sooner than the sun's disk would leave them.
+- A long edge under a low sun shows a soft sawtooth (`rock-shade`, the big rock's shadow's far end): the
+  map's texels, stretched along the sun's way. Wider filters shrink it only at a cost growing with the
+  square of their width, and turning the maps' frame didn't help. It would take maps filtered before they
+  are read (moments) or smoothing over frames.
+- The island's shade is 2 m apart (4 m on low), so near the camera its edges blur over a texel or two. What
+  stands above the ground reads it at its height and misses the outer half of a far ridge's soft edge.
+- Rocks past the maps' reach cast nothing, and the terrain past sand's detail (120 m) doesn't read the maps.
+- Shade on dark ground is near black at golden hour (basalt in `rock-shade`, shaded grass from above): the
+  light is physical, so how much to lift it is the grade's (Stage 11) or the hours' (Stage 12).
+- The sand drifted against a rock's foot reads as a pale collar at midday. In `morning-shade` the hills'
+  shade edge smears into streaks at the waterline (2 m samples at a grazing angle), and the lit sand reads
+  cool for a brief that says the first light warms it.
 
 ### 6. Ocean
 
-- `water/`: waves (swell plus chop); sky reflection; a sun-glitter path; colour from depth, from clear
-  turquoise shallows to deep blue; the seabed visible through the shallows, with surfaces of its own
-  (rippled sand, the reef), which only the water shows; a far sea that doesn't sparkle
-  or alias; a seamless fade into the horizon haze; the white line of surf on the reef.
-- Walking, swimming and sound will need the water's motion in JS as well, and it must agree with what's
-  drawn (CLAUDE.md §5).
-- Known from Stage 2:
-  - The haze over the far sea matches the physics (the `haze` check), so the colour where the sea meets
-    the sky is now the water's own. The placeholder mirrors the sky from 8° up, which leaves a line at
-    the beach's horizon and a flat salmon sea at sunset.
-  - The sun's disk, its glow and the ceiling on its brightness exist only in the sky's shader, so
-    reflections miss the glow (beside the setting sun the sky reads 186 and the sea 155) and a reflected
-    sun would come out uncapped. Reflections read the sky as seen from the camera's height: from 135 m,
-    up to half again too bright beside a low sun.
-  - Where no seabed is drawn, `frame.opaque` holds the sky's colour and the far plane's depth. The
-    seabed's own shader already adds the haze in front of it, which the water must not add again.
-  - Nothing reads `frame.opaque.depth` yet. The first thing that does proves it in a fixture, as the
-    blend fixture proves the colour.
-  - The translucent pass has one sample per pixel and can't add light, so glints can't go there.
-- Known from Stage 3:
-  - The terrain's shader skips seabed under the placeholder water, which hides it (TEMPORARY in
-    `terrain.frag`): remove that with the placeholder.
-  - The terrain's grids end where the sea is deep all round (`island.coveBounds`, about 1 km out from
-    the cove); beyond them heights repeat the coarse grid's edge (−50 to −90 m) in straight stripes to
-    the horizon. The drawn seabed ends about 1 km out.
-  - The coast's distance comes from the exact shapes, the drawn waterline from the grids: take the
-    waterline from the drawn depth.
-- Known from Stage 4: the GPU reads the reef's offset with the ground (`terrainGround()`, held within
-  ±250 m), but no distance to the shore any more. The light from below takes the far sea's albedo over
-  all water (`world/albedo.js`), though the shallow lagoon over white sand sends up far more. Under the
-  sea the ground is soaked but has no film of water (`chunks/wet.wgsl`): the water's surface mirrors.
-  The terrain's shader reads 9 textures of the 16 a shader is sure to have (the surfaces' tiles share
-  one array, `textures/surfaces.js`).
-- Known from the optimization review (2026-10-25): the terrain leaves out nodes a metre and more under
-  the placeholder water (TEMPORARY in `world/terrain.js`, beside the `hidden` early-out in
-  `terrain.wgsl`): the seabed the water shows needs them back, culled by what the water hides instead.
-  The after-opaque pass draws on the opaque pass's samples, which resolve into a texture of their own
-  for it (`frame.opaque.color`), and it resolves the HDR target itself: no pass of its own for that.
-- Known while planning this stage (2026-10-30):
-  - A shader can count on 16 textures and group 0 takes 11, so the water has 5: the seabed's colour, its
-    depth, the waves, what the sea knows (6.2) and one more, which foam and whatever else the mirror needs
-    have to share. Stage 10's cloud shadows will take one more from every material, in group 0.
-  - Every frame now pays for the after-opaque pass: 2 more passes and their resolves. SwiftShader frames
-    have little room (`sand-edge` 3.76 s of the 4 s budget), and CI's job reached its 30 minutes in Stage 5
-    before it stopped measuring. Taking out the two TEMPORARY culls costs up to a fifth of a frame where
-    water fills it, before the water's own shader. If the views can't stay within budget, ask the user
-    rather than raising it.
-  - The GPU times in `info.json` follow the laptop GPU's clock and swing several-fold between runs (Stage
-    11's notes), so only the benchmark says what the water costs. The last numbers written down here are
-    Stage 4b's, from before the shadows.
-- **Done when** the placeholder water is gone and the lagoon reads as tropical at every time of day.
+Goal: waves (swell plus chop); sky reflection; a sun-glitter path; colour from depth, from clear turquoise
+shallows to deep blue; the seabed visible through the shallows, with surfaces of its own; a far sea that
+doesn't sparkle or alias; a seamless fade into the horizon haze; the white line of surf on the reef. The
+water's motion is known in JS too, agreeing with what's drawn, for walking, swimming and sound. **Done
+when** the placeholder water is gone and the lagoon reads as tropical at every time of day.
 
-Sub-steps, in order. Each one ends with `npm run verify` green and `main` shippable, and fixes whatever it
-made untrue in CLAUDE.md. The water turns clear first, while it is still flat, because that changes what
-every frame costs and what the terrain has to draw. Then what the sea knows of the island, and the waves,
-which the user judges in motion before anything is tuned on them. Then the light on the water before its
-colours, and the surf last, as it builds on all of that. The last capture before this stage (`full`,
-2026-10-29; the game's pixels haven't changed since) shows a flat cyan band with no waves, no seabed and no
-surf; the sun's path in `into-the-sun` lying on the wet sand and stopping dead at the water; no headland
-mirrored beside it; `horizon`'s sea a flat brown under an orange sky, with a hard line between them; and
-from the `overview`, a glowing ring round the coast.
+- [x] **6.1 Clear water.** Light dims and takes on colour along its way through the water, so the lagoon,
+  the channel, the pass, the bommies and the drop-off read by their depth. The light from below over water
+  follows the depth.
+- [x] **6.2 What the sea knows of the island** (`water/sea-map.js`): depth, the shore's distance in metres on
+  the drawn ground and the way inland, the reef's crest, how much swell and chop reach each point, and when
+  the surf arrives. Ready before a capture starts, kept across quality changes, shown on the map. The GPU
+  and JS both read it.
+- [x] **6.3 Waves.** Swell, chop and ripples, each scaled by what reaches a point, with gusts. JS knows the
+  surface (`ctx.water.heightAt`, `over`) to within 0.25 m of the GPU; rough walking floats on it.
+- [x] **6.4 The mirror.** The sky as seen from the sea, with the sun's glow. A glitter path of glints that
+  melt into a band with distance. The far sea keeps the near sea's average light and fades into the sky
+  with no seam. The land is mirrored by a compute pass, so plants will show in it for nothing.
+- [x] **6.5 Seabed and colour.** The water draws the seabed itself (`water/water-seabed.wgsl`): rippled sand,
+  coral and rubble on the reef and the bommies, weed beds. Turquoise to deep blue by depth.
+- [x] **6.6 Surf on the reef.** Each wave is a train from the open sea that bends round the reef and breaks
+  by what the water takes from it, in sets with lulls. Foam is a surface of its own (`textures/foam.js`)
+  that Stage 7's foam can join. `ctx.water.surfAt(x, z, t)` is for sound. Tuned to the user's picks
+  (Decisions).
+- [x] **6.7 The look, at every hour.** Every view at its own time, at midday and at golden hour, and `beach`,
+  `horizon` and `into-the-sun` at the four named times. Outside reviews, and the user's looks from the air
+  and swimming: each finding was reproduced in a view of its own (disabled: `air-*`, `reef-*`,
+  `sun-over-hills`) before it was fixed.
 
-- [x] **6.1 Clear water.** `water/` replaces the placeholder, still flat. Light dims and takes on colour
-  with how far it travels through the water, so the lagoon, the channel, the pass, the bommies and the
-  drop-off read by their depth, from the beach and from above. The seabed and the rocks under water are
-  back (both TEMPORARY culls go), drawn only as deep as the water still shows them, in plain albedos for
-  now and at a cost well below the land's. The haze isn't added twice. Past the drawn seabed the sea looks
-  as it does over deep seabed, with no seam where the grids end. The light from below over water follows
-  the depth: the lagoon over white sand sends up more than the deep sea. Check: a new fixture proves
-  `frame.opaque.depth` and the water's dimming against a JS twin at known depths, seen red on a deliberate
-  mistake; the light fixture shows the lagoon's light from below; teardown and the quality change stay
-  clean; the `overview`'s glowing ring is gone; every view within the frame budget, and what taking out
-  the culls cost is recorded.
-- [x] **6.2 What the sea knows of the island.** At every point of the water: how deep it is, how far the
-  shore is in metres on the ground and which way it lies, the same for the reef's crest, and how much of
-  the open sea's swell and of the wind reach it, sheltered by the reef and the island. All of it comes from
-  the ground as drawn, so the waterline it knows is the one on screen (Known from Stage 3), over the whole
-  island, finer where the eye goes. The waves, the surf and Stage 7's run-up, foam and caustics read it on
-  the GPU; walking, swimming and sound read it in JS. It is ready before a capture starts, survives a
-  quality change without being worked out again, and shows on the map. The pictures don't change. Check:
-  invariant tests over seeds 1–20, each seen red once: the distance grows by about a metre a metre and is
-  zero on the drawn waterline, its direction leads to the nearest shore, the lagoon lies sheltered behind
-  the reef, a pass lets more through than the reef beside it, and the open sea on the side the swell comes
-  from is fully exposed; the GPU agrees with JS at sample points, proven on a deliberate offset; boot's
-  time before and after.
-- [x] **6.3 Waves.** The sea moves: a long swell from the open sea that the reef stops and the lagoon barely
-  shows, and wind chop over all of it, lighter in the lee, blowing the way the sand's wind does. No tiling
-  from any view, no visible mesh, nothing popping or swimming as the camera moves, and the surface holds up
-  from a swimmer's eye, 40 cm above it. JS knows the surface's height and movement at any place and time,
-  agreeing with what is drawn, with room for other kinds of wave to join (Stage 7's run-up). It looks as
-  good hours into a session as at the start. Rough walking floats on it, so the user can feel it. Its knobs
-  go in the presets. The motion strip of a water view spans more than a wave (2.5 s today). New views: a
-  swimmer's in the lagoon, and one over the open sea outside the reef. Check: the GPU and JS agree on the
-  surface at sample points and several times, proven on a deliberate mistake; invariant tests that waves
-  die down in shelter; a frame reached by jumping in time matches a fresh load, also hours in; shimmer and
-  cost within their limits. Then the user watches the sea in the running game and runs the benchmark:
-  everything after is tuned on these waves, and the numbers decide how far 6.4 goes.
-- [x] **6.4 The mirror.** The water mirrors what stands over it. The sky with the sun's glow, as seen from
-  the sea and not from the camera's height (Known from Stage 2). The sun as a path of glitter: separate
-  glints near the camera, held in brightness as the sky's disk is, melting into a smooth band of light
-  with distance, never sparkling or aliasing. The far sea keeps the near sea's average light and dissolves
-  into the horizon with no seam at any hour. The headland, the hills and the rocks lie dark in the water
-  beneath them. The sun's path runs on across the wet sand instead of stopping at the waterline, and the
-  island's shade takes it off the water it falls on. How much land the mirror holds, and in how much detail,
-  is weighed against the benchmark. Check: `horizon` and `beach` at the four named times show no seam,
-  measured across the horizon; a fixture holds the far sea's average light to the near sea's at the same
-  angles, seen red on a deliberate mistake; shimmer turning and moving within its limit at every water view;
-  `into-the-sun`, `shoreline` and `rocks` show the headland mirrored; the runtime time check passes.
-- [x] **6.5 Seabed and colour.** Under the water the ground has surfaces of its own, which only the water
-  shows: rippled sand on the lagoon floor, rubble and coral on the reef and the bommies, darker patches that
-  break up the turquoise. They waver as the surface moves over them. Colour runs from clear turquoise to
-  deep blue by the depth, at every hour. The seabed leaves room for Stage 7's caustics. Check: the swimmer's
-  view and `beach` hold up with no tiling; the seabed shows no shimmer through the water; what stands above
-  the water (a rock's edge) doesn't bleed into the seabed seen beside it; cost within its limits.
-- [x] **6.6 Surf on the reef.** The white line. Waves rise, steepen and break along the reef's crest in
-  sets, each line of white drifting shoreward off the crest and fading, thin or gone in the pass and in the
-  lee, as far as the swell reaches them. It reads as a white line from the beach, holds up from 30 m, and
-  shows as a fine line from the overview. Foam is a surface of its own under the shared light, built so that
-  Stage 7's foam lines and lingering foam can join it. JS knows where the surf breaks, for sound (Stage 15).
-  New view: the reef through a telephoto from the beach. Check: invariant tests over seeds: surf only where
-  the reef is shallow and exposed, none in the pass; the reef view's motion strip shows waves breaking and
-  drifting; no flicker in its shimmer score; cost within its limits. Then the taste calls, side by side:
-  the water's colour and clarity, how calm the lagoon lies, how big the surf is, and how strong the glitter,
-  each on every view it changes, at midday and at golden hour.
-- [ ] **6.7 The look, at every hour.** The user's picks go in. Every view at its own time, midday and golden
-  hour, and `beach`, `horizon` and `into-the-sun` at the four named times, against the Done line and the
-  vision's water. An outside review of the pictures and motion strips, and what it finds fixed or listed.
-  Each preset within its frame-cost limits, and the stage's cost in its notes. Check: the Done line; the
-  user watches the sea in the running game and runs the benchmark.
+Research behind it: Tessendorf 2001 and Horvath 2015 (the spectrum), Bruneton et al. 2010 (the far sea),
+Maritorena et al. 1994 (clear shallow water), Cichocki 2017 (pixel-projected reflections), Mitsuyasu et al.
+1975 (how short waves spread).
 
-- Known from 6.1–6.3 (2026-10-30), built as one stretch, with one `verify`; the user's look at the motion is
-  still to come. Research behind the choices: Tessendorf 2001 and Horvath 2015 (the spectrum), Bruneton et
-  al. 2010 (the far sea), Maritorena et al. 1994 (clear shallow water), and shipped and open water (Sea of
-  Thieves, Crest, Poseidon's cascades of bands that don't overlap).
-  - The colour (`water/optics.js`): light dims per channel along its way down and back, each way bent by the
-    surface; what the seabed sends back is what is left, and the water's own light makes up the rest. A film
-    of water loses nothing at its surface and a pane its share, or the waterline shows a dark band. The
-    light from below over water follows the same model (`world/albedo.js`).
-  - The bent ray (`water/water-seen.wgsl`): it finds how deep it goes from the sea map's depth, not from the
-    opaque scene, whose depth jumps far off when the eye's line runs nearly along a sloping seabed, then
-    looks the seabed up where it lies on screen. Off the frame's bottom edge it reads the edge (a swimmer's
-    view has the most of this, and a seabed with no detail hides it until 6.5); a filtered read next to what
-    stands above the water takes in a little of it (6.5's check). Anything under the sea has no sheen and no
-    haze, which change over the pixel: at the pixel's centre they stair-stepped the waterline.
-  - What the sea knows (`water/sea-map.js`, 4 m apart over the coarse grid, 1024 x 1024): shore distance and
-    way, depth, reef distance, swell, wind, surf. The swell runs in over a fan of directions, held by the
-    water under it: what the crest takes is the surf, so the surf has no line of its own to lay out, and the
-    pass and the lee follow. Keep `world/heightmap.js`'s grids' lines: reading their samples is what makes
-    it 0.7 s on one core, on the main thread at boot, against 2 s by sampling. It could go to a worker if
-    boot needs it. Its fan's five directions leave faint rays far in the island's lee.
-  - The waves (`water/spectrum.js`, `waves.js`): three cascades of 800, 120 and 17 m, 128 x 128 (64 on low),
-    in one compute pass, 48 dispatches and the mips, only when the time changes: the swell, the chop's long
-    waves and its ripples, each scaled by how much reaches a point, so the sea's character changes with the
-    map without any more transforms. The ripples have a slope of their own, as the chop's height says little
-    about what breaks the sun into glints, and a second, finer read of them near the camera, which moves
-    too slowly for its size: the user's eye decides. JS sums the largest 400 waves a cascade: it is 0.16 m
-    off the GPU at worst (limit 0.25 m), as it leaves out the small waves (2% of the swell's power).
-  - The mirror came forward from 6.4, so the motion is judged nearly as it will look: the mean Fresnel of
-    a surface with slopes it can't resolve, and a sun of two Gaussians over the slopes lost to filtering.
-    A low sun's path is narrow: its width goes with the sun's height. Its ceiling (`glitterCeiling`) flattens
-    its middle; it needs breaking up, which is 6.4's. Rows of far water a pixel tall crawled under a telephoto
-    (5.7% in `horizon`): slopes are read at a level by the pixel's longer side, softer as it stretches (0.09%),
-    which also costs a third less than anisotropic reads on SwiftShader.
-  - Bare rock under rocky shores reads as dark patches with a hard round edge from above (`island.js`'s
-    `beach` share): 6.5's. Bommies read too dark for the same reason. The lagoon is taste: its colours are a
-    first guess, for 6.6's side by side.
-  - Cost on high: 2 more render passes (9), a compute pass, textures 141 to 163 MB (the sea map, with mips,
-    and the waves), render targets 153 to 180 MB, 200 to 400 k more triangles (980 k on `overview`). A GPU
-    fixture each for the bent ray and optics (`water`) and for the waves, map and surface (`waves`).
-    SwiftShader frames, in the Linux container, before and after: `beach` 2.1 to 4.3 s, `horizon` 0.9 to 1.9,
-    `rocks` 4.1 to 5.4; new `open-sea` 4.8. The user gave leave to raise the budget, now 6 s (2026-10-30), as
-    long as things stay as cheap as they can: most of what is left is the seabed being drawn at all, which
-    6.5's cheap surfaces should win back.
-  - Flaws seen so far, kept for the steps after: a thin grey band still lies along the waterline in `beach`,
-    the sky mirrored at a grazing angle over tan wet sand (Stage 7 may own it); near water in the swimmer's
-    view shows little of the seabed; the swell hardly reads from above in stills.
-- Known from the user's first look at the sea (2026-10-30), from the air: blocks under the water, jagged reef
-  edges, ground seeming to stand above the water, white dashes on the sea. Four views were shot from the air
-  to match, and all of it reproduced. The causes, and what took them out, which brings 6.5's first half forward:
-  - The seabed was the land's shaders on the land's mesh: a piece of terrain near the surface drew rock's
-    relief or sand's detail and a piece wholly under it didn't, in blocks; far off, its coarse levels jagged
-    the reef's drop-off, and the crest, 30 cm under the sea, showed in the troughs. Now the water draws the
-    seabed itself, as a function of where each bent ray lands (`water/water-seabed.wgsl`), and terrain nodes
-    wholly under the sea aren't drawn at all, which also takes their triangles out of every frame. The ground
-    gives way to it over its first 5 to 25 cm under the sea; below that its alpha says the water takes nothing
-    from it. Rocks still come from the opaque scene, by that alpha; what stands above the water can't bleed.
-    The sky moved to the after-opaque pass, so it isn't in what the water reads and isn't drawn where the sea
-    covers it.
-  - The depth came from the sea map, 4 m apart, which aliases the reef's roughness into rows and weaves. Near
-    the camera it now comes from the 2 m grid's own samples. A ray's depth takes two steps, so on a drop-off
-    they meet halfway instead of flipping between its top and foot.
-  - The white dashes were holes in the sea's surface: two levels of its mesh read the waves at different mips
-    where they meet. Now the mip morphs with the vertices. The tool's `sea surface` check counts what is left
-    on the far plane under the horizon.
-  - The reef looked like land because it was pale sand at 30 cm. It has its own look now: mottled coral and
-    rubble from the crest back onto the flat and on the bommies, darker beds of weed on the lagoon's floor, sand
-    ripples up close. The mottling is a seventh layer of the surface tiles, read at two sizes that never line
-    up, so far off its mips leave the average; a shader's worth of noise would cost several times as much per
-    pixel. Colours are a first guess, for the side by side. The water now uses all 16 textures a shader can
-    count on, so Stage 10's cloud shadows, one more in group 0, will have to free one.
-  - A rocky shore's rock now runs out under sand a little way off it: it used to reach across the lagoon to the
-    reef, as dark lobes with a hard round edge from above. The bent ray's lookup of what stands on the seabed is
-    unfiltered, so the fixture's landing limit is a far pixel wide (3 m); it stays 0.04 m on how deep.
-  - Cost on high against 6.3: triangles down wherever the sea fills the frame (`overview` 980 k to 777 k), textures 163
-    to 168 MB (the new tile layer), two terrain pipelines fewer. CI's captures take 15 minutes with the two new
-    views and the new check, of its 30. `air-headland` warns of shimmer (0.66%, limit 0.5%): the sun's glints
-    seen from 300 m, for 6.4's glitter to answer.
-  - New view: `air-pass`, and `air-headland` looking straight down; `air-shallows` is kept, disabled. Left as they
-    are, being the island's and not the water's: the pass's straight wall and the reef's sharp ends beside it
-    read as geometry from straight above (Stage 3's layout); the rock of the headland's far side lies almost
-    black in the island's shade (Stage 5's). Rocks cast no shadow on the seabed any more, as the water reads no
-    shadow maps: 6.5's second half, if the `rocks` view shows it needs them.
-- Known from the user's second look at the sea (2026-10-30), who liked the waves' motion: a grid in the sun's
-  reflection as the water moves, a rock's ghost floating over deep water, and the question whether the big reflection
-  from above looks natural. It didn't. Each measured or tried before it was fixed; `air-sun`, `lagoon-sun` and
-  `air-rocks` are new views, `sun-close` is kept, disabled.
-  - The grid: the sea repeated itself. Its fine detail was as alike as 0.19 one ripple tile (17 m) away and 0.13 one
-    chop tile (120 m) away, about 0 at the lags between; nothing was tied to the texels or the mesh over time. The ripples'
-    tile now wanders where the fragment reads it, and from high up the chop softens into what the surface mirrors: at
-    most 0.024. The `sea repeats` check holds it, seen at 0.66 with the wander taken out.
-  - Zigzags in the glitter up close: a bilinear read's corners along the rows of texels wider than a pixel. Those are
-    read as a cubic B-spline now, the swell's waves are kept many of its texels long instead (`swell.shortest`).
-  - The ghost: the water took whatever the pixel its ray lands on shows, and a pixel can show a rock far nearer the eye than
-    the ray ever comes. The ray now walks over the opaque scene and takes only what it goes behind on the way down. The
-    water fixture has a deep, level seabed for it, seen wrong on the old ray (lands 15 m off, 7 points read the rock).
-  - The reflection from above: a flat grey with dark cracks. The diamond in it is not a fault of the drawing: the same
-    shape comes from the waves summed in plain JS, the chop's directions making two crossing families of crests at the
-    patch's top and bottom, near the world's axes only by the wind's chance; averaged over time the patch is a smooth oval.
-    It softens with the chop from high up, and the sun's light in the water may reach 4, not 1.5, so it stays white.
-  - Found on the way: the second read of the ripples was never finer than mip level 2.4 (its level came from one already
-    held at 0), so it never added its fine detail: what made close glints look out of focus. A crest's squeeze
-    also worked axis by axis, doubling it for waves along an axis; little to see, but it now favours no way.
-  - Tried and dropped: a mirror sharp up close (`fineSlopes` 0.0001) and a ceiling of 6 cut the sun's path short at low
-    sun and left a flat white patch in `swimmer`; a mip level softer ripples from high up, half a level now, fogged the sparkle.
-  - Cost on one desktop GPU, old and new side by side at 1600x900: 2.2 to 2.9 ms on `lagoon-sun`, where it reads most;
-    the other water views differ by at most 0.3 ms, about what they vary by run to run. CI's captures take 18 minutes of its 30. Up to 14 reads of the waves
-    per pixel right by the camera, 4 far off, and at most 5 of the opaque depth. The benchmark on a mid-range laptop still has to say.
-  - Left: `swimmer` still has a white patch near the camera at this `t`, smooth where calm water holds few ripples (6.4's
-    glints, moved up from a thin streak); from under about 40 m the crossing crests still show faintly at the patch's ends, as a real sea's would.
-- Known from 6.4 to 6.6 (2026-10-30), built as one stretch after the user saw no more bugs in the sea and ran the
-  benchmark on it (`high`, 2562 x 1237, one desktop GPU): 60 fps throughout, GPU 6.95 ms at the median, 10.3 at worst
-  (`rocks`), about 5 where water fills the frame. That leaves room for a mirror of the land, not for a second pass
-  over the land's geometry, whose cost would grow with every plant to come.
-  - The sky it mirrors is the sky from the sea: a second layer of the sky-view table, made when the time changes, with
-    the sun's glow worked out from the sunlight table, so neither takes a texture. Three rays through what a pixel's
-    waves tilt where the eye looks low, one where it looks steeply down (`mirror.steep`): the sky by the horizon is far brighter
-    than at the height of its mean, which is what left the near water black in `into-the-sun`. One ray at moderately low angles
-    saved a little more and flipped the land's image pixel by pixel as the eye moved (2.46% shimmer in `open-sea`); the three
-    read it at their nearest cell but for the middle one, between cells, as all three between cells cost 1 ms more there.
-  - The far sea keeps the near sea's light: `seaMirrored` is now Schlick's over Gaussian slopes in closed form, held
-    down towards the horizon. Bruneton's fit, which the `sea light` check showed mirroring a third too little 15 degrees down,
-    is the part held down. The check looks from low and high at the same angles with no air and no ceiling: 4, 12, 17 and
-    17% apart (limit 20), 92% with what the far pixel's waves do left out. On the sun's path it is a mean over few
-    frames, so it is the coarsest of these.
-  - The rim of the sea goes over into the sky just above it, by the angle over it (`horizonFade`), which holds at any height of
-    the eye. The `sea seam` check: the old sea jumped 71 levels in `beach` and 110 in `horizon`, now at most 20 (limit 25) at the
-    four named times. No sun's glow in that colour: the sky's aureole goes to nothing right at the horizon, and it made a bright line.
-    Only far off, as a share of the way to the rim: by the angle alone, a wave right by a swimmer's eye turned to sky.
-  - The land in the water: pixel-projected reflections (Cichocki 2017; `water/mirror.js`). A compute pass between the opaque
-    scene and the water throws each cell of what stands above the sea (2 pixels on high) to where its mirror image lies, the
-    nearest winning by `atomicMax` on a key, so whatever order they land in; the water reads the keys from a storage buffer and
-    the colour from the opaque scene, so it takes no texture and costs the same however much stands there: plants will
-    show up in it for nothing. Where a ray lands on the image depends on how far it goes, known from the key, so nothing moves
-    at a rock's foot while a far hill stretches down the water. What is off the frame can't be mirrored: a hill's image
-    fades away over the frame's top 8% rather than ending in a line, and gets shorter as the eye looks down. The water fixture
-    holds it to JS: cells 1.2 off where JS mirrors them (limit 2), 14.5 for a mirror half a metre off the sea, no holes; and
-    what the water reads of it, in full on all 189 points that mirror the block and on none of 17 343 behind it (seen at
-    4 with that test taken out, the pale rectangle it made behind `rocks`'s far point).
-  - The glints: a tile of sparse spots (`textures/glints.js`, an eighth layer of the surface tiles, 6 MB) read three times, drifting
-    through each other, lit where their spots meet; flashes and how much of the pixel they cover are kept apart, so the
-    ceiling leaves their edges soft. The GPU's filtering melts them into the band, the same on average, with nothing to
-    pop. Tried first and dropped: cells of a hash, each a count of facets, which looked as good in a still but shimmered
-    at 2.41% in `lagoon-sun` and 3.06% in `air-headland`; the tile, 0.09 and 0.22%. The reads are skipped where there is
-    no sun to speak of. The sun's path comes to the shore because ripples now hold down to 30 cm deep (`ripplesDepth`, 1 m
-    before), so it runs on into the glow on the wet sand, whose own shader didn't change.
-- 6.5's second half came to little once the first was done: no tiling in `swimmer`, `beach`, `air-pass` or `overview`; no view
-  of the seabed over shimmer's limit; nothing above the water bleeds into the seabed beside it (the ray's walk); and `rocks`
-  shows no need for rocks' shadows on the seabed. All 16 textures stay in use: Stage 7's caustics have to be another layer of the
-  tiles, or worked out, and Stage 10's cloud shadows still have to free one.
-- 6.6, the surf, as first built: a hump standing up over the last 25 m to the crest, on timing of its own, its foam by the distance to the crest. It didn't survive the user's look (below); what stands now is written there. New views: `reef`, `surf`. `ctx.water.surfAt(x, z, t)` is for sound.
-- An outside review of the code (2026-10-30) found what stills couldn't: the fade into the sky went by angle alone, so a wave by a swimmer's
-  eye would have turned to sky; dark specks along mirrored edges, where MSAA had averaged the land with nothing; a read off the frame's
-  last column at some widths; keys overflowing on screens past 5K, now a larger stride there. All fixed, and its weak checks tightened.
-- Cost on high against 6.3's fixes, the same desktop GPU side by side at 1600 x 900: about 1 ms more where water fills the
-  frame (`beach` 3.4 to 4.3, `into-the-sun` 4.3 to 5.1, `open-sea` 4.2 to 5.3, `swimmer` 2.5 to 3.6), a little more looking steeply down at
-  it (`air-sun` 2.5 to 3.8, `lagoon-sun` 2.6 to 4.0), 0.3 on `rocks`. A compute pass, one 3 MB buffer, textures 168 to 174 MB; triangles, passes
-  and pipelines unchanged. Two more views and three more checks take CI's captures to 24 minutes, its whole job to about 27: its limit is now
-  40 minutes (`deploy.yml`), as a slower runner shouldn't stop a publish. SwiftShader frames, which run every branch: `rocks` 7.4 s, `surf` 6.7,
-  so the capture budget is now 8 s, by the user's leave (2026-10-30). The next stages should look for time to win back in both.
-- The user's picks (2026-10-31): W=b, the water clearer and more turquoise; C=a, the lagoon as it stood; S=a, the surf as it stood; G=c, stronger glitter (`glitterCeiling` 8). In. (`screenshots/picks-6.6.html`, by a scratch script, not in the repo.)
-- Known from the user's look at the sea with those picks (2026-10-31): waves that came out of nowhere, a line along a wave's top where the surf began, too much surf for such small waves, the lagoon as rough as the ocean, a snake's pattern from above, and the sun near the eye as little points. Each from a cause in the code:
-  - Out of nowhere: the wave was a separate thing from the swell behind it. Now each is a train from the open sea (`water/surf.js`, GPU twin `water-surf.wgsl`): a long low line hundreds of metres out, fading into the open sea over `surf.fades`, arriving when the sea map says. New in the map, a third layer: `late`, `wayA`, `wayO`, `speed`: the speed from the depth by the dispersion relation, the arrival by fast sweeping of the eikonal equation over it (`arrivals()`, 150 ms), so crests bend round the reef and bunch up over the shallows, with no timing or peel of their own left to tune. It stands taller as it slows (`shoals`), peaks up with a steep face by the reef, and goes round again as it dies on the flat.
-  - Too much: what breaks is now what the water takes from each wave: a wave's size in its set and along its length less the swell's own reach there. A full wave breaks seaward of the crest and whitens it through for a second or two, then lace; a small one breaks on the crest alone; the smallest not at all, so there are lulls. At any one spot 15 of a set's 40 are big enough to whiten the crest, the rest lace or less. The solid strip is gone, from above a ragged line. A wave's height at the break stays the pick's, about 0.9 m.
-  - The line along a wave's top was whitewater's reach for what stands off the water (`stands`), applied up close at a grazing angle to the far side of a crest: it now starts from 60 m off. Another seam, found by the review below, jumped the foam 0.61 across the crest from far off; a check now holds it to 0.02 (it reads 0.0002).
-  - As rough as the ocean: they were, on three counts. The ripples reached 0.6 in the lagoon and about 0.7 just outside it, as the wind blows off the land there; the chop was mostly gone from high up, leaving only the ripples, the same on both sides; and on the windward side the chop crossed the reef untouched. Now the open sea's own chop comes in with the swell and breaks on the reef as it does (`cascadeReach`, swell squared), the chop stays up from any height, its tile hidden by a wander in shape as well (`chopWander`, in JS too), and shallow water limits how far the wind's chop can have grown, by the square of the depth (`wind.grows`), so it starts over behind a crest, whatever the grid. No water behind a reef is now as rough as the sea by wind (0 of 16 176 samples; about half of them with the fetch merely scaled by depth, which also went by the grid), and 57 by swell, right at the pass.
-  - The snake: band-limited noise is a labyrinth, and that is what the ripples were from above, once the chop had gone and mips had taken what is under a pixel, all lying across the wind. Short waves now spread wider, as measured (`lobeAt`, Mitsuyasu et al. 1975), down to `chop.spreadLeast`, with the chop kept; and gusts (`waves.gusts`, `seaGusts()`) roughen and smooth the ripples in drifting patches a hundred metres and more across.
-  - Little points: the glints' tile, close enough to see its round spots. Each read now gives way once a pixel is under 0.4 of its cells (`GLINT_SAY`), its spots no more than a point or two (sizes 5.3, 7.1 and 9.7 m: no fine read, whose spots made the clusters); nearer, the waves' own shapes mirror the sun. Right by the eye a third read of the ripples, the capillaries, for the sun's mirror alone, breaks what would be a soft blob.
-- An outside review of this rework (2026-10-31), of the code and of frames over time, found, all fixed: the ceiling took the sun's light with it, leaving a gap in the path (1 cm pixels 0.84 of the smooth light, 3 cm 0.05): what it takes from a flash now stays in the smooth light; foam whitest where the swell ran out, then cut dead along a map cell's edge (`smoothstep` on the swell); the seam above; no filtering of the surf by what a pixel covers, against CLAUDE.md §8: past about half a wave a pixel now sees what the wave holds on average, its slope gone, so it doesn't blink. And from `overview` no white line, which 6.6 asks for: thin foam far off rounded down to nothing; now it covers as much as there is foam.
-- Tried and dropped, each measured: the outer two mirror rays counting for less (`open-sea` 0.54%) and held to the middle one (1.48%), as it is the middle one that flickers; sharper `fineSlopes` with a softer mirror (`swimmer` moving 0.61%, 0.44% with the old value now that capillaries break the blob); ripples held on the crest, for the dark line below, which turned out not to be the water's.
-- Tests: the new ones went red under 13 deliberate breaks of `surf.js`, `sea-map.js`, `surface.js` and `spectrum.js`, once the baseline was green (the first run wasn't, which hid three). The `waves` fixture holds the GPU to JS at 1024 points where it breaks: foam 0.003, height 5 mm, slope 0.005, and the surface 0.19 m (limit 0.25).
-- 6.7: every view at midday and golden hour and `beach`, `horizon` and `into-the-sun` at the four named times, seen. Shimmer on high: `open-sea` 0.48%, `lagoon-sun` 0.33, `swimmer` moving 0.44, all within the limit; no warnings. On `low` and `medium`, no frame-cost limit passed; `open-sea` shimmers at 0.96% and 0.72%, its land's image in coarser cells. Sea light 2.7, 14, 5 and 12% apart (limit 20); seam at most 22.5 levels (limit 25).
-- Cost on high, the same desktop GPU side by side at 1600 x 900, against 6.6 as first built: `beach` 4.65 to 4.07 (noise), `into-the-sun` 5.07 to 5.26, `open-sea` 5.19 to 5.76, `swimmer` 3.64 to 3.95, `air-sun` 3.30 to 4.44, `lagoon-sun` 4.34 to 4.36, `rocks` 5.61 to 5.68, `surf` 4.98 to 4.89, `overview` 6.04 to 6.40. Textures 174 to 184 MB, the map's third layer. The file 1.08 MB. CI's captures 26 minutes, its whole job about 29 (limit 40). The user's benchmark just before this (`high`, 2562 x 1237): 60 fps, GPU 8.32 ms at the median, 11.08 at worst (`rocks`). The next stages should look for time to win back in CI and SwiftShader.
-- Flaws, for the user's eye. Motion can't be judged from stills: the waves' timing, how long a glint lasts, and whether the gusts read as wind are the user's to say. From straight above, a wave out in the blue barely shows until it whitens. Near foam smears at a low angle, and from a low eye the middle distance reads soft: the slopes are read by the pixel's longer side (`sharper`). No spray, and a wave's face is a surface with no curl. A thin dark line along parts of the reef's crest, seen in the sun's glare from the air: the seabed's own step, 0.2 to over 4 m deep within 4 m (`overview`, and before this rework too). Dark specks at the crest as the water draws down, like seals from the air: probably rocks, 24 of the 61 within 40 m of it having their tops within 40 cm of the still sea, by the review's count. The land's image in the water stair-steps slightly right by a swimmer's eye. Looking steeply down at golden hour (`air-sun`, `air-headland`) the sea is nearly black: right by the numbers, not a wallpaper. In `into-the-sun` the near water is dark beside a bright beach, a hard meeting Stage 7's wet band may own. The reflection gets shorter as the eye looks down, as above. Whether all this holds on a mid-range laptop is the benchmark's to say.
-- A second outside review (2026-10-31), of the code, the checks and the captures. Each finding checked before it was fixed:
-  - Fixed: the opaque scene resolves for the water by a pass of its own (`post/opaque-resolve.wgsl`), its samples weighted by their alpha, so the ground the water takes nothing of (0.25 to 2 m under the sea) no longer adds its colour to a mirrored rock's edge (which `water-land.wgsl` divided by alpha, up to 4 times too bright) nor to a seabed rock's edge (counted by its coverage squared, a dark ring). Glitter is held back by the land in the mirror as the sky is. The waves are read half a texel on, where their texels hold them: the surface drawn lay 3.1 m (swell) and 0.47 m (chop) off JS's. The seabed culls follow whether the eye is over the water's surface (`ctx.water.over()`, JS's sum with 0.3 m of room), not the still sea, so floating in a swell's trough keeps them. On `low` the ripples' band starts where the chop's 64-texel grid ends (1.6 rad/m, not 2.5), so no band of the chop is lost. Past the sea map's square the open sea takes over within 2 km (`map.open`): the map's edge no longer runs on to the horizon as a lane of weak swell and a stripe of surf. A failed waves pipeline now reaches the error overlay. The sea's mesh reaches 131 km from the origin, past the far plane: its rim fell short of the horizon from above 340 m. Smaller: the swell's direction is one constant; the map's half floats round to the nearest; a failed sea map is tried again on a quality change; too many water nodes throw; `surfAt` gives a slope before it's ready.
-  - Checks that couldn't fail now can: `looped` gives the GPU the time a loop on unwrapped (its phases are reduced exactly by each wave's whole turns, `waves-evolve.wgsl`, so they no longer reach 16 000 radians); `sea surface` looks from two rows under the rim of the sea down, the far sea's levels included; `seaRepeat` with no pixel pairs is NaN, which fails; captures' GPU times move the time on each frame, so they hold the wave FFT as the game's do (earlier side-by-side GPU costs in these notes left it out); the water fixture judges the mirror at 2, 3 and 4 pixels a cell (0.70 cells off, limit 2). The sea-map tests run their invariants on seeds 1-20 and on the game's own map (4 m over both grids, its seed), with the game's swell way and surface.
-  - Measured against the review: the half texel was not most of the surface's gap. Against the whole sum of every wave in JS the GPU is 0.031 m off (half a texel off: 0.137); the game's 400-wave sum is 0.157 m off (limit 0.25), the 2% of the swell's power it leaves out. The fixture now holds the GPU to the whole sum (limit 0.06) and the game's sum to its own limit.
-  - Improvements taken: the surf's set rhythm, crest variation and front wander are in `config.water.surf`, read by both twins; the far foam's mean counts what runs ahead of a crest (it was 15% short); the light from below runs on across the waterline from the wet sand into the sea's over the ground's fade (`world/albedo.js`), with no step; the gusts come round every 2 h (`gusts.loop`), so whole tiles keep them at 2.9 m/s within a degree of the wind (3.8 m/s and 13° off before); the chop's and ripples' slopes go through their wander's stretch; the sea map's mips average how deep the water is over the water alone (worked out once a seed in JS, kept across quality changes); the dead softening of the chop from high up is gone. Into a low sun foam glows (`surf.backlit`: a quarter of the sun's light through its thin tops, Henyey-Greenstein 0.6 onwards): the reef's line in `horizon` was a dark scratch, as foam was lit only as a diffuse surface by a sun a degree up while the sea round it mirrors the bright sky; it now reads as light as the water, with the wave's face below it still darker, as in real surf against a sunset. Elsewhere it moves foam by 4 levels at most.
-  - Cost and shimmer. SwiftShader frames on a 4-core cloud machine, old and new one after the other: `overview` 9.9 to 9.3 s, `rocks` 9.8 to 9.3 (every view on that machine is over the 8 s budget, before as after). One pipeline more (48), the opaque scene's resolve; 15 to 20 k triangles more, the sea mesh's outer level (a cull of its nodes past the horizon would win back far more). The sea map's mips are worked out in JS once a seed, about what its upload took before, and kept across quality changes. Shimmer on high: `open-sea` 0.50%, at its limit (0.48 before), `lagoon-sun` 0.45 (0.33), `swimmer` moving 0.37 (0.44): the waves moved, and their slopes now take the wander's stretch. The `errors` check raced the validation error it provokes, which under the other checks' load came after the device was gone: it now waits for it. No GPU time here: the benchmark on real machines has to say.
-  - Still there, left for Stage 7's foam by the user's pick (2026-10-31): the line along a wave's top where the surf starts, which the user saw before this review. It is the whitewater standing off the water (`surf.stands`, `water-surf.wgsl` `hides`): from 60 m off it cuts the swell and shifts foam's reach in a band fixed to the reef's crest, so between about 60 and 200 m every breaking wave is white from a hard straight line along its top, where with it off the foam lies as lace on the face (frames at 100 m, on and off). Holding it to where a pixel can't tell the waves apart takes the line away, but also the reef's white line from the beach between breakers (`reef`, `beach`), which leans on it. The likely fix: whitewater that stands up as geometry (foam lifting the surface), so it hides what lies behind it itself, with no band to paint.
-  - A code review of these fixes (2026-11-05), each finding checked. Fixed: the sea map's mip levels, now made in JS, threw on a side that doesn't halve exactly down to 1, so seeds 4 and 13 (1536 samples) had no sea and showed the error overlay; each level now halves rounding down, as a texture's do, an odd side's texels the mean of what each spans, and a test runs every seed's map size. The way to the shore, flipped on land by the second review, pointed opposite ways either side of the waterline, so a filtered read across it cancelled out: it is now the way inland on both sides (`inlandA`, `inlandO`), the shore `shore` m along it from either side, whole across the waterline. Smaller: the waves check their turns before making anything on the GPU, so a failure leaks nothing; `sea surface` fails when the rim of the sea leaves no row to judge; how deep the sand and rock turn to the seabed's is `config.water.seabedTurns`, read by `terrain.wgsl`, `rocks.wgsl`, `water-seabed.wgsl` and `albedo.js` alike; the sea map's texture no longer asks to be drawn into.
-  - Found and left, for later: the glitter held back by the land in the mirror may darken the sun's path where a low sun stands just over a headland (to judge in a golden-hour shot); captures' GPU times leave the water at the last time timed for the overdraw measured after (hardware only); `mesh.over`'s 0.3 m of room is tied to `inJs` (0.25) by hand; the sea map's mip levels take 0.7 s (1024 samples) to 2 s (1536) on the main thread at boot on a cloud machine, and stay cached; `over()` sums every wave each frame at walking height; nothing checks the opaque resolve's weighting with alpha under 1, nor the GPU's `seaKept` past the map's square.
-  - Not fixed, as not the water's or a taste call: the pale blocks along the rocky waterline in `rocks` are the land's own pixels (a render with the water flagged shows none of them), Stage 7's; the polka dots from `overview` are the bommies, all round and alike in size (Stage 3's layout, 6.5's coral), the user's call; the tan line round the waterline is the wet sand's (Stage 7). `surf`'s still showing no white water, the straight even band in its motion strip, the reef's line barely white from outside it (`open-sea`), the green speckle of the hills mirrored through the waves (the three rays' nearest cells, a shimmer trade measured in 6.4), and the seabed hardly showing in `swimmer` stand as listed for the user's eye. In `surf`'s still the white on the wave is the sun's glare on its face; its foam is a thin line at its foot (a render with foam flagged), so the brief's breaking wave isn't in that frame.
+**Cost**
+- On high at 1600×900: at most 83 draw calls (`rocks`), 777 k triangles (`overview`), 9 passes,
+  48 pipelines, overdraw 1.45, textures about 190 MB, render targets 180 MB. Medium and low stay within
+  their limits.
+- The user's benchmark (desktop, 2562×1237, high): 60 fps, GPU 8.3 ms at the median, 11.1 at worst
+  (`rocks`). A laptop with Intel UHD 620 at 1920×1080: 6.9 fps on high, 11.3 on medium, 17.5 on low.
+  Whether that counts as CLAUDE.md §10's mid-range laptop is the user's call.
+- The sea map takes 1.6 s on the main thread at boot; a worker would take it off if boot needs it.
+- SwiftShader frames in the Linux container, last measured at 6.6: `rocks` 7.4 s and `surf` 6.7 s against
+  the 8 s budget (a 4-core cloud machine is over it on every view). CI's job takes about 29 of its 40 minutes. Later stages
+  should win time back in both.
+- A water shader uses all 16 textures a shader can count on: Stage 7's caustics have to be another layer of
+  the surface tiles, or worked out, and Stage 10's cloud shadows must free one in group 0.
+- Shimmer stays within its limit everywhere but `open-sea`: 0.51% on high (limit 0.5, it warns), 0.72% on
+  medium and 1.0% on low, where the land's image lies in coarser cells.
+
+**For the user's review**
+- Motion, which stills can't show: the waves' timing, how long a glint lasts, whether the gusts read as wind
+  and fade well with distance, how the foam's lace drifts and opens, how the chop dies over the reef's
+  flat. And the benchmark on a mid-range laptop.
+- Taste: the sun's path at sunset is a smooth pillar rather than broken glints; from straight above
+  (`air-sun`) the sun's glare stays grey (220 at most); the ripples mirror the deep zenith as violet-navy
+  dashes on the turquoise (`beach`, `reef`); the lagoon's floor seen from 25 m (`lagoon-sun`) shows no
+  sand ripples; the bommies read as polka dots from the air (Stage 3's layout, 6.5's coral).
+- The sun's path still reads as a solid white fill in the afternoon (`glare-air`, `glare-beach`,
+  disabled), even at an eighth of its light: its core is tens of times brighter than white, as a real
+  one's is. Halving it (Decisions) only narrowed it.
+- Chevrons of sand and teal in `sand-edge`'s far bay and camouflage in `open-sea`: the outer two of the
+  mirror's three rays read the land's image at its nearest cell. Reading all three between cells softens
+  them and brings `open-sea` within its shimmer limit (0.40%) for about 1 ms more on a desktop GPU.
+
+**Known flaws**
+- Looking steeply down from the air at golden hour (`overview`, `air-headland`, `air-sun`, `lagoon-sun`)
+  the sea is near black, and at sunrise the cove lies dark in the island's shade: right by the numbers, the
+  exposure's more than the water's (Stage 12).
+- At dawn, while the reef lies in the island's shade (until about 7:30), its line from the beach is a dark
+  slate band: the breaking waves' faces mirror the sky from higher up, and foam is lit by shade alone. Into
+  the setting sun (`horizon`) the reef's line reads as a dark scar.
+- Through a telephoto from far off (fov 20 at 1.7 km) the reef's white line is a pixel thin and breaks into
+  even dashes: nothing filters it across the crest. From outside the reef (`open-sea`) it barely shows
+  white, and from straight above a wave out in the blue barely shows until it whitens.
+- `surf`'s still shows no breaking wave (the white is the sun's glare on its face), and its motion strip a
+  straight, even band.
+- Near foam smears at a low angle, and from a low eye the middle distance reads soft: slopes are read by the
+  pixel's longer side. Sparse foam lies as few small bits.
+- A thin dark line along parts of the reef's crest in the sun's glare from the air: the seabed's own step,
+  from 0.2 to over 4 m deep within 4 m.
+- The land's image breaks into patches through the waves (`open-sea`, `swimmer`), stair-steps slightly
+  right by a swimmer's eye, and gets shorter as the eye looks down (nothing off the frame can be mirrored);
+  the hills' green speckles through it.
+- Where the sun stands just over land, the land in the mirror holds back the glitter, which stands in
+  fairly for the land in the sun's way (`sun-over-hills`); a true answer would march the sun's ray through
+  the mirror.
+- At the far end of the afternoon sun's path, seen from 30 to 120 m up, a smooth bright bar over a darker
+  gap. Cause not found.
+- The swell's own reach drops from 1 to 0.2 over the drop-off within about 12 m; its long waves hide it.
+- Small: a dashed dark line along the top of a rock in 10–30 cm of water; a few dim orange glints in the
+  cove's shade at sunrise; the waterline a dashed orange line of pixels, seen from outside the reef at
+  sunrise.
+- Checks: the light fixture compares the sand with the far sea's albedo, not the lagoon's; the motion strip
+  spans 10 s, less than the swell's 11 s; nothing checks the opaque resolve's weighting with alpha under 1,
+  nor the GPU's `seaKept` past the sea map's square; captures' GPU times leave the water at the last time
+  timed, for the overdraw measured after (hardware only). `lagoon-sun` once shimmered 4.77% in one
+  `verify` on the Intel laptop and never again: to watch for.
+- Left for Stage 7: whitewater, the waterline and the seabed near a swimmer (its notes).
+
+**Tried and dropped** (each measured; don't retry without a new idea)
+- Glints as cells of a hash, each a count of facets: as good in a still, but they shimmered (2.41% in
+  `lagoon-sun`, 3.06% in `air-headland`, against the tile's 0.09 and 0.22%).
+- One mirror ray at moderately low angles: the land's image flipped pixel by pixel (2.46% in `open-sea`).
+  The outer two rays counting for less, or held to the middle one: worse (0.54%, 1.48%).
+- A mirror sharp up close (`fineSlopes` 0.0001) or a glitter ceiling of 6: they cut the sun's path short at
+  low sun and left a flat white patch in `swimmer`. Softer ripples from high up fogged the sparkle.
+- Judging the land in the sun's way by its height along the sun's way in the mirror: wrong at 42% of the
+  points in and round a known shadow (the way it is now, 36%).
+- Foam's holes from the seabed tile's cells read as a regular honeycomb. Foam lit by the sky on faces
+  turned to the eye, or thinning at its holes' edges: barely changed, and thinned the reef's white line.
+- The whitewater band gated by the crest's own swell took a fifth of the reef's white line from the beach.
 
 ### 7. Shoreline (the hero)
 
@@ -1471,29 +356,34 @@ from the `overview`, a glowing ring round the coast.
   mirror-like, and dries slowly after each wave. Caustics dancing on the shallow seabed. A small shore
   break.
 - Expect several sessions. Split this stage into sub-steps.
-- Known from Stage 3: the coast's distance (`island.sample().coast`) isn't metres; across the shore it
-  changes by 0.5 to 1.7 a metre, so bands measured in it vary in width on the ground. Near the camera
-  the waterline is drawn as a polyline 1 m a side, whose kinks show in the `sand` close-up. The cove's
-  beach is a smooth arc by design, as sandy bays behind a headland are; the small-scale life of a real
-  waterline, beach cusps scalloped by the swash every 20–40 m, comes with the waves.
-- Known from Stage 4: the sand takes any wetness from dry to a film of water (`chunks/sand.wgsl`): the
-  waves only have to drive it; today it follows the height above the sea, its edge wandering in arcs
-  (`sandReach`). Looking down, the sun's glint on the film is a smooth oval, which reads a little CG;
-  looking into a low sun, the wet band stays darker than a real foreshore, which mirrors the bright sky
-  round the sun: the film is only about 2 m wide, and the sky's light as SH blurs that glow away. The
-  wetness has one input for sand, rock and the rocks (`chunks/wet.wgsl`): drive `wetness` (and its film)
-  there, and keep `washed`, where the waves reach, which the ripples and swash marks follow, so drying
-  sand doesn't grow ripples. Spray darkens rock to 2 m above the sea (`chunks/rock.wgsl`): waves
-  breaking on it should drive that too.
-- Known from planning Stage 6 (2026-10-30), which builds for this stage: what the sea knows of the island
-  (6.2), with the distance to the shore in metres on the drawn ground, which answers Stage 3's note above;
-  a surface in JS and on the GPU that other kinds of wave can join (6.3); foam that the shore's foam lines
-  and lingering foam can join (6.6); and room on the seabed for caustics, which should dance with the waves
-  drawn above them (6.5). Stage 6 leaves the waterline where the still sea meets the ground, give or take
-  the lagoon's small waves: running up the beach, and all that the sand does about it, is this stage's.
+- Stage 6 built for this stage: the sea map's distance to the shore in metres on the drawn ground, and the
+  way inland (6.2); a surface in JS and on the GPU that the run-up joins (6.3); foam as a surface of its
+  own that foam lines and lingering foam join (6.6). It leaves the waterline where the still sea meets the
+  ground, and in shallow water a trough flattens to no lower than `shallowTroughs` of the water under it
+  (`troughFloor()`), so the waterline can't draw back: the run-up must.
+- The wetness has one input for sand, rock and the rocks (`chunks/wet.wgsl`): drive `wetness` and its film
+  there, and keep `washed`, where the waves reach, which the ripples and swash marks follow, so drying sand
+  doesn't grow ripples. Spray darkens rock to 2 m above the sea (`chunks/rock.wgsl`): waves breaking on it
+  should drive that. A real waterline has beach cusps, scalloped by the swash every 20–40 m.
+- Left by Stage 6:
+  - Whitewater should stand up as geometry (foam lifting the surface), hiding what lies behind it itself.
+    Today a band painted from 60 m off (`surf.stands`) draws a hard straight line along the top of every
+    breaking wave between about 60 and 200 m (left for this stage by the user's pick); within about 20 m
+    of a swimmer whitewater reads as matte snow with grey specks, backlit at golden hour as tan sandstone,
+    with no relief, sheen, curl or spray.
+  - The waterline: a cut with a dark gutter in `sand` and `into-the-sun`, muddy in `beach`, with a thin
+    grey band along it there (the sky mirrored at a grazing angle over tan wet sand) and a tan line round
+    it from the air. In `into-the-sun` the near water is dark beside a bright beach. Looking into a low sun
+    the wet band stays darker than a real foreshore (the film is about 2 m wide, and the sky's light as SH
+    blurs the glow away); looking down, the sun's glint on it is a smooth oval that reads CG. In `rocks`
+    the rocky waterline shows pale blocks of the land's own pixels, and rocks in the water mirror a pale
+    wet foot.
+  - The seabed near a swimmer: `swimmer`'s near water reads as one flat teal (the floor's sand varies by
+    about 10%, its ripples shade it by about 6%), and looking down its finest mottling is about 0.8 m. The
+    beach's own ripples carried onto the floor, with caustics over them, should give the eye something to
+    see through the water.
 - **Done when** the low beach view is a wallpaper, its motion strip shows waves running up and draining
-  back naturally (the strip spans 2.5 s today, less than one wave), and the user finds the motion natural
-  in the running game.
+  back naturally, and the user finds the motion natural in the running game.
 
 ### 8. Foliage foundation and coconut palms
 
@@ -1505,27 +395,25 @@ from the `overview`, a glowing ring round the coast.
   - one shared wind model, with gusts that travel across the island;
   - placement by zone, density per quality preset, and many plants drawn cheaply.
 - First species: leaning coconut palms along the cove, with coconuts.
-- Judge flicker with Stage 1's motion captures and shimmer score, near and far. Extend the tool if they
-  miss something. Known gaps: the shimmer pan only moves diagonally, so a thin line along that diagonal
-  scores nothing; a per-view percentage hides flicker on a single palm; overdraw misses what cut-out
-  leaves hide behind their holes, and counts points, lines and sprites wrongly.
-- Shade under a canopy blocks the sky's light as well as the sun's. Known from Stage 2: nothing blocks
-  the sky's light yet, and at golden hour it is 52% of the light on level ground, so shade would glow.
-- Known from Stage 1: no fixture proves alpha-to-coverage yet, and geometry thinner than about two pixels
-  crawls even with MSAA.
-- Known from Stage 4: placement reads the drawn ground (`heightmap.zoneAt`, `groundAt`: what the GPU
-  draws, about 0.25 µs a point), not `island.zone()` (7 µs, and a little off the drawn ground).
-- Known from Stage 3: near the camera the mesh is `ctx.terrain.heightAt`, but farther out its levels of detail stray from it (by
-  centimetres at 200–400 m, decimetres beyond, metres far out) and change as the camera moves. Known
-  from Stage 4: `chunks/terrain-mesh.wgsl` gives the mesh's own height as drawn (`terrainMeshHeight`, the
-  vertex shader's own morph), with a JS twin (`ctx.terrain.meshHeightAtCove`) that the terrain fixture
-  checks it against; rocks move by it each frame in a pass of nine texels each (`world/rocks.js`, about
-  700 rocks), which won't scale to plants by the hundred thousand: they need their offsets another way.
-  Placement by rules is `world/scatter.js`, and what it places keeps clear of what is there already
-  (`ctx.rocks.clearance`), so palms don't grow through boulders. It runs on the main thread at boot,
-  while the GPU makes the surfaces' tiles (`ctx.terrain.grids`), and is kept per seed through a quality
-  change (the rocks take 0.13–0.3 s cold): plants by the hundred thousand need workers. Plants also bend with the planet
-  (`chunks/planet.wgsl`), or the far ones float.
+- Judge flicker with the motion strips and shimmer scores, near and far, and extend the tool if they miss
+  something. Known gaps: the shimmer pan only turns diagonally, so a thin line along that diagonal scores
+  nothing; a per-view percentage hides flicker on a single palm; overdraw misses what cut-out leaves hide
+  behind their holes, and counts points, lines and sprites wrongly. No fixture proves alpha-to-coverage
+  yet, and geometry thinner than about two pixels crawls even with MSAA.
+- Shade under a canopy blocks the sky's light as well as the sun's. Nothing blocks the sky's light yet, and
+  at golden hour it is half the light on level ground, so shade would glow; the light from below assumes
+  the ground around is in the sun.
+- Leaves cast through the shadow maps as cut-outs (the shadows fixture's card proves the holes) and tell
+  `ctx.shadows.from()` where they stand (CLAUDE.md §8). Palms' crowns stand high enough to read the
+  island's shade right.
+- Placement reads the drawn ground (`heightmap.groundAt`, `zoneAt`, about 0.25 µs a point) through
+  `world/scatter.js`, keeping clear of the rocks (`ctx.rocks.clearance`). It runs on the main thread at
+  boot and is kept per seed through a quality change: plants by the hundred thousand need workers.
+- Near the camera the mesh is `ctx.terrain.heightAt`; farther out its levels of detail stray from it
+  (centimetres at 200–400 m, metres far out) and change as the camera moves. `chunks/terrain-mesh.wgsl`
+  gives the height as drawn, with a JS twin (`ctx.terrain.meshHeightAtCove`). The rocks move by it each
+  frame in a pass of nine texels each, which won't scale to plants by the hundred thousand. Plants also
+  bend with the planet (`chunks/planet.wgsl`), or the far ones float.
 - **Done when** palms glow when backlit at golden hour, fronds sway and flutter, their shade sits soft on
   the sand, close-ups hold up, and nothing flickers: the shimmer score stays low and the user sees none in
   the running game.
@@ -1536,16 +424,13 @@ from the `overview`, a glowing ring round the coast.
   creeping onto the sand. One file per species, each with its own wind response.
 - Grass that shows gusts rolling across it, and dappled shade drifting over the sand.
 - Cheap distant vegetation, so the hillsides look lush from the overview.
-- Known from Stage 3: rocky shores (since 2026-10-25 only the headland and one cape) get a band of rock
-  zone 20–45 m deep; what grows there decides how it looks. The green's bands vary with the land
-  (Decisions, 2026-10-25): placement reads `band` and `lush`, not distances from the shore.
-- Known from Stage 4: the ground says how lush it is and how sandy its soil (`heightmap.groundAt`:
-  `lush`, `sandy`), which the green's look follows: dense jungle where lush, open grass where not,
-  beach plants where sandy. Its patches of green and bare ground stay put and JS knows them
-  (`world/green.js`, `ctx.terrain.greenAt`; the patches fixture checks the GPU against it), so grass
-  can stand on the green only; their edges blur over 10 cm, or near the camera fray as much, which JS
-  leaves out. Bare patches show as they are from any distance (since 4.8, checked from near and far),
-  so the plants that stand on the green have to hide them where the eye expects cover.
+- The ground says how lush it is and how sandy its soil (`heightmap.groundAt`: `lush`, `sandy`, and `band`):
+  dense jungle where lush, open grass where not, beach plants where sandy. Placement reads these, not
+  distances from the shore (Decisions). The green's patches stay put and JS knows them
+  (`ctx.terrain.greenAt`), so grass stands on the green only. Bare patches show from any distance, so the
+  plants have to hide them where the eye expects cover.
+- Rocky shores (the headland and one cape) have a band of rock zone 20–45 m deep: what grows there decides
+  how it looks.
 - **Done when** the jungle-edge view is lush and layered, each species is recognisable by its shape and its
   motion, and the frame cost is within budget.
 
@@ -1554,39 +439,38 @@ from the `overview`, a glowing ring round the coast.
 - Golden hour and the cove gate need a sky with clouds, so they come before the polish pass.
 - Drifting clouds lit by the sky model, with sunset-coloured undersides. Their shadows slide across the
   lagoon and the land, consistent with the sun shadows.
-- Known from Stage 2: the transmittance table is private to the sky (`sky/atmosphere.js`), and the
-  aerial-perspective table reaches 64 km.
+- Cloud shadows join `sunVisibility()`, and need a texture in group 0: a water shader already uses all 16 a
+  shader can count on, so free one first. The transmittance table is private to the sky
+  (`sky/atmosphere.js`), and the aerial-perspective table reaches 64 km.
 - **Done when** clouds look soft and full from both the beach and the overview, and their shadows visibly
   move.
 
 ### 11. Cove polish (milestone gate)
 
 - Art-direction pass: colour grade, bloom, haze, exposure and palette. Review every view at several times
-  of day and fix everything on CLAUDE.md's list of things that break the spell. Known from Stage 1:
-  saturated primaries show kinks where the tonemapping clamps (the tonecard's ramps); natural colours
-  don't. Known from Stage 2: the sky beside a low sun clips red in the sunset telephoto, so the disk can't
-  show as an orange orb; bloom needs the sun's energy, which the sky holds under a ceiling today, and the
-  HDR target holds at most about 2048 (exposed). The sky's
-  light on upward faces is up to 10% too strong in red at golden hour (nine SH coefficients can't hold
-  the bright band along the horizon). On high-DPI screens the render targets take 0.5–0.7 GB at 4K and
-  0.9–1.3 GB at 5120×2880, against a 256 MB limit. SwiftShader captures took about 0.5 s per frame on a
-  fast desktop but 1.1–2.3 s in CI with only the placeholder world (Stage 1: 0.46–0.72 s in CI; the
-  lighting now costs about 17% less); with the sand (Stage 4.3), 0.6–1.4 s on that desktop, and the
-  budget went from 1 to 2 s with the user's leave; with rock (4.4), 0.6–2.1 s (the `rocks` close-up,
-  where a pixel runs both surfaces' detail), and 2.5 s; with the green (4.6), 0.6–2.3 s; hardened (4.7:
-  the green's patches in noise JS shares, far wet sand's sheen), 0.8–2.7 s. The GPU times
-  the screenshot tool and the benchmark measure on the development laptop follow its GPU's clock, which
-  idles low between frames: they swing several-fold between identical runs. Known from Stage 3: far terrain samples the
-  8 m grid at coarser spacing without prefiltering, so ridgelines may crawl in motion; the headland's
-  inner flank runs inland as a long steep wall; beyond the cove the island is a smooth shape in an even
-  ring of lagoon.
-- Performance pass on the `high` preset. Record what the cove costs per frame: Stage 1's counts, plus the
+  of day and fix everything on CLAUDE.md's list of things that break the spell. Known:
+  - Saturated primaries show kinks where the tonemapping clamps (the tonecard's ramps); natural colours
+    don't.
+  - The sky beside a low sun clips red in the sunset telephoto, so the disk can't show as an orange orb.
+    Bloom needs the sun's energy, which the sky holds under a ceiling, and the HDR target holds at most
+    about 2048 (exposed).
+  - The sky's light on upward faces is up to 10% too strong in red at golden hour: nine SH coefficients
+    can't hold the bright band along the horizon.
+  - Shade on dark ground is near black at golden hour (Stage 5), and the sand reads khaki at 16:30
+    (Stage 4).
+  - Far terrain samples the 8 m grid at coarser spacing without prefiltering, so ridgelines may crawl in
+    motion. The headland's inner flank runs inland as a long steep wall; beyond the cove the island is a
+    smooth shape in an even ring of lagoon.
+- Performance pass on the `high` preset. Record what the cove costs per frame: the counts, plus the
   benchmark on the machines the user can try, ideally including a mid-range laptop. That decides how much
   more island fits in the budget. Calibrate the limits in `config.js` against it, and tune `medium` and
-  `low`.
-- **Done when** the user agrees that every cove view clears the wallpaper bar at midday and at golden hour
-  (as Stage 2 defines them). Later stages wait for that
-  unless the user decides otherwise. Milestone 4 always waits, because it needs this stage's cost numbers.
+  `low`. Known: GPU times on a laptop follow its GPU's clock and swing several-fold between identical runs,
+  so only the benchmark weighs a change; the terrain shader's cost waits on a pass (5.1); on high-DPI
+  screens the render targets passed their 256 MB limit several times over (0.5–0.7 GB at 4K, measured
+  before the shadows and the sea); SwiftShader frames and CI's job are near their limits (Stage 6).
+- **Done when** the user agrees that every cove view clears the wallpaper bar at midday and at golden hour.
+  Later stages wait for that unless the user decides otherwise. Milestone 4 always waits, because it needs
+  this stage's cost numbers.
 
 ---
 
@@ -1597,20 +481,22 @@ from the `overview`, a glowing ring round the coast.
 - Time doesn't pass, but the player can pick any hour from sunrise to sunset, so every one has to work, not
   only the midday and golden hour the cove gate checked. Lighting, exposure and fog stay consistent from
   one hour to the next. There is no night (see Decisions).
-- Known from Stage 2: a time change reads the light back from the GPU and waits for it, so dragging the
-  time (Stage 16's setting) would stutter.
-- Known from Stage 3: the haze check's `aerial` answer stood at 5.6 of its 6-level limit from 190 m up at
-  sunset (the check's camera, now `headland`), and was measured at 6.0 from the beach in the first and
-  last minutes of daylight; near the sea, the transmittance table's rows lie 25 and 101 m up, in haze
-  150 m thick. From the air it misses far more: 37 levels from the `overview`, 1 km up (2026-10-25).
+- A time change lands whole a few frames late: the sky's light is read back from the GPU, and the island's
+  shade is worked out in workers (Decisions). Dragging the time (Stage 16's setting) would lag behind.
+- The haze check's `aerial` answer stood at 5.6 of its 6-level limit from 190 m up at sunset, and 6.0 from
+  the beach in the first and last minutes of daylight; from 1 km up it misses by 37 levels. Near the sea
+  the transmittance table's rows lie 25 and 101 m up, in haze 150 m thick.
+- At sunrise the cove lies dark in the island's shade, and at golden hour, looking steeply down from the
+  air, the sea is near black, as is shade on dark ground: right by the numbers, as the exposure follows the
+  sun, but no wallpaper.
 - **Done when** a capture series from sunrise to sunset has no broken or ugly hour.
 
 ### 13. Small life and detail
 
 - Signs of life: seabirds, butterflies, crabs, fish shadows in the shallows. Things lying about:
   coconuts, shells, driftwood, fallen flowers and leaves.
-- Known from Stage 4: a strand line of wrack painted on the sand read as smears and footprints, without
-  relief, and went; it needs things lying on the beach. The sand's own bits of shell are flat specks.
+- A strand line of wrack painted on the sand read as smears and footprints, without relief, and went: it
+  needs things lying on the beach. The sand's own bits of shell are flat specks.
 - **Done when** something moves in every view within a few seconds, and the foreground rewards a close
   look.
 
@@ -1625,13 +511,13 @@ from the `overview`, a glowing ring round the coast.
   spawns at a beautiful spot. `?view=` and captures still put the camera exactly at the view.
 - Basic swimming, as simple to build as possible (see Decisions): in deep enough water the player floats
   and moves slowly, and the view stays above the water. Something keeps the player from swimming out of
-  the world.
+  the world. The water's surface is `ctx.water.heightAt` and `over()`, which sums every wave each frame.
 - Movement and collision maths get tests. Automated runs stub pointer lock and never drive the real
   mouse.
-- Known from Stage 2: the sky's tables render again whenever the camera's height crosses a whole metre, so
-  a head bob around such a step would render them twice a stride.
-- Known from Stage 3: the user found the rough walk's pace (1.4 m/s) a bit slow on the bare ground of
-  Stage 3, perhaps for want of detail passing by. Judge the pace again on detailed ground.
+- The sky's tables render again whenever the camera's height crosses a whole metre, so a head bob around
+  such a step would render them twice a stride.
+- The user found the rough walk's pace (1.4 m/s) a bit slow on Stage 3's bare ground, perhaps for want of
+  detail passing by. Judge the pace again on detailed ground.
 - Update the README and the start screen's controls.
 - **Done when** the movement tests pass; invariant tests over seeds show the player can't fall through the
   ground, get stuck or leave the world; and the user has walked and swum the cove and is happy with how it
@@ -1639,8 +525,9 @@ from the `overview`, a glowing ring round the coast.
 
 ### 15. Sound
 
-- `audio/`: procedural surf tied to the wave sets and to the distance from shore; wind in the leaves tied
-  to the gusts; birds and insects that change with the time of day; footsteps that depend on the surface.
+- `audio/`: procedural surf tied to the wave sets and to the distance from shore (`ctx.water.surfAt`); wind
+  in the leaves tied to the gusts; birds and insects that change with the time of day; footsteps that
+  depend on the surface.
 - It starts only after a user gesture, has a mute control and stays silent in capture mode.
 - Scheduling sound needs the audio clock (`AudioContext.currentTime`), an exception to the rule that all
   time goes through `clock.js`. Decide how, and write it into CLAUDE.md.
@@ -1652,9 +539,9 @@ from the `overview`, a glowing ring round the coast.
 ### 16. Presentation
 
 - A start screen in the game's own visual language. Boot progress if generation takes noticeable time.
-  An in-game settings menu: quality, time of day (the only in-game way to change it) and sound. Optionally
-  a photo mode with the UI hidden. Known from Stage 3: the terrain's detail ignores the field of view, so a
-  zoomed-in photo magnifies far ground at its coarse detail.
+  An in-game settings menu: quality, time of day (beside the `,` and `.` keys) and sound. Optionally a
+  photo mode with the UI hidden. The terrain's detail ignores the field of view, so a zoomed-in photo
+  magnifies far ground at its coarse detail.
 - The game is desktop only (see Decisions). A phone or tablet gets a short note that it needs a desktop
   browser with keyboard and mouse, instead of a start screen that can't work.
 - Capture mode hides all UI, so extend the screenshot tool's player-mode run to also save images of the
@@ -1674,24 +561,19 @@ from the `overview`, a glowing ring round the coast.
   with heavier surf, a hilltop lookout, the jungle interior, a stream. Each area gets views, a polish pass
   and a performance check.
 - Don't start a new area while an existing one still falls short of the bar.
-- Known from 2026-10-25: the coast beyond the cove is beach with a coastal flat, and one rocky cape
-  (Decisions); the views `headland`, `cape` and `coastal-flat` already look at it, and `summit` at the
-  rough ground near the top up close, framed on seed 1, all four disabled for now (the user's call:
-  `disabled` in `src/views.js`; `--views` still captures them).
-- Known from 2026-10-25: the terrain's grids are laid out for each island, 2 m apart over the land and
-  the shallows everywhere (Decisions), a multiple of 256 samples across so their mipmaps halve exactly
-  (`config.world.terrain.mips`); growing the island (`config.world.island.size`) grows them, and boot's
-  time with them.
-- Known from 2026-10-25: the capes go where the coast juts out most, as measured 250 m inland; changing
-  the land's shape inland can move them (the lobes' centres fixed that day moved them on 5 of seeds 1–20,
-  by 38 m on seed 1). The coast's distance changes by up to about 1.7 m a metre near the shore (noise on
-  it), so slopes set in it, like the hills' rise from a beach (`shore.steepest`), come out steeper in
-  places.
-- Known from 2026-10-28: two seeds break a design rule, and `tests/island.test.js` names each as a known
-  exception: on seed 20 the hills' own slope and their rise from the shore add up, with nothing to cap
-  the sum, to 55° at one point 243 m behind a beach (seeds 1–30 reach 54° elsewhere); on seed 9 the hills'
-  warp moves a valley in behind the headland's sheer face, which rises only 26.6 m in 30 m. Fixing either
-  changes seed 1's island.
+- The coast beyond the cove is beach with a coastal flat, and one rocky cape (Decisions). The views
+  `headland`, `cape`, `coastal-flat` and `summit` already look at it, disabled for now (the user's call;
+  `--views` still captures them).
+- The terrain's grids are 2 m apart over the land and the shallows everywhere (Decisions), a multiple of
+  256 samples across so their mipmaps halve exactly (`config.world.terrain.mips`): growing the island
+  (`config.world.island.size`) grows them, and boot's time with them.
+- The capes go where the coast juts out most, as measured 250 m inland, so changing the land's shape inland
+  can move them. The coast's distance changes by up to about 1.7 m a metre near the shore, so slopes set in
+  it (`shore.steepest`) come out steeper in places.
+- Two seeds break a design rule, and `tests/island.test.js` names each as a known exception: on seed 20 the
+  hills' slope and their rise from the shore add up to 55° at one point 243 m behind a beach; on seed 9 a
+  valley moves in behind the headland's sheer face, which rises only 26.6 m in 30 m. Fixing either changes
+  seed 1's island.
 - **Done when** (per area) the user agrees its views clear the bar and the frame cost stays within the
   limits.
 
@@ -1704,18 +586,20 @@ from the `overview`, a glowing ring round the coast.
 - Profile against the target: 60 fps at 1080p on a mid-range laptop. Captures can't measure real GPU cost,
   so ask the user to run the benchmark on real machines. Also cover: choosing quality automatically or
   picking a safe default, boot time, memory, a lost GPU device, the browsers with WebGPU, high-DPI
-  screens, and the size budget.
-- Known from Stage 4b: a lost device (a driver reset, say) stops the game with the error overlay.
-  Recovering means making every GPU resource again, as a quality change already does (`setQuality` in
-  `main.js`), on a new device. Firefox has WebGPU on Windows only (141 and later); elsewhere it gets the
-  note that the game needs WebGPU.
-- Known from Stage 3: the heightmap's workers are untried outside Chromium; without them the grids
-  build in the main thread, about 6 s on a fast desktop (2.6 million samples for seed 1, since
-  2026-10-25), and with two cores there is one worker.
-  Boot waits on the surfaces' tiles (`textures/`, made and read back on the GPU), not on the grids, which
-  are in a second or two before them: making the tiles faster is the lever for boot.
-  The terrain's fragment shader is most of a SwiftShader frame, its aerial perspective and its filtered
+  screens (a drawing buffer past 8192 px fails), and the size budget.
+- A lost device (a driver reset, say) stops the game with the error overlay. Recovering means making every
+  GPU resource again, as a quality change already does (`setQuality` in `main.js`), on a new device.
+  Firefox has WebGPU on Windows only (141 and later); elsewhere it gets the note that the game needs
+  WebGPU.
+- Boot: the heightmap's workers are untried outside Chromium; without them the grids build on the main
+  thread, about 6 s on a fast desktop, and with two cores there is one worker. Boot waits on the surfaces'
+  tiles (made and read back on the GPU) more than on the grids, so making the tiles faster is the lever.
+  The sea map takes 1.6 s on the main thread (Stage 6).
+- The terrain's fragment shader is most of a SwiftShader frame, its aerial perspective and its filtered
   slopes the largest parts.
+- Each `renderer.render()` encodes and submits its own pass, and the sky's 3D aerial table takes a render
+  pass a slice (37 submits in a frame where the sky's tables follow the camera's height): one encoder a
+  frame, and the table as one compute pass, would save CPU time.
 - The tools install only Chromium's headless shell. Automated Firefox runs need Playwright's Firefox
   build, a browser download rather than a new npm package; ask the user before adding it. Playwright can
   drive an installed Edge too.
@@ -1735,13 +619,13 @@ from the `overview`, a glowing ring round the coast.
 
 Made with the user. Don't reopen them unless the user does.
 
-- **Time of day doesn't pass.** It stays where it's set, and the player sets it in the settings menu.
-  (2026-10-20)
+- **Time of day doesn't pass.** It stays where it's set: the player sets it with the `,` and `.` keys (in
+  every build, 2026-11-12) and, from Stage 16, the settings menu. (2026-10-20)
 - **The island's own shade is worked out per time of day, made fast**, not replaced: a time change waits
   for it, briefly. Should time ever pass on its own, the next time's shade is worked out in the background
-  and blended in, or worked out on the GPU behind the same texture. The terrain casting into the shadow
-  maps round the camera instead was the alternative: time changes at once, but the ridges' shade past the
-  maps' reach is lost. Time of day still doesn't pass. (2026-10-29)
+  and blended in, or on the GPU behind the same texture. The terrain casting into the shadow maps round the
+  camera was the alternative: time changes at once, but the ridges' shade past the maps' reach is lost.
+  (2026-10-29)
 - **Island size depends on performance.** The user expects the game to be heavy. Build the cove first,
   measure it (Stage 11), then grow the island only as far as the budget allows. (2026-10-20)
 - **Daylight only.** Time of day spans sunrise to sunset. Night isn't part of the game. (2026-10-20)
@@ -1750,16 +634,15 @@ Made with the user. Don't reopen them unless the user does.
 - **Swimming is basic and simple to build:** at the surface only, with the view above the water. No
   diving. (2026-10-20)
 - **Desktop only:** a desktop browser with keyboard and mouse. (2026-10-20)
-- **Raw WebGPU with hand-written WGSL, and a renderer of the project's own** (Stage 4b). It replaces
-  WebGL2 with GLSL through three's `WebGLRenderer` (2026-10-20). (2026-10-24)
-- **No runtime dependencies** (Stage 4c): three goes too, and the maths the game took from it becomes
-  modules of the project's own. It replaces "three for maths only" (2026-10-24), which left the choice
-  until after the port. (2026-10-24)
+- **Raw WebGPU with hand-written WGSL, and a renderer of the project's own** (Stage 4b), replacing WebGL2
+  through three.js. (2026-10-24)
+- **No runtime dependencies** (Stage 4c): the maths the game took from three is the project's own.
+  (2026-10-24)
 - **WebGPU only**, with no WebGL fallback. A browser without WebGPU gets a short note that the game needs
   it. (2026-10-24)
 - **MSAA is 4 samples on every preset.** WebGPU allows only 1 or 4, and the frame needs at least 2.
   (2026-10-24)
-- **Reversed 32-bit float depth everywhere.** The Firefox depth fallback goes. (2026-10-24)
+- **Reversed 32-bit float depth everywhere.** (2026-10-24)
 - **The seed changes the island; the game has one seed for now.** Every seed makes a different island, but
   the game only uses one, and the views and art direction are tuned on it. (2026-10-20)
 - **The user directs the work and reviews most stages.** A finished stage goes to `review`; only the user
@@ -1781,66 +664,66 @@ Made with the user. Don't reopen them unless the user does.
   barrier reef 600 m to 1 km out with a broad lagoon was the alternative. (2026-10-22)
 - **The headland stands on the left** of someone on the beach facing the sea: its inner cliffs catch the
   noon sun and the low evening light; on the right it would stand dark beside the sunset. (2026-10-22)
-- **Beaches all round, rock in two places**: the coast is beach but for the headland's high cliff,
-  which stays, and one rocky cape beyond the cove where the coast juts out furthest, a black wall of
-  8–16 m with green slopes above. Behind the beaches a berm rises to where the green begins (about
-  2 m up) and a coastal flat of changing width (0–160 m) stands a few metres above the sea before the
-  hills. The bands behind the sand vary as in nature rather than as rings: the beach 10–45 m wide,
-  wider in bays; a thin strand of scrub, wider on points; the palm belt over the flats and up valley
-  floors, ending where the hills rise, so the jungle starts 35–170 m from the water. Rock on a rocky
-  shore lies where nature leaves it bare: on cliffs, where the waves and spray reach, and fallen at a
-  sheer cliff's foot; green comes down to a cliff's edge. The headland's face to the bay and its tip
-  stay sheer; its outer shore changes from sheer walls to green slopes above a rocky foot. The flats
-  are old beach ridges (about 1.3 m) and hummocks, and the hills are cut by gullies running straight
-  down their slopes, over the folds they had. A second cape is one setting (`shore.capes.count`). It
-  replaces "more beaches beyond the cove, in its bays" (2026-10-23), which left 70% of the coast rocky
-  cliff. (2026-10-25)
+- **Beaches all round, rock in two places**: the coast is beach but for the headland's high cliff, and one
+  rocky cape beyond the cove where the coast juts out furthest, a black wall of 8–16 m with green slopes
+  above. Behind the beaches a berm rises to where the green begins (about 2 m up), and a coastal flat of
+  changing width (0–160 m) stands a few metres above the sea before the hills. The bands behind the sand
+  vary as in nature rather than as rings: the beach 10–45 m wide, wider in bays; a thin strand of scrub,
+  wider on points; the palm belt over the flats and up valley floors, so the jungle starts 35–170 m from
+  the water. Rock on a rocky shore lies where nature leaves it bare: on cliffs, where the waves and spray
+  reach, and fallen at a sheer cliff's foot; green comes down to a cliff's edge. The headland's face to the
+  bay and its tip stay sheer; its outer shore changes from sheer walls to green slopes above a rocky foot.
+  The flats are old beach ridges (about 1.3 m) and hummocks, and gullies run straight down the hills. A
+  second cape is one setting (`shore.capes.count`). It replaces "more beaches beyond the cove", which left
+  70% of the coast rocky cliff. (2026-10-25)
 - **The terrain's heights lie 2 m apart over all the land and the sea you can see into** (above −20 m:
   the lagoon, the reef and its drop-off), the cove no different from the rest, and 8 m apart out to the
-  deep: relief of 8 m and more shows anywhere on the island. It replaces grids of 1 m over the bay, 2 m
-  up to the summit, and 4 and 8 m beyond, which smoothed most of the island. 2 m over the deep sea too
-  (a third more samples nobody sees) and 1 m everywhere (about 15 s to build on one core) were the
-  alternatives; finer relief than 8 m waits on whether it is still missed. (2026-10-25)
+  deep. 2 m over the deep sea too (a third more samples nobody sees) and 1 m everywhere (about 15 s to
+  build on one core) were the alternatives; finer relief than 8 m waits on whether it is still missed.
+  (2026-10-25)
 - **The reef is roughened a bit**: its crest wanders about 8 m either way over about 110 m, and its
   width with it; the pass widens towards the sea between ragged walls. A less circular bay, a blunter
   headland tip and leaving it regular were the alternatives. (2026-10-23)
 - **Bright white sand**, albedo 0.65, at the top of what white coral sand measures: cream-white at
   midday. Measured coral sand at 0.55 (grey-beige), golden quartz sand at 0.40 and the old plain colour
   at 0.72 were the alternatives. (2026-10-23)
-- **Dark basalt**, albedo about 0.05: near-black volcanic rock, as the volcano would make, in lava-flow
-  layers, with the beach's white sand gathered in its hollows. It gives the strongest contrast with the
-  sand and the lagoon, and the volcano's steep patches read as dark crags rather than pale blotches; the
-  rocks of 4.5 break into angular blocks. Weathered and lichened grey-brown rock (0.18), pale coral
-  limestone (0.4) and pinkish granite (0.3) were the alternatives. (2026-10-23)
+- **Dark basalt**, albedo about 0.05: near-black volcanic rock in lava-flow layers, with the beach's white
+  sand gathered in its hollows. It gives the strongest contrast with the sand and the lagoon, and the
+  volcano's steep patches read as dark crags rather than pale blotches. Weathered and lichened grey-brown
+  rock (0.18), pale coral limestone (0.4) and pinkish granite (0.3) were the alternatives. (2026-10-23)
 - **Lush tropical green inland**: saturated greens with little bare ground, grass on open ground and the
   dark leafy understory in hollows and gullies, so the hills show dark gullies under lighter ridges. A
-  lighter, yellower sunny meadow, a sun-dried ground of olive and straw with more soil and litter, and a
-  darker deep jungle were the alternatives. (2026-10-24)
+  lighter, yellower sunny meadow, a sun-dried ground of olive and straw, and a darker deep jungle were the
+  alternatives. (2026-10-24)
 - **The ground's look (4.8)**: wet sand warm, with a lobed swash line where the waves reached (a dark
   glassy band and a soft drying without a line were the alternatives); glitter on wet sand (a gently
-  rumpled surface); whiter dry sand with more contrast (grain that shows at standing height, and
-  lumps and pocks); denser scrub (clumps, a darker scrub floor); stands that last into the distance
-  with a lush floor of brown soil (the green as before 2026-10-28's fix); lichen as an even tint
-  (grey crust with orange rosettes, first picked, was too much spread over all the rock); rock
-  stepping out of the sand as ledges (sand drifted against it);
-  blockier rocks (a sheen on dry rock). (2026-10-28)
+  rumpled surface); whiter dry sand with more contrast (grain that shows at standing height, and lumps and
+  pocks); denser scrub (clumps, a darker scrub floor); stands that last into the distance with a lush
+  floor of brown soil; lichen as an even tint (grey crust with orange rosettes was too much); rock stepping
+  out of the sand as ledges (sand drifted against it); blockier rocks (a sheen on dry rock). (2026-10-28)
 - **Shadows twice as soft as the sun's own disk makes them** (`config.shadows.softness` 2), the rocks' and
   the island's own shade alike: sharp at a caster's foot, softening further out. The real disk (rock
   shadows crisp almost to their tips in the low sun, a ragged edge to the hills' shade on the beach) and
   three times (hazy shade) were the alternatives. (2026-10-29)
 - **The air stays as clear as it is**: the light from below lifts shade on the beach, and more aerosol
-  barely changes midday (the sky's share of the light on level ground goes from 9% to 13% at ten times
-  as much) while it spreads a large halo round the low sun. Four and ten times as much were the
-  alternatives. (2026-10-23)
+  barely changes midday while it spreads a large halo round the low sun. Four and ten times as much were
+  the alternatives. (2026-10-23)
 - **The hilltops' last light is as the atmosphere gives it**: at the named sunset the sun on the summit
   is 1.6 times the beach's, and lit hilltops over a dark shore show only in the last minutes before the
   sun touches the sea. Thicker evening haze (a greyer horizon) and a named sunset 0.5° up were the
   alternatives. (2026-10-22)
+- **The sea's look (6.6)**: the water clearer and more turquoise; the lagoon as calm as it stood; the surf
+  as it stood, about 0.9 m high where it breaks; stronger glitter (`glitterCeiling` 8). The hard line
+  along a breaking wave's top is left for Stage 7's whitewater. (2026-10-31)
+- **Half the sun's light in its path** (`config.water.glitter` 0.5), on the sea and on wet sand's film of
+  water: the white band narrows by about half. A quarter and an eighth narrowed it more but dulled the
+  glare seen from above at a high sun and cut the path short of the shore in `into-the-sun`. (2026-11-12)
+- **The capture budget is 8 s a SwiftShader frame**, raised with the user's leave as the shadows and the
+  sea came (2.5, 4, 6, then 8 s), as long as everything stays as cheap as it can. (2026-10-30)
 - **CI checks, it doesn't measure**: it runs `verify` with `--no-measurements`, every check that can fail
-  but none of the views' measurements, which only warn; sessions measure in their own `verify`. Stage 5's
-  run hit the job's 30 minutes, most of it in measurement frames on SwiftShader. Splitting the captures
-  across parallel jobs and publishing before the screenshots finish were the alternatives. The repo is
-  public, for runners with twice the cores and free minutes. (2026-10-29)
+  but none of the views' measurements, which only warn; sessions measure in their own `verify`. Splitting
+  the captures across parallel jobs and publishing before the screenshots finish were the alternatives.
+  The repo is public, for runners with twice the cores and free minutes. (2026-10-29)
 
 ## Open questions
 
@@ -1848,9 +731,9 @@ Settle these when the stage that needs them arrives. Ask the user where the answ
 scope.
 
 - **Low-sun sky, for Stage 11 or 12.** From an outside review: at golden hour the sky away from the sun is
-  slate with an olive band; at low sun a dark line runs along the horizon above the brighter placeholder
-  sea; the horizon is 3.7–5 times brighter than the zenith (the haze scatters evenly, g 0.2; sea air is
-  nearer 0.7); the haze thins towards sunset, where real evening haze thickens; sunrise mirrors sunset.
+  slate with an olive band; the horizon is 3.7–5 times brighter than the zenith (the haze scatters evenly,
+  g 0.2; sea air is nearer 0.7); the haze thins towards sunset, where real evening haze thickens; sunrise
+  mirrors sunset.
 
 ## Ideas parking lot
 

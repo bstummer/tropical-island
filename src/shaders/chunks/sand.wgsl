@@ -27,6 +27,7 @@ struct SandUniforms {
   uSandRoughness: vec4f, // dry, wet, soaked, and a film of water's
   uSandRange: f32, // m from the camera: beyond it sand is its albedo alone (sandAlbedo)
   uSandRumples: vec2f, // the backwash's rumples: their largest wavelength (m) and slope
+  uSandFilmSun: f32, // how much of the sun's lobe a film of water shows: the sea's share (config.water.glitter)
 }
 
 @group(1) @binding(18) var<uniform> sandParams: SandUniforms;
@@ -54,9 +55,9 @@ fn sandShine(s: Sand, position: vec3f, normal: vec3f, view: vec3f, kernel: f32) 
   var shine = vec3f(0.0);
   if (glossy + s.film > 0.0) {
     let n = normalize(normal - vec3f(s.rumple.x, 0.0, s.rumple.y));
-    shine = glossy * specularLight(position, n, view, filteredRoughness(s.roughness, kernel + s.spread), s.f0);
+    shine = glossy * specularLight(position, n, view, filteredRoughness(s.roughness, kernel + s.spread), s.f0, 1.0);
     if (s.film > 0.0) {
-      shine = mix(shine, specularLight(position, n, view, filteredRoughness(sandParams.uSandRoughness.w, kernel + s.spread), s.f0), s.film);
+      shine = mix(shine, specularLight(position, n, view, filteredRoughness(sandParams.uSandRoughness.w, kernel + s.spread), s.f0, sandParams.uSandFilmSun), s.film);
     }
   }
   return shine;

@@ -47,7 +47,7 @@ export function create(ctx) {
   const ranged = (surface) => ({ ...surface, range: surface.range * quality.groundDetail });
   // The tiles' averages are read back from the GPU: zeros until then.
   const surfaceUniforms = ({ sand, rock, green }) => ({
-    ...sandUniforms(sand, ranged(terrain.sand), config.world.island.zones.wetSand, config.sky.sun.sunsetYaw),
+    ...sandUniforms(sand, ranged(terrain.sand), config.world.island.zones.wetSand, config.sky.sun.sunsetYaw, config.water.glitter),
     ...rockUniforms(rock, ranged(terrain.rock)),
     ...greenUniforms(green, terrain.albedo, ranged(terrain.green), [1, 2]),
   });

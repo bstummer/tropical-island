@@ -9,13 +9,14 @@
 //   5 leaves
 //   6 seabed             textures/seabed.js
 //   7 glints             textures/glints.js
+//   8 foam               textures/foam.js
 // Each tile is `size` texels across (quality.surfaceTexture), mipmapped and
 // repeating; `shift`: tiles to shift them by, which leaves them as they are if
 // they truly repeat (fixtures/surfaces.js checks). Each module's own numbers
 // (the averages the shaders divide by) are read back from the GPU, so they
 // come later: { tiles, ready, pixels(name), dispose() }; tiles: the array
 // (drawn when this returns, but for the litter's and its leaves', which land
-// with `ready`: textures/green.js); ready: a promise of { sand, rock, green, glints };
+// with `ready`: textures/green.js); ready: a promise of { sand, rock, green, glints, foam };
 // pixels(name): a promise of a layer's texels (RGBA bytes, rows from the
 // first). The owner disposes them.
 import { createTarget } from '../gpu/texture.js';
@@ -24,8 +25,9 @@ import { makeRockTile } from './rock.js';
 import { makeGreenTiles } from './green.js';
 import { makeSeabedTile } from './seabed.js';
 import { makeGlintsTile } from './glints.js';
+import { makeFoamTile } from './foam.js';
 
-export const LAYERS = { grain: 0, ripples: 1, rock: 2, grass: 3, litter: 4, leaves: 5, seabed: 6, glints: 7 };
+export const LAYERS = { grain: 0, ripples: 1, rock: 2, grass: 3, litter: 4, leaves: 5, seabed: 6, glints: 7, foam: 8 };
 
 // renderer: ctx.renderer; settings: config.world.terrain; rng(name): a stream
 // per module, as ctx.rng, under `prefix`.
@@ -47,13 +49,14 @@ export function createSurfaceTiles(renderer, rng, prefix, settings, size, shift 
   const green = makeGreenTiles(into, rng(`${prefix}/green`), settings.green);
   makeSeabedTile(into, rng(`${prefix}/seabed`));
   const glints = makeGlintsTile(into, rng(`${prefix}/glints`));
+  const foam = makeFoamTile(into, rng(`${prefix}/foam`));
   // The mip chain, once every layer is drawn (the read-backs above are of
   // level 0 and already queued). The litter's layers are still blank here:
   // textures/green.js writes them with their own mip levels once read back.
   target.color.generateMipmaps();
   return {
     tiles: target.color,
-    ready: Promise.all([sand, rock, green, glints]).then(([s, r, g, m]) => ({ sand: s, rock: r, green: g, glints: m })),
+    ready: Promise.all([sand, rock, green, glints, foam]).then(([s, r, g, m, f]) => ({ sand: s, rock: r, green: g, glints: m, foam: f })),
     pixels,
     dispose() {
       target.dispose();

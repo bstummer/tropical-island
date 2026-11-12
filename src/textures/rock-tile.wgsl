@@ -64,7 +64,7 @@ fn nearestBlock(p: vec2f, n: f32, seed: vec2f, jitter: f32) -> Block {
     }
   }
   var b: Block;
-  b.cell = (ip + mg) - n * floor((ip + mg) / n); // GLSL's mod(ip + mg, n)
+  b.cell = tileWrap(ip + mg, n);
   b.toPoint = mr;
   b.border = border;
   return b;

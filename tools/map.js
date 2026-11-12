@@ -190,7 +190,7 @@ function drawPanel(island, heightmap, { name, u: [u0, u1], o: [o0, o1] }) {
 }
 
 // What the sea knows of the island (water/sea-map.js): blue, how much swell
-// arrives; green, how much chop the wind has raised; white, where the surf
+// arrives; green, how much chop reaches it; white, where the surf
 // breaks; orange, the reef's crest; lines every 50 m from the shore; land grey.
 function drawSeaPanel(island, map, { name, u: [u0, u1], o: [o0, o1] }) {
   const scale = PANEL / Math.max(u1 - u0, o1 - o0);
@@ -205,7 +205,7 @@ function drawSeaPanel(island, map, { name, u: [u0, u1], o: [o0, o1] }) {
       map.at(side * (u0 + (px + 0.5) / scale), o1 - (py + 0.5) / scale, here);
       let colour = [90, 90, 90];
       if (here.shore > 0) {
-        colour = [0, 40 + 170 * here.wind, 60 + 195 * here.swell];
+        colour = [0, 40 + 170 * here.chop, 60 + 195 * here.swell];
         const band = ((here.shore % 50) + 50) % 50;
         if (band < metres) colour = colour.map((c) => c * 0.65);
         if (Math.abs(here.reef) < metres) colour = [255, 150, 40];
@@ -364,7 +364,7 @@ function page({ seed, label, settings, panels, island, facts, timing }) {
     .map((p) => `<figure><img src="data:image/png;base64,${Buffer.from(p.png).toString('base64')}">${svgFor(p)}<figcaption>${p.name}: facing the sea from the cove's beach</figcaption></figure>`)
     .join('')}</div>
   <p class="legend">${legend}</p><p class="legend">depth: ${depths} · contours every ${LAND_CONTOUR} m on land (100 m bold), at ${SEA_CONTOURS.join(', ')} m under water</p>
-  <p class="legend">what the sea knows: blue, how much swell arrives; green, how much chop the wind has raised; white, where the surf breaks; orange, the reef's crest; lines every 50 m from the shore</p>`;
+  <p class="legend">what the sea knows: blue, how much swell arrives; green, how much chop reaches it; white, where the surf breaks; orange, the reef's crest; lines every 50 m from the shore</p>`;
 }
 
 const invokedPath = process.argv[1] && existsSync(process.argv[1]) ? realpathSync.native(process.argv[1]) : null;

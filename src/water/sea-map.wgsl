@@ -7,6 +7,7 @@ struct SeaLayout {
   uRipplesDepth: f32, // from how deep (m) that much of them does
   uChopWander: vec2f, // how far the chop's tile wanders, m; 2 pi over how far apart it does
   uSeaOpen: vec2f, // over how far (m) past the map's square the open sea takes over; how far off it has the reef's crest (m)
+  uShallowTroughs: f32, // the most the waves draw the surface down, as a share of the water under it
 }
 
 @group(1) @binding(10) var<uniform> seaLayout: SeaLayout;
@@ -17,19 +18,24 @@ fn seaUv(xz: vec2f) -> vec2f {
   return (terrainCove(xz) - seaLayout.uSeaLayout.xy) * seaLayout.uSeaLayout.z;
 }
 
+// How far apart the map's samples are (m).
+fn seaTexel() -> f32 {
+  return 1.0 / (seaLayout.uSeaLayout.z * f32(textureDimensions(uSeaMap).x));
+}
+
 // How much of what the map holds still counts at world xz: 1 on its square, going
 // over into the open sea's past it (water/sea-map.js at() is the twin), as the
 // clamped edge would run on to the horizon in a straight lane.
 fn seaKept(xz: vec2f) -> f32 {
   let samples = f32(textureDimensions(uSeaMap).x);
-  let texel = 1.0 / (seaLayout.uSeaLayout.z * samples);
+  let texel = seaTexel();
   let u = (terrainCove(xz) - seaLayout.uSeaLayout.xy) / texel - 0.5; // in samples from the first
   let past = texel * length(u - clamp(u, vec2f(0.0), vec2f(samples - 1.0)));
   return 1.0 - smoothstep(0.0, seaLayout.uSeaOpen.x, past);
 }
 
 // At world xz: how far the shore is (m), how deep the water is (m), how much of
-// the swell and of the wind reach it.
+// the swell and of the chop reach it.
 fn seaAt(xz: vec2f) -> vec4f {
   return seaAtLevel(xz, 0.0);
 }
@@ -61,14 +67,20 @@ fn seaLevel(footprint: f32) -> f32 {
 }
 
 // How much of each cascade reaches a point (water/surface.js reachInto is its
-// twin): the swell as far as it arrives; the chop's long waves only where the
-// wind has blown far; its ripples soon, and some anywhere there is water to move.
-// And the open sea's own chop, raised far off, which comes in with the swell and
-// breaks on the reef as it does: so the lagoon behind it lies calm.
+// twin): the swell as far as it arrives; the chop's long waves as the map says,
+// where the wind has blown far or the open sea's chop comes in, which dies away
+// behind the reef's crest, so the lagoon lies calm; its ripples, which the wind raises
+// where it blows, as much anywhere there is water to move, more where the chop is up,
+// dying out over the last of the water at the waterline.
 fn cascadeReach(sea: vec4f) -> vec3f {
-  let least = seaLayout.uSeaLayout.w * smoothstep(0.0, seaLayout.uRipplesDepth, sea.y);
-  let open = sea.z * sea.z;
-  return vec3f(sea.z, max(sea.w * sea.w, open), max(max(sqrt(max(sea.w, 0.0)), least), open));
+  let ripples = max(sea.w, seaLayout.uSeaLayout.w) * smoothstep(0.0, seaLayout.uRipplesDepth, sea.y);
+  return vec3f(sea.z, sea.w, ripples);
+}
+
+// The lowest the surface may stand over ground as drawn at `ground` m (below 0 under the
+// sea): in shallow water a trough flattens rather than bare the ground (water/surface.js's twin).
+fn troughFloor(ground: f32) -> f32 {
+  return seaLayout.uShallowTroughs * min(ground, 0.0);
 }
 
 // Where a tile is read at xz as it wanders `wander` (how far, m; 2 pi over how far

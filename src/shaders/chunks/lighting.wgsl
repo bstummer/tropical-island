@@ -2,7 +2,7 @@
 // with it, then lets the air between it and the camera have its say:
 //
 //   var radiance = albedo / PI * (sunLight(position, normal) + skyIrradiance(position, normal));
-//   radiance += specularLight(position, normal, view, roughness, f0); // glossy surfaces only
+//   radiance += specularLight(position, normal, view, roughness, f0, 1.0); // glossy surfaces only
 //   return sceneOutput(aerialPerspective(radiance, position), alpha);
 //
 // view points from the surface to the camera. A glossy surface's diffuse part
@@ -115,7 +115,9 @@ fn filteredRoughness(roughness: f32, kernel: f32) -> f32 {
 // towards the sky's light as the surface roughens; below the horizon it
 // mirrors the lit ground. The sun's lobe takes the sunlight by height and its
 // visibility, as sunLight() does. roughness is perceptual (0 a mirror, 1 matte).
-fn specularLight(position: vec3f, n: vec3f, view: vec3f, roughness: f32, f0: f32) -> vec3f {
+// sunShare: how much of the sun's lobe shows, 1 but on a film of water, which
+// shows the sea's share (config.water.glitter).
+fn specularLight(position: vec3f, n: vec3f, view: vec3f, roughness: f32, f0: f32, sunShare: f32) -> vec3f {
   let a = max(roughness * roughness, 0.002);
   let a2 = a * a;
   let nv = max(dot(n, view), 1e-4);
@@ -129,7 +131,7 @@ fn specularLight(position: vec3f, n: vec3f, view: vec3f, roughness: f32, f0: f32
   let g = nl / (nl * (1.0 - k) + k) * nv / (nv * (1.0 - k) + k);
   let height = position.y + planetDrop(position.xz);
   let sun = textureSampleLevel(uSunlight, uSunlightSampler, vec2f(sunlightU(height * 0.001), 0.5), 0.0).rgb * sunVisibility(position, n);
-  let lobe = sun * d * g * fresnel(f0, dot(view, h)) / (4.0 * nv);
+  let lobe = sunShare * sun * d * g * fresnel(f0, dot(view, h)) / (4.0 * nv);
 
   let r = reflect(-view, n);
   let sky = mix(skyRadiance(r), shIrradiance(r) / PI, smoothstep(0.1, 0.7, roughness));

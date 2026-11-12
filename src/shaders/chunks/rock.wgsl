@@ -347,7 +347,7 @@ fn rockShine(r: Rock, position: vec3f, n: vec3f, view: vec3f, kernel: f32) -> ve
   let glossy = 1.0 - smoothstep(0.6, 0.8, r.roughness);
   // GLSL's ?: evaluated only the side it chose: an if, so dry rock skips specularLight().
   if (glossy > 0.0) {
-    return glossy * specularLight(position, n, view, filteredRoughness(r.roughness, kernel), r.f0);
+    return glossy * specularLight(position, n, view, filteredRoughness(r.roughness, kernel), r.f0, 1.0);
   }
   return vec3f(0.0);
 }

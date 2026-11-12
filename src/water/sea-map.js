@@ -11,6 +11,7 @@
 //   reef   m to the nearest line of the reef's crest under the sea: + seaward of it, - inside
 //   swell  how much of the open sea's swell reaches here, 0 to 1
 //   wind   how much of the wind's chop has grown here, 0 to 1
+//   chop   how much of the chop reaches here, 0 to 1: the wind's own, or the open sea's
 //   surf   how much of the swell breaks here, 0 to 1
 //   breaks how hard the surf breaks round here, 0 to 1: the surf over tens of metres,
 //          what its foam runs in over (water/surf.js)
@@ -22,7 +23,11 @@
 // stand taller than the water under it allows: what the crest of the reef
 // (or any shallows) takes from it breaks there, and that is the surf; behind it
 // the swell stays as small as the shallowest water it crossed. Land stops it.
-// The wind's chop grows with how far the wind has blown over open water. A wave front
+// The wind's chop grows with how far the wind has blown over open water. The open sea's
+// comes in with the swell and breaks on the shallows as it does, but its lower waves
+// cross more of them, and run on over a reef's flat as broken waves that die away over
+// tens of metres: so the roughness of the open sea fades into the calm of a lagoon,
+// with no line on the water between them. A wave front
 // slows over shallow water, so it bends round what is shallow and bunches up over it:
 // when it reaches each place is worked out as light's would be, through water whose
 // speed goes by its depth. config.water.map holds the numbers.
@@ -143,6 +148,42 @@ export function buildSeaMap(heightmap, settings, side, blend = 0) {
   });
   for (let n = 0; n < count; n++) wind[n] *= heldBy(shallowest(n), chopDepth);
 
+  // The chop, carried along each way of a fan: held by the water as the swell is, and
+  // what gets over the shallows dies away over them, faster the shallower they are;
+  // `raised(n)`, what the wind raises there itself, takes over where it is more.
+  const { breaks: chopBreaks, dies, deep, spreading, round } = settings.chop;
+  // Per sample, how much of it the water holds, and how fast it dies away there, per metre.
+  const holds = new Float32Array(count);
+  const dying = new Float32Array(count);
+  for (let n = 0; n < count; n++) {
+    const depth = shallowest(n);
+    holds[n] = heldBy(depth, chopBreaks);
+    dying[n] = depth < deep ? (1 - smoothstep(deep / 2, deep, depth)) / (dies * Math.max(depth, SHALLOWEST)) : 0;
+  }
+  const carried = (fan, way, raised) => {
+    const out = new Float32Array(count);
+    fan.forEach(([degrees, share]) => {
+      const along = way(degrees);
+      const step = (texel * Math.hypot(along[0], along[1])) / Math.max(Math.abs(along[0]), Math.abs(along[1]));
+      sweep(samples, along, 1, (n, before, across) => {
+        const arriving = (before * (1 - spreading) + across * spreading) * (dying[n] > 0 ? Math.exp(-step * dying[n]) : 1);
+        reach[n] = Math.max(Math.min(arriving, holds[n]), raised ? raised[n] : 0);
+      }, reach);
+      for (let n = 0; n < count; n++) out[n] += share * reach[n];
+    });
+    return out;
+  };
+  // The open sea's, in with the swell; the wind's own, along its way, so it too fades
+  // behind a crest it blew over before it grows again.
+  const raised = wind.map((w) => w * w);
+  const open = carried(spread, (degrees) => outward(from + degrees, side).map((v) => -v), null);
+  const blown = carried(gusts, (degrees) => outward(blows + degrees, side), raised);
+  for (let n = 0; n < count; n++) open[n] = Math.max(open[n], blown[n]);
+  // Softened, but never more than the water holds: deeper troughs would bare a crest.
+  const softened = roundAbout(open, samples, Math.max(Math.round(round / texel / 2), 1));
+  const chop = new Float32Array(count);
+  for (let n = 0; n < count; n++) chop[n] = depths[n] > 0 ? Math.max(raised[n], Math.min(softened[n], holds[n])) : 0;
+
   // When the swell's waves get to each place, and which way they run there.
   const speed = new Float32Array(count);
   for (let n = 0; n < count; n++) speed[n] = waveSpeed(depths[n], settings.swell.period);
@@ -160,6 +201,7 @@ export function buildSeaMap(heightmap, settings, side, blend = 0) {
     inlandO,
     swell,
     wind,
+    chop,
     surf,
     breaks: breaking,
     late,
@@ -188,6 +230,7 @@ export function buildSeaMap(heightmap, settings, side, blend = 0) {
       out.reef = mix(reef);
       out.swell = mix(swell);
       out.wind = mix(wind);
+      out.chop = mix(chop);
       out.surf = mix(surf);
       out.breaks = mix(breaking);
       out.inlandA = mix(inlandA);
@@ -201,6 +244,7 @@ export function buildSeaMap(heightmap, settings, side, blend = 0) {
       if (kept < 1) {
         out.swell = 1 + (out.swell - 1) * kept;
         out.wind = 1 + (out.wind - 1) * kept;
+        out.chop = 1 + (out.chop - 1) * kept;
         out.surf *= kept;
         out.breaks *= kept;
         out.reef = settings.open.reef + (out.reef - settings.open.reef) * kept;
@@ -211,10 +255,10 @@ export function buildSeaMap(heightmap, settings, side, blend = 0) {
 }
 
 // The three layers of half floats the GPU reads (water/sea-map.wgsl): shore, depth,
-// swell, wind, which every pixel of water needs; the way inland, breaks, reef; the
+// swell, chop, which every pixel of water needs; the way inland, breaks, reef; the
 // swell's waves. `late` stays small where they break, so half floats hold it finely.
 const LAYERS = [
-  ['shore', 'depth', 'swell', 'wind'],
+  ['shore', 'depth', 'swell', 'chop'],
   ['inlandA', 'inlandO', 'breaks', 'reef'],
   ['late', 'wayA', 'wayO', 'speed'],
 ];

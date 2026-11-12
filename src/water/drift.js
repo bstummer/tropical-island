@@ -13,6 +13,13 @@ export function twoDrifting(speed, [large, small], [x, z], loop) {
   return new Vector4(tiles(0.8 * x - 0.6 * z, large), tiles(0.6 * x + 0.8 * z, large), tiles(x, small), tiles(z, small));
 }
 
+// How reads of a tile in the frame of the way it drifts, stretched to `stretch` along
+// that way, drift at `speed` (m/s) along it (water-foam.wgsl's lace): per side in `sizes`
+// (m), in tiles/s along the frame's first axis, a whole number of tiles in `loop` s.
+export function alongDrifting(speed, sizes, stretch, loop) {
+  return sizes.map((size) => Math.round((speed * stretch * loop) / size) / loop);
+}
+
 // The two reads' drifts as they go over the water: [[x, z] m/s of the larger, of the smaller].
 export function driftsOf(drift, [large, small]) {
   return [

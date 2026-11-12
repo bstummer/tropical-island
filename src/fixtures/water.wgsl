@@ -69,7 +69,7 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
   }
   let size = vec2f(textureDimensions(uOpaqueDepth));
   let bent = refract(-view, vec3f(0.0, 1.0, 0.0), 1.0 / optics.uIor);
-  let below = seenBelow(in.vWorld, bent, size, optics.uSeabedFade.y, seaDepthAt(in.vWorld.xz, 0.0), 0.0);
+  let below = seenBelow(in.vWorld, bent, size, optics.uSeabedFade.y, seaDepthAt(in.vWorld.xz, 0.0), 0.0, 1.0);
   let seabed = mix(vec3f(below.xz, 0.5), below.on.rgb, below.on.a);
   if (check.uMode == 0) {
     return vec4f(seabed, below.depth);

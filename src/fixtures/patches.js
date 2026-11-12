@@ -153,7 +153,7 @@ async function seenCheck(ctx, seeds, r) {
       overrides: { GREEN_DETAIL: true },
       uniforms: {
         ...tilesUniforms(tiles),
-        ...sandUniforms(averages.sand, ranged(terrain.sand), config.world.island.zones.wetSand, config.sky.sun.sunsetYaw),
+        ...sandUniforms(averages.sand, ranged(terrain.sand), config.world.island.zones.wetSand, config.sky.sun.sunsetYaw, config.water.glitter),
         ...greenUniforms(averages.green, terrain.albedo, ranged(terrain.green), seeds),
         uCells: { value: cellTexture },
         uDrySand: { value: new Vector3(...terrain.albedo.drySand) },

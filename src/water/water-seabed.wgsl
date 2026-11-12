@@ -37,9 +37,10 @@ fn seabedTileAt(uv: vec2f, size: f32, footprint: f32) -> vec4f {
 // The seabed's radiance in air at xz, `depth` m under the sea, for a pixel `footprint`
 // wide along its longer side (dx, dy: its sides, m), its mottling read `sharp` wide,
 // under the sun that reaches the surface above it, with how much it stands above
-// the ground round it and how far the shore is (m). Its light is worked out by the
+// the ground round it, how far the shore is (m), and how much the land's own ground
+// runs on under the water here (`ashore`, 0 to 1). Its light is worked out by the
 // sun as it bends into the water, so a low sun doesn't rake it.
-fn seabedRadiance(xz: vec2f, depth: f32, dx: vec2f, dy: vec2f, sharp: f32, sun: vec3f, rises: f32, shore: f32, ior: f32) -> vec3f {
+fn seabedRadiance(xz: vec2f, depth: f32, dx: vec2f, dy: vec2f, sharp: f32, sun: vec3f, rises: f32, shore: f32, ashore: f32, ior: f32) -> vec3f {
   let ao = terrainCove(xz);
   var info: vec4f;
   var cover: vec4f;
@@ -56,9 +57,10 @@ fn seabedRadiance(xz: vec2f, depth: f32, dx: vec2f, dy: vec2f, sharp: f32, sun: 
   let small = near.g + far.b - 1.0;
   let fine = 2.0 * near.b - 1.0;
 
-  // Coral from the reef's crest back onto the flat, its edge wandering, and on what rises from the floor.
+  // Coral from the reef's crest back onto the flat, its edge wandering, and on what rises
+  // from the floor: up to the surface, but for where the shore's sand and rock take over.
   let reef = smoothstep(-38.0, -8.0, info.w + 16.0 * beds + 6.0 * clumps);
-  let coral = max(reef, smoothstep(0.3, 1.2, rises)) * smoothstep(0.05, 0.25, depth);
+  let coral = max(reef, smoothstep(0.3, 1.2, rises)) * mix(1.0, smoothstep(0.05, 0.25, depth), ashore);
   let heads = 0.87 + 0.13 * near.a;
   let mottled = mix(seabedLook.uCoralDark, seabedLook.uCoralLight, smoothstep(0.1, 0.9, (0.5 + 0.3 * beds + 0.4 * clumps + 0.3 * small + 0.15 * fine) * heads));
 

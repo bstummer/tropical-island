@@ -14,6 +14,10 @@
 // disabled: optional true: kept, and found by name (?view=, the screenshot tool's --views), but left
 //           out of every run over the views: captures, their checks, the benchmark and the tests.
 //
+// At most MAX_ENABLED views are enabled at once (tests/views.test.js holds it): CI captures every
+// enabled view, with its checks, on SwiftShader, and more would make it take too long. Enable the
+// views a stage works on and disable others, which keeps them for later.
+//
 // In a dev build, press P to log the current camera as an entry ready to paste here.
 
 const all = [
@@ -38,6 +42,7 @@ const all = [
   },
   {
     name: 'jungle-edge',
+    disabled: true,
     position: [2.76, 6.67, -48.95],
     yaw: -22.8,
     pitch: 9,
@@ -107,6 +112,7 @@ const all = [
   },
   {
     name: 'open-sea',
+    disabled: true,
     position: [-110, 9, 400],
     yaw: -15,
     pitch: -6,
@@ -117,6 +123,7 @@ const all = [
   },
   {
     name: 'reef',
+    disabled: true,
     position: [3.11, 2.64, -11.59],
     yaw: 168,
     pitch: -0.6,
@@ -127,6 +134,7 @@ const all = [
   },
   {
     name: 'surf',
+    disabled: true,
     position: [-61, 3, 227],
     yaw: 165,
     pitch: -3,
@@ -137,16 +145,18 @@ const all = [
   },
   {
     name: 'air-pass',
+    disabled: true,
     position: [-100, 70, 60],
     yaw: 161.6,
     pitch: -15,
     fov: 60,
     timeOfDay: 11,
     brief: 'Late morning from the air over the lagoon, looking out through the pass: the reef flat either side of it, the crest, the channel leading out, the deep blue beyond. No block, seam or jag in anything under the water.',
-    crops: { pass: [0.5, 0.35], flat: [0.2, 0.42] },
+    crops: { pass: [0.5, 0.66], flat: [0.2, 0.64] },
   },
   {
     name: 'air-headland',
+    disabled: true,
     position: [110, 300, 330],
     yaw: 0,
     pitch: -75,
@@ -156,6 +166,7 @@ const all = [
   },
   {
     name: 'air-rocks',
+    disabled: true,
     position: [13.45, 31.28, 229.86],
     yaw: 229.8,
     pitch: -14.5,
@@ -165,6 +176,7 @@ const all = [
   },
   {
     name: 'air-sun',
+    disabled: true,
     position: [-100, 300, 1000],
     yaw: 44.45,
     pitch: -59.4,
@@ -174,6 +186,7 @@ const all = [
   },
   {
     name: 'lagoon-sun',
+    disabled: true,
     position: [-60, 25, 120],
     yaw: 44.45,
     pitch: -59.4,
@@ -190,6 +203,86 @@ const all = [
     fov: 60,
     timeOfDay: 11,
     brief: "Late morning from 6 m over the open sea, looking down at the sun's reflection: bright patches with smooth, natural edges, no facets or zigzags along any lines.",
+  },
+  {
+    name: 'glare-air',
+    disabled: true,
+    position: [-21.78, 128.51, 99.31],
+    yaw: -207.1,
+    pitch: -13.7,
+    fov: 60,
+    timeOfDay: 16.33,
+    brief: "Late afternoon from 130 m over the cove, looking out along the sun's path on the sea: glitter that reads as sunlight on water, bright but not a white glare burned into the frame, the sea round it still blue.",
+  },
+  {
+    name: 'glare-beach',
+    disabled: true,
+    position: [48.83, 2.14, 17.49],
+    yaw: -210.9,
+    pitch: 2.9,
+    fov: 60,
+    timeOfDay: 16.17,
+    brief: "Late afternoon from the beach, looking out along the sun's path over the lagoon: a broken path of glints, bright but not blinding, with the water round it reading as water.",
+  },
+  {
+    name: 'air-far-sea',
+    disabled: true,
+    position: [9.5, 68.47, 277.23],
+    yaw: -542.1,
+    pitch: -10.1,
+    fov: 60,
+    timeOfDay: 11,
+    brief: "Late morning from 70 m over the headland's foot, looking out over the open sea to the horizon: a sea that lies flat and even out to the haze, its swell and chop shrinking with distance, no bands or bumps that read as hills of water.",
+  },
+  {
+    name: 'reef-end',
+    disabled: true,
+    position: [-223.63, 1.11, 173.19],
+    yaw: -201.9,
+    pitch: -2.6,
+    fov: 60,
+    timeOfDay: 11,
+    brief: "Late morning swimming at the end of the reef, looking along it out to sea: the calm water of the flat giving way to the open sea's swell and chop as the reef falls away, gradually and for a reason the eye can follow.",
+  },
+  {
+    name: 'reef-swim',
+    disabled: true,
+    position: [-1.65, 1.2, 259.77],
+    yaw: -489.1,
+    pitch: -6.2,
+    fov: 60,
+    timeOfDay: 11,
+    brief: "Late morning swimming over the reef flat near the crest, looking along it: clear green water over the flat, the open sea beyond the crest rougher and bluer, with nothing like a line drawn on the water between them.",
+  },
+  {
+    name: 'reef-edge-down',
+    disabled: true,
+    position: [-304.81, 1.45, 126.08],
+    yaw: -556.6,
+    pitch: -72.2,
+    fov: 60,
+    timeOfDay: 11,
+    brief: "Late morning, a swimmer looking down at the seabed at the reef's end: rubble and sand under clear water, nothing on it the ground doesn't have.",
+  },
+  {
+    name: 'reef-foam',
+    disabled: true,
+    position: [-54.83, 1.4, 256.41],
+    yaw: -554.6,
+    pitch: -46.7,
+    fov: 60,
+    timeOfDay: 11,
+    brief: "Late morning, a swimmer by the reef's crest looking down at foam drifting over it: lace sharp at arm's length, the seabed below clean.",
+  },
+  {
+    name: 'reef-bared',
+    disabled: true,
+    position: [85.97, 2.59, 274.72],
+    yaw: 87.5,
+    pitch: -16.9,
+    fov: 60,
+    timeOfDay: 11,
+    brief: "Late morning, a swimmer by the headland's foot looking along the reef's crest as the waves draw down over it: water over the crest in every trough, nothing dark bared, and no straight line of white anywhere.",
   },
   {
     name: 'sea-light',
@@ -233,7 +326,19 @@ const all = [
     brief: "Early morning from just above the low point at the far end of the bay, along the beach to the headland: the sun low behind the hills on the left, whose cool shade still lies over the back of the beach and the headland's face while the first light warms the sand and the lagoon; the shade's edge soft across the beach.",
   },
   {
+    name: 'sun-over-hills',
+    disabled: true,
+    position: [-520, 2.5, -1800],
+    yaw: 162.4,
+    pitch: 2,
+    fov: 40,
+    timeOfDay: 'golden-hour',
+    brief: "Golden hour from a boat in the lagoon on the far side of the island, the low sun just over the hills and a low cliff in front of them: the sun's path of glitter across the water, held back over the cliff's image in the water, where the cliff's long shadow lies.",
+    crops: { path: [0.5, 0.75] },
+  },
+  {
     name: 'sand-edge',
+    disabled: true,
     position: [-45, 4.53, -38.95],
     yaw: -93.4,
     pitch: -6,
@@ -281,6 +386,8 @@ const all = [
     brief: "Late morning at eye height in a dip near the summit, between its rough humps, a rocky one on the right: the ground's skyline up close, which must curve, not break into straight pieces.",
   },
 ];
+
+export const MAX_ENABLED = 8;
 
 export const views = all.filter((v) => !v.disabled);
 
