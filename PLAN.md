@@ -295,6 +295,9 @@ Maritorena et al. 1994 (clear shallow water), Cichocki 2017 (pixel-projected ref
   (`air-sun`) the sun's glare stays grey (220 at most); the ripples mirror the deep zenith as violet-navy
   dashes on the turquoise (`beach`, `reef`); the lagoon's floor seen from 25 m (`lagoon-sun`) shows no
   sand ripples; the bommies read as polka dots from the air (Stage 3's layout, 6.5's coral).
+- The sun's path still reads as a solid white fill in the afternoon (`glare-air`, `glare-beach`,
+  disabled), even at an eighth of its light: its core is tens of times brighter than white, as a real
+  one's is. Halving it (Decisions) only narrowed it.
 - Chevrons of sand and teal in `sand-edge`'s far bay and camouflage in `open-sea`: the outer two of the
   mirror's three rays read the land's image at its nearest cell. Reading all three between cells softens
   them and brings `open-sea` within its shimmer limit (0.40%) for about 1 ms more on a desktop GPU.
@@ -712,6 +715,9 @@ Made with the user. Don't reopen them unless the user does.
 - **The sea's look (6.6)**: the water clearer and more turquoise; the lagoon as calm as it stood; the surf
   as it stood, about 0.9 m high where it breaks; stronger glitter (`glitterCeiling` 8). The hard line
   along a breaking wave's top is left for Stage 7's whitewater. (2026-10-31)
+- **Half the sun's light in its path** (`config.water.glitter` 0.5), on the sea and on wet sand's film of
+  water: the white band narrows by about half. A quarter and an eighth narrowed it more but dulled the
+  glare seen from above at a high sun and cut the path short of the shore in `into-the-sun`. (2026-11-12)
 - **The capture budget is 8 s a SwiftShader frame**, raised with the user's leave as the shadows and the
   sea came (2.5, 4, 6, then 8 s), as long as everything stays as cheap as it can. (2026-10-30)
 - **CI checks, it doesn't measure**: it runs `verify` with `--no-measurements`, every check that can fail

@@ -115,7 +115,7 @@ export function create(ctx) {
   const surfaceUniforms = ({ sand, rock, green, glints, foam }) => ({
     uGlintMean: { value: glints },
     uFoamLevels: { value: foamLevelsUniform(foam) },
-    ...sandUniforms(sand, sandSettings, looks.wetHeight, config.sky.sun.sunsetYaw),
+    ...sandUniforms(sand, sandSettings, looks.wetHeight, config.sky.sun.sunsetYaw, config.water.glitter),
     ...rockUniforms(rock, rockSettings),
     ...greenUniforms(green, albedo, greenSettings, patchSeeds),
   });

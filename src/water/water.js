@@ -181,6 +181,7 @@ export function create(ctx) {
       uUnresolved: { value: unresolvedTable(spectrum) },
       uWaveTexels: { value: quality.waterSize },
       uSunCeiling: { value: settings.glitterCeiling },
+      uGlitter: { value: settings.glitter },
       uFinest: { value: new Vector3(waveSettings.finest.scale, waveSettings.finest.strength, Math.log2(waveSettings.finest.scale)) },
       uCapillaries: { value: waveSettings.finest.capillaries },
       uFootBias: { value: Math.log2(quality.waterSize) },

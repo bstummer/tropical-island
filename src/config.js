@@ -734,6 +734,10 @@ export const water = {
   // How many mip levels sharper than its longer side a square pixel reads the slopes.
   sharper: 0.25,
   glitterCeiling: 8,
+  // How much of the sun's light the waves send towards the eye shows, on the sea and on
+  // a film of water on wet sand alike (chunks/sand.wgsl): the user's pick (PLAN.md,
+  // Decisions), as all of it made an afternoon's sun path a wide white wall.
+  glitter: 0.5,
   // What it mirrors of what stands over it (water/mirror.js): over what share of the
   // frame from its top that fades away, as what is off the frame can't be mirrored;
   // `beyond`: how far past the shore (m) a ray that meets nothing at its own pixel is

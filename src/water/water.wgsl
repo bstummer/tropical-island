@@ -27,6 +27,7 @@ struct Water {
   uUnresolved: array<vec4f, 6>, // per cascade, two of them: the variance its mip levels 0 to 7 have lost, both axes together
   uWaveTexels: f32, // texels across a patch of the waves' texture
   uSunCeiling: f32, // the most the sun's light in the water may reach once exposed
+  uGlitter: f32, // how much of the sun's light the waves send towards the eye shows (config.water.glitter)
   uFinest: vec3f, // how much finer the second read of the ripples is, how strong, and log2 of how much finer
   uCapillaries: f32, // how strong the third read is, as much finer again, right by the eye
   uFootBias: f32, // log2 of the texels across a patch
@@ -358,7 +359,7 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
   var radiance = (1.0 - mirrored) * leaving + mirrored * skyPart;
 
   // The sun is mirrored only where the land doesn't stand in front of it, as the sky.
-  radiance += (1.0 - landShare) * seaGlints(beam * seaGlitter(nSun, view, frame.uSunDirection, variance), in.vRest, dx, dy, ground, water.uSeconds);
+  radiance += (1.0 - landShare) * seaGlints(water.uGlitter * beam * seaGlitter(nSun, view, frame.uSunDirection, variance), in.vRest, dx, dy, ground, water.uSeconds);
 
   // Foam over all of it, a surface of its own.
   var foamCover = 0.0;
