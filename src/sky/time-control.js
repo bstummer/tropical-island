@@ -1,9 +1,9 @@
-// Dev builds only: , and . step the time of day back and forth by
-// config.sky.stepMinutes (hold to scrub), Shift + , / . jump to the previous or
-// next named time (sun.js step()). Stops at the ends of daylight. Logs the new
-// time, which then reaches every system on its next update, as a time set at
-// boot would. The keys go by position (KeyboardEvent.code), the same on most
-// layouts. The in-game settings replace this in PLAN.md Stage 16.
+// , and . step the time of day back and forth by config.sky.stepMinutes (hold
+// to scrub), Shift + , / . jump to the previous or next named time (sun.js
+// step()). Stops at the ends of daylight. Logs the new time, which then reaches
+// every system on its next update, as a time set at boot would. The keys go by
+// position (KeyboardEvent.code), the same on most layouts. In every build, not
+// in captures; the in-game settings of PLAN.md Stage 16 join it.
 import { clock, sunPath } from './sun.js';
 
 const KEYS = { Comma: -1, Period: 1 };

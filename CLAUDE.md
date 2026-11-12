@@ -59,8 +59,8 @@ URL params: `?view=beach&time=17.5&t=12.5&seed=1&quality=low&capture=1`. `time` 
 named time (`sunrise`, `midday`, `golden-hour`, `sunset`); night is an error. Also `tonemap` and `exposure` (to
 compare looks), `fixture=<name>` (a test scene from `src/fixtures/`; `tonecard` and `light` are for judging the
 look), `stats=1` (the frame readout, F3) and `bench=1` (the benchmark: every view, then a summary to paste into
-a session). Dev keys: **P** copies the camera as a `views.js` entry; **,** and **.** step the time of day
-(Shift: to the next named time).
+a session). Keys: **,** and **.** step the time of day (Shift: to the next named time), in every build. Dev
+key: **P** copies the camera as a `views.js` entry.
 
 **Cloud sessions** run in Linux with no GPU and no display: run `npm ci`, then once per machine
 `npx playwright install-deps chromium` (needs root). Captures fall back to SwiftShader, about half a minute a

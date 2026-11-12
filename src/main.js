@@ -190,7 +190,7 @@ async function boot() {
     if (params.bench) tools.push(benchmark.create(ctx, ready));
     else tools.push(input.create(ctx));
     tools.push(readout.create(ctx));
-    if (import.meta.env.DEV) tools.push(timeControl.create(ctx));
+    tools.push(timeControl.create(ctx));
   }
 
   function update() {

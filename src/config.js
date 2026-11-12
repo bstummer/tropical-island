@@ -94,7 +94,7 @@ export const sky = {
   // The aureole around the sun (sky/sky.wgsl): the sharp forward peak of the haze's
   // scattering, which makes the sun glow a few degrees wide, as the eye sees it.
   aureole: { g: 0.98, strength: 0.012 },
-  stepMinutes: 10, // the dev time control (sky/time-control.js): , and . step the time by this much
+  stepMinutes: 10, // the time control (sky/time-control.js): , and . step the time by this much
   // The atmosphere (sky/atmosphere.wgsl). Lengths in km, scattering and
   // absorption per km at sea level; Earth's values after Hillaire 2020, plus a
   // humid marine haze layer that softens the horizon and warms the low sun.
@@ -855,9 +855,9 @@ export const capture = {
   // 2500 since rock (Stage 4.4): where it meets the beach, a pixel runs both
   // surfaces' detail. 4000 since the sun's shadows (Stage 5), with the user's
   // leave: every lit pixel reads them, and a pass over the terrain shader's
-  // cost waits (PLAN.md, Known from 5.1). 6000 since the sea (Stage 6), with
-  // the user's leave: the seabed is back, and the water reads it. 8000 since its
-  // mirror, glints and surf, likewise (PLAN.md, Known from 6.4 to 6.6).
+  // cost waits (PLAN.md 5.1). 6000 since the sea (Stage 6), with the user's
+  // leave: the seabed is back, and the water reads it. 8000 since its mirror,
+  // glints and surf, likewise (PLAN.md, Decisions).
   frameBudgetMs: 8000,
   // Seconds a capture waits before it fails rather than hang the tool: for the
   // work a frame waits on (core/capture.js; the sky's light after a time
