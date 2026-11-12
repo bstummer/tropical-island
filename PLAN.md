@@ -82,7 +82,7 @@ when a choice is about taste or scope rather than engineering (see Open question
 | 4b | WebGPU port | The cove | done |
 | 4c | Maths of our own | The cove | done |
 | 5 | Shadows | The cove | done |
-| 6 | Ocean | The cove | review |
+| 6 | Ocean | The cove | done |
 | 7 | Shoreline | The cove | todo |
 | 8 | Foliage foundation and coconut palms | The cove | todo |
 | 9 | Cove vegetation | The cove | todo |
