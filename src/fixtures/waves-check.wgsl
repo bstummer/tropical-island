@@ -47,5 +47,6 @@ fn fragmentMain(in: Fullscreen) -> @location(0) vec4f {
     moved += reach[c] * textureSampleLevel(uWaves, uWavesSampler, uv, 2 * c, 0.0).xyz;
   }
   moved.y += surfAt(sea, seaShoreAt(xz), seaWaveAt(xz), 0.0, 0.0, xz, check.uSeconds).height;
+  moved.y = max(moved.y, troughFloor(terrainHeight(terrainCove(xz), 0)));
   return vec4f(moved, 1.0);
 }

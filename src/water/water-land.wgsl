@@ -54,17 +54,26 @@ fn landImageUv(p: vec3f, dir: vec3f, far: f32) -> vec3f {
   return vec3f(clip.xy / max(clip.w, 1e-4) * vec2f(0.5, -0.5) + 0.5, clip.w);
 }
 
+// Whether a ray's landing has any image to read: in front of the eye and within the
+// frame's rows. Off its sides it reads the side's column, as the land beyond a side
+// runs on from what stands at it; taking it for sky put a sliver of sky by each side
+// wherever the waves tilt rays out of the frame.
+fn landOnImage(at: vec3f) -> bool {
+  return at.z > 0.0 && at.y >= 0.0 && at.y < 1.0;
+}
+
 // The land along that ray, read at the nearest cell: enough where the waves blur it.
 fn landNearest(at: vec3f, eyeW: f32) -> vec4f {
-  if (at.z <= 0.0 || any(at.xy < vec2f(0.0)) || any(at.xy >= vec2f(1.0))) {
+  if (!landOnImage(at)) {
     return vec4f(0.0);
   }
-  return landCell(vec2i(at.xy * water.uMirrorCells.xy), eyeW);
+  let cell = vec2i(at.xy * water.uMirrorCells.xy);
+  return landCell(vec2i(clamp(cell.x, 0, i32(water.uMirrorCells.x) - 1), cell.y), eyeW);
 }
 
 // Between the four nearest cells: where the water lies still enough to show the land sharp.
 fn landSmooth(at: vec3f, eyeW: f32) -> vec4f {
-  if (at.z <= 0.0 || any(at.xy < vec2f(0.0)) || any(at.xy >= vec2f(1.0))) {
+  if (!landOnImage(at)) {
     return vec4f(0.0);
   }
   let st = at.xy * water.uMirrorCells.xy - 0.5;

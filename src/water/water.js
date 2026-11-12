@@ -24,7 +24,7 @@ import { createWaves } from './waves.js';
 import { createMirror } from './mirror.js';
 import { createSurf } from './surf.js';
 import { selectSea } from './water-nodes.js';
-import { twoDrifting } from './drift.js';
+import { alongDrifting, twoDrifting } from './drift.js';
 
 const MAX_NODES = 2048;
 const LOD_MAX = 16; // water.wgsl's arrays hold this many levels
@@ -42,8 +42,9 @@ export function opticsUniforms({ dimming, body, through, ior, seabedFade }) {
 }
 
 // The uniforms of sea-map.wgsl but the map and its layout, from config.water.
-export function seaUniforms({ waves, map }) {
+export function seaUniforms({ waves, map, shallowTroughs }) {
   return {
+    uShallowTroughs: { value: shallowTroughs },
     uRipplesDepth: { value: waves.ripplesDepth },
     uChopWander: { value: new Vector2(waves.chopWander.reach, (2 * Math.PI) / waves.chopWander.across) },
     uSeaOpen: { value: new Vector2(map.open.over, map.open.reef) },
@@ -51,7 +52,7 @@ export function seaUniforms({ waves, map }) {
 }
 
 // The uniforms of water-surf.wgsl, from config.water.surf and the way the swell runs.
-export function surfUniforms({ period, height, shoals, fades, limit, dips, least, back, front, fall, ahead, run, always, wave, trail, toe, sets, beat, along, wander }, way) {
+export function surfUniforms({ period, height, shoals, fades, limit, dips, least, back, front, fall, ahead, run, always, wave, trail, toe, sets, beat, along, wander, standsBy }, way) {
   if (wander.length !== SURF_WANDERS) throw new Error(`config.water.surf: ${wander.length} terms of the front's wander; water-surf.wgsl holds ${SURF_WANDERS}`);
   return {
     uSurfSets: { value: new Vector4(sets[0], sets[1], beat, 0) },
@@ -62,6 +63,7 @@ export function surfUniforms({ period, height, shoals, fades, limit, dips, least
     uSurfWave: { value: new Vector4(limit, least, back, front) },
     uSurfFoam: { value: new Vector4(fall, ahead, run, always) },
     uSurfBreak: { value: new Vector4(wave, trail, toe, dips) },
+    uSurfStands: { value: new Vector2(...standsBy) },
   };
 }
 
@@ -86,7 +88,7 @@ function seaMapFor(ctx, seed) {
     const { config } = ctx;
     const building = ctx.terrain.grids.then((heightmap) => {
       const map = buildSeaMap(heightmap, config.water.map, config.world.island.cove.headlandSide, config.world.terrain.blend);
-      return { map, levels: seaMapLevels(map, toHalfFloatNearest, Math.floor(Math.log2(map.samples)) + 1) };
+      return { map, heightmap, levels: seaMapLevels(map, toHalfFloatNearest, Math.floor(Math.log2(map.samples)) + 1) };
     });
     kept.set(seed, building);
     building.catch(() => {
@@ -140,16 +142,22 @@ export function create(ctx) {
       uSeabedTurns: { value: new Vector2(...settings.seabedTurns) },
       uSurfaceTiles: ctx.terrain.surfaces.uSurfaceTiles,
       uRisesLevel: { value: Math.log2(settings.seabedRises / settings.map.texel) },
+      uGroundNear: { value: new Vector2(...settings.groundNear) },
       uRippleWander: { value: new Vector2(waveSettings.wander.reach, (2 * Math.PI) / waveSettings.wander.across) },
       uGustSizes: { value: new Vector2(...waveSettings.gusts.sizes) },
       uGustDrift: { value: twoDrifting(waveSettings.gusts.speed, waveSettings.gusts.sizes, direction(waveSettings.chop.blows), waveSettings.gusts.loop) },
       uGustStrength: { value: waveSettings.gusts.strength },
+      uGustFades: { value: new Vector2(...waveSettings.gusts.fades) },
       uHighUp: { value: new Vector3(...waveSettings.highUp.heights, waveSettings.highUp.ripples) },
       uAureole: { value: new Vector2(config.sky.aureole.g, config.sky.aureole.strength) },
       ...surfUniforms(settings.surf, swellWay),
       uFoamAlbedo: { value: linear(settings.surf.albedo) },
-      uFoamLook: { value: new Vector3(...settings.surf.lace, settings.surf.softOver) },
-      uFoamDrift: { value: twoDrifting(settings.surf.drift, settings.surf.lace, swellWay, waveSettings.loop) },
+      uFoamLook: { value: new Vector3(...settings.surf.patches, settings.surf.softOver) },
+      uFoamDrift: { value: twoDrifting(settings.surf.drift, settings.surf.patches, swellWay, waveSettings.loop) },
+      uFoamLace: { value: new Vector3(...settings.surf.lace.tiles, settings.surf.lace.stretch) },
+      uFoamCovers: { value: new Vector2(...settings.surf.lace.covers) },
+      uFoamLaceDrift: { value: new Vector2(...alongDrifting(settings.surf.drift, settings.surf.lace.tiles, settings.surf.lace.stretch, waveSettings.loop)) },
+      uFoamLevels: ctx.terrain.surfaces.uFoamLevels,
       uFoamStands: { value: new Vector4(...settings.surf.stands) },
       uFoamFacing: { value: settings.surf.facing },
       uFoamBacklit: { value: new Vector2(...settings.surf.backlit) },
@@ -215,7 +223,7 @@ export function create(ctx) {
       material.uniforms.uSeaMap.value = seaTexture;
       material.uniforms.uSeaLayout.value.set(origin[0] - texel / 2, origin[1] - texel / 2, 1 / (samples * texel), waveSettings.ripplesLeast);
       surf = createSurf(settings.surf, swellWay);
-      surface = createSurface(spectrum, map, island.toCove, waveSettings.inJs, waveSettings.ripplesLeast, waveSettings.ripplesDepth, surf, waveSettings.chopWander);
+      surface = createSurface(spectrum, map, island.toCove, waveSettings.inJs, waveSettings.ripplesLeast, waveSettings.ripplesDepth, surf, waveSettings.chopWander, { share: settings.shallowTroughs, groundAt: built.heightmap.heightAt });
       Object.assign(ctx.water, { map, surface, seaTexture, seaLayout: material.uniforms.uSeaLayout.value });
       for (const mesh of meshes) mesh.visible = true;
     })

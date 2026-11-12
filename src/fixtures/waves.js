@@ -144,13 +144,13 @@ export function create(ctx) {
       return read;
     };
 
-    // What the sea knows, on the GPU and in JS: shore, depth, swell, wind.
+    // What the sea knows, on the GPU and in JS: shore, depth, swell, chop.
     const seen = await run(0);
     const shifted = await run(0, MISTAKE.layout);
     const here = {};
     points.forEach(({ a, o }, n) => {
       map.at(a, o, here);
-      const want = [here.shore, here.depth, here.swell, here.wind];
+      const want = [here.shore, here.depth, here.swell, here.chop];
       // How much a metre or a share is worth: a metre in a hundred, a share in a hundred.
       const scale = [100, 100, 1, 1];
       result.map.points++;
@@ -168,7 +168,8 @@ export function create(ctx) {
     const moved = await run(1);
     const cornered = await run(4);
     const { waves: waveSettings } = config.water;
-    const whole = createSurface(spectrum, map, island.toCove, { rest: 0, most: Infinity }, waveSettings.ripplesLeast, waveSettings.ripplesDepth, createSurf(config.water.surf, ctx.water.swellWay), waveSettings.chopWander);
+    const shallow = { share: config.water.shallowTroughs, groundAt: (await ctx.terrain.grids).heightAt };
+    const whole = createSurface(spectrum, map, island.toCove, { rest: 0, most: Infinity }, waveSettings.ripplesLeast, waveSettings.ripplesDepth, createSurf(config.water.surf, ctx.water.swellWay), waveSettings.chopWander, shallow);
     const [all, later, inJs] = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
     points.forEach(({ xz }, n) => {
       whole.displacement(xz[0], xz[1], t, all);

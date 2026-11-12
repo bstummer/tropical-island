@@ -189,8 +189,8 @@ test("the unresolved slopes: none in the finest mip's waves, growing as mips los
 });
 
 // A map of its own: full reach everywhere, nothing of what the island does.
-const open = { at: (a, o, out) => Object.assign(out, { swell: 1, wind: 1, depth: 20 }) };
-const nowhere = { at: (a, o, out) => Object.assign(out, { swell: 0, wind: 0, depth: 0 }) };
+const open = { at: (a, o, out) => Object.assign(out, { swell: 1, chop: 1, depth: 20 }) };
+const nowhere = { at: (a, o, out) => Object.assign(out, { swell: 0, chop: 0, depth: 0 }) };
 
 test('the surface in JS: still where nothing reaches, moving where the sea does, the same at a time and a loop later, and it follows a crest back to where it came from', () => {
   const spectrum = spectrumOf(6);
@@ -259,7 +259,7 @@ test('the shorter a wave of the chop the wider it spreads, down to its least; th
 
 test('the chop\'s tile wanders in JS as on the GPU, by no more than its reach', () => {
   const spectrum = { ...spectrumOf(5), cascades: spectrumOf(5).cascades.slice(0, 2).map((c, n) => (n === 0 ? { ...c, amplitudes: new Float32Array(c.amplitudes.length) } : c)) };
-  const map = { at: (a, o, out) => Object.assign(out, { swell: 0, wind: 1, depth: 20 }) };
+  const map = { at: (a, o, out) => Object.assign(out, { swell: 0, chop: 1, depth: 20 }) };
   const inJs = { rest: 0, most: Infinity };
   const { reach, across } = waves.chopWander;
   const wandering = createSurface(spectrum, map, (x, z) => [x, z], inJs, waves.ripplesLeast, 1, null, waves.chopWander);
@@ -280,23 +280,43 @@ test('the chop\'s tile wanders in JS as on the GPU, by no more than its reach', 
 test('the surface in JS scales each cascade by how much of it reaches a point, as the GPU does', () => {
   const spectrum = { ...spectrumOf(7) };
   spectrum.cascades = spectrum.cascades.slice(0, 1);
-  const onlySwell = (swell) => createSurface(spectrum, { at: (a, o, out) => Object.assign(out, { swell, wind: 0, depth: 0 }) }, (x, z) => [x, z], waves.inJs, waves.ripplesLeast);
+  const onlySwell = (swell) => createSurface(spectrum, { at: (a, o, out) => Object.assign(out, { swell, chop: 0, depth: 0 }) }, (x, z) => [x, z], waves.inJs, waves.ripplesLeast);
   const [whole, half] = [onlySwell(1), onlySwell(0.5)];
   for (const [x, z, t] of [[5, 7, 1], [-40, 90, 3.5], [200, -13, 8]]) {
     const [a, b] = [whole.displacement(x, z, t), half.displacement(x, z, t)];
     assert.ok(Math.abs(a[1]) > 1e-3);
     a.forEach((v, c) => assert.ok(Math.abs(b[c] - 0.5 * v) < 1e-9, `half the swell at ${x}, ${z}: ${b[c]}, not half of ${v}`));
   }
-  // Ripples reach calm water, but none where there is no water to move.
-  const reach = (wind, depth) => createSurface(spectrum, { at: (a, o, out) => Object.assign(out, { swell: 0, wind, depth }) }, (x, z) => [x, z], waves.inJs, waves.ripplesLeast).reachInto(0, 0, [0, 0, 0]);
+  // The chop as the map says; ripples reach calm water, but none where there is no water
+  // to move, and more where the chop is up.
+  const reach = (chop, depth, swell = 0) => createSurface(spectrum, { at: (a, o, out) => Object.assign(out, { swell, chop, depth }) }, (x, z) => [x, z], waves.inJs, waves.ripplesLeast).reachInto(0, 0, [0, 0, 0]);
   assert.equal(reach(0, 5)[2], waves.ripplesLeast);
   assert.equal(reach(0, 0)[2], 0);
-  assert.equal(reach(1, 5)[1], 1);
-  assert.equal(reach(0.5, 5)[1], 0.25);
-  // The open sea's own chop comes in with the swell, whatever the wind does here.
-  const swelled = (swell) => createSurface(spectrum, { at: (a, o, out) => Object.assign(out, { swell, wind: 0, depth: 5 }) }, (x, z) => [x, z], waves.inJs, waves.ripplesLeast).reachInto(0, 0, [0, 0, 0]);
-  assert.deepEqual(swelled(1), [1, 1, 1]);
-  assert.deepEqual(swelled(0.2).map((v) => Number(v.toFixed(6))), [0.2, 0.04, waves.ripplesLeast]);
+  assert.deepEqual(reach(1, 5, 1), [1, 1, 1]);
+  assert.deepEqual(reach(0.5, 5, 0.2), [0.2, 0.5, waves.ripplesLeast]);
+  assert.deepEqual(reach(0.8, 5, 0.2), [0.2, 0.8, 0.8]);
+  assert.equal(reach(0.01, 5)[2], waves.ripplesLeast);
+  // However much chop reaches it, the last of the water at the waterline lies still: its troughs would bare the sand.
+  assert.equal(reach(0.5, 0)[2], 0);
+  assert.ok(reach(0.5, 0.1)[2] < 0.1 * reach(0.5, 5)[2], `ripples ${reach(0.5, 0.1)[2]} in 10 cm of water`);
+});
+
+test('in shallow water a trough flattens: the surface draws down no more than its share of the water to the ground as drawn', () => {
+  const spectrum = spectrumOf(4);
+  const crest = { at: (a, o, out) => Object.assign(out, { swell: 1, chop: 1, depth: 0.3 }) };
+  const ground = -0.3;
+  const share = config.water.shallowTroughs;
+  const floored = createSurface(spectrum, crest, (x, z) => [x, z], waves.inJs, waves.ripplesLeast, 1, null, undefined, { share, groundAt: () => ground });
+  const free = createSurface(spectrum, crest, (x, z) => [x, z], waves.inJs, waves.ripplesLeast);
+  let [lowest, freeLowest] = [Infinity, Infinity];
+  for (let i = 0; i < 400; i++) {
+    const [x, z, t] = [13.7 * i, -9.1 * i, 0.37 * i];
+    lowest = Math.min(lowest, floored.displacement(x, z, t)[1]);
+    freeLowest = Math.min(freeLowest, free.displacement(x, z, t)[1]);
+  }
+  assert.ok(lowest >= share * ground - 1e-9, `the surface ${lowest} m over ground ${ground} m deep`);
+  assert.ok(freeLowest < share * ground - 0.1, `the waves themselves only reach ${freeLowest} m: nothing to flatten`);
+  assert.ok(share * ground > ground + 0.1, 'the floor leaves water over the ground');
 });
 
 test('the sea mesh reaches past the far plane, so past the horizon wherever it is not cut by that, from 20 km round the island', () => {

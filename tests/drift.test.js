@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { config } from '../src/config.js';
 import { createRandom } from '../src/core/random.js';
 import { createIsland } from '../src/world/island.js';
-import { driftsOf, twoDrifting } from '../src/water/drift.js';
+import { alongDrifting, driftsOf, twoDrifting } from '../src/water/drift.js';
 
 const { waves, surf } = config.water;
 const side = config.world.island.cove.headlandSide;
@@ -20,7 +20,7 @@ test('the gusts drift with the wind and the lace with the swell, at their speed 
     };
     const cases = [
       ['gusts', waves.gusts.speed, waves.gusts.sizes, direction(waves.chop.blows), waves.gusts.loop],
-      ['lace', surf.drift, surf.lace, direction(waves.swell.from).map((v) => -v), waves.loop],
+      ['foam', surf.drift, surf.patches, direction(waves.swell.from).map((v) => -v), waves.loop],
     ];
     for (const [name, speed, sizes, way, loop] of cases) {
       const drift = twoDrifting(speed, sizes, way, loop);
@@ -33,4 +33,14 @@ test('the gusts drift with the wind and the lace with the swell, at their speed 
       }
     }
   }
+});
+
+test("the foam's lace drifts along the swell's way at its speed, whole tiles in the loop", () => {
+  const { tiles, stretch } = surf.lace;
+  const drifts = alongDrifting(surf.drift, tiles, stretch, waves.loop);
+  drifts.forEach((v, n) => {
+    assert.ok(Number.isInteger(Math.round(v * waves.loop * 1e6) / 1e6), `${v * waves.loop} tiles in the loop`);
+    const fast = (v * tiles[n]) / stretch;
+    assert.ok(Math.abs(fast / surf.drift - 1) < 0.05, `the lace read ${tiles[n]} m wide drifts at ${fast.toFixed(3)} m/s, not ${surf.drift}`);
+  });
 });

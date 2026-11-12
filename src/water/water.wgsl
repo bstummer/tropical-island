@@ -33,10 +33,12 @@ struct Water {
   uLogPatches: vec3f, // log2 of uPatches
   uSharper: f32, // how many mip levels sharper than its longer side a square pixel reads the slopes
   uRisesLevel: f32, // the sea map's mip level what rises from the seabed is told by
+  uGroundNear: vec2f, // m from the shore from which the opaque scene under the sea counts less, and not at all
   uRippleWander: vec2f, // how far the ripples' tile wanders, m; 2 pi over how far apart it does
   uGustSizes: vec2f, // the sides of the two reads of the tile the wind's gusts are told from, m
   uGustDrift: vec4f, // how each drifts with the wind, tiles/s
   uGustStrength: f32, // how much they say
+  uGustFades: vec2f, // m from the eye over which they fade out
   uHighUp: vec3f, // from what height of the eye the ripples soften, up to what height (m); how many mip levels softer they are read then
   uAureole: vec2f, // the sun's glow, as sky/sky.wgsl has it: how sharp its peak is, how strong
   uHorizonFade: f32, // the sine of how far above the rim of the sea it has gone over into the sky by 63%
@@ -51,8 +53,12 @@ struct Water {
   uGlintSizes: vec3f, // the three reads of the tile: its side, m
   uGlintDrift: array<vec4f, 3>, // and how each drifts, tiles/s
   uFoamAlbedo: vec3f, // linear
-  uFoamLook: vec3f, // the sides of the tile as its lace reads it (m); how wide a pixel (m) has it soft through and through
+  uFoamLook: vec3f, // the sides of the seabed's tile as its patches read it (m); how wide a pixel (m) has it an even veil
   uFoamDrift: vec4f, // how each read of the tile drifts with the swell, tiles/s
+  uFoamLace: vec3f, // the sides of the foam's tile as its lace reads it (m); its stretch along the swell's way
+  uFoamCovers: vec2f, // how much foam covers none of the water, and all of it
+  uFoamLaceDrift: vec2f, // how each read of it drifts along the swell's way, tiles/s
+  uFoamLevels: array<vec4f, 5>, // the levels of its tile that leave each sixteenth of the foam (textures/foam.js)
   uFoamStands: vec4f, // how high whitewater stands off the water (m); how much ground that may hide, at most (m); from what distance it does, and in full (m)
   uFoamFacing: f32, // how much of the sun's light it takes with the sun on the horizon
   uFoamBacklit: vec2f, // how much of the sun's light its thin tops let through, and how much of that goes on onwards (Henyey-Greenstein g)
@@ -111,6 +117,7 @@ fn vertexMain(in: VertexIn) -> Varyings {
   }
 
   moved.y += surfAt(sea, seaShoreAt(rest), seaWaveAt(rest), 0.0, 0.0, rest, water.uSeconds).height;
+  moved.y = max(moved.y, troughFloor(terrainHeight(terrainCove(rest), 0)));
 
   var world = vec3f(rest.x + moved.x, moved.y, rest.y + moved.z);
   world.y -= planetDrop(world.xz);
@@ -245,7 +252,8 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
   }
   let sea = seaAt(in.vRest);
   var reach = cascadeReach(sea);
-  reach.z *= seaGusts(in.vRest, water.uGustSeconds);
+  // The gusts fade out far off, where at a grazing angle their patches read as hills of water.
+  reach.z *= mix(seaGusts(in.vRest, water.uGustSeconds), 1.0, smoothstep(water.uGustFades.x, water.uGustFades.y, length(in.vRest - frame.cameraPosition.xz)));
   let chopped = vec4f(s1.xy * wanderedStretch(in.vRest, seaLayout.uChopWander), s1.zw);
   let rippled = s2 + water.uFinest.y * vec4f(finest.xy * FINEST_TURN, 0.0, 0.0);
   var slopes = reach.x * s0 + reach.y * chopped + reach.z * vec4f(rippled.xy * rippleStretch, rippled.zw);
@@ -288,14 +296,17 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
   let facing = max(dot(n, view), 0.0);
   let bent = refract(-view, n, 1.0 / optics.uIor);
   let wide = sqrt(longest);
-  let below = seenBelow(p, bent, size, optics.uSeabedFade.y, sea.y, wide);
+  // Near a shore the ground as drawn runs on under the waterline, and rocks stand
+  // there; out on the reef this draws all of the seabed, the coral up to the crest.
+  let ashore = 1.0 - smoothstep(water.uGroundNear.x, water.uGroundNear.y, sea.x);
+  let below = seenBelow(p, bent, size, optics.uSeabedFade.y, sea.y, wide, ashore);
   var seabed = vec3f(0.0);
   if (below.on.a < 1.0 && below.depth < optics.uSeabedFade.y) {
     // The ground round it, tens of metres across: what rises from that, and how far the shore is.
     let round = seaAtLevel(below.xz, max(seaLevel(wide), water.uRisesLevel));
     // Its mottling sharper than the longer side where the pixel stretches, or the near sea's floor blurs.
     let sharp = wide * exp2(-min(0.5 * stretch, 1.5));
-    seabed = seabedRadiance(below.xz, below.depth, dx, dy, sharp, sun, round.y - below.depth, round.x, optics.uIor);
+    seabed = seabedRadiance(below.xz, below.depth, dx, dy, sharp, sun, round.y - below.depth, round.x, ashore, optics.uIor);
   }
   seabed = mix(seabed, sceneRadiance(below.on.rgb) / frame.uExposure, below.on.a);
   let leaving = waterLeaving(optics, seabed, below.depth, max(facing, 0.02), frame.uSunDirection.y, sun, sky);
@@ -353,7 +364,7 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
   var foamCover = 0.0;
   if (foam > 0.0) {
     // Sharper than the pixel's longer side, or it smears across the eye's line.
-    let lace = seaFoamCover(foam, in.vRest, water.uSeconds, wide * exp2(-min(0.5 * stretch, 1.5)));
+    let lace = seaFoamCover(foam, in.vRest, water.uSeconds, wide * exp2(-min(0.5 * stretch, 1.5)), wide);
     foamCover = lace.x;
     radiance = mix(radiance, lace.y * foamLight(beam, sky, view), foamCover);
   }

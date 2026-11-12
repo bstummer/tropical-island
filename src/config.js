@@ -625,7 +625,15 @@ export const world = {
 // m, and how much larger its second read is; what stands `seabedRises`-wide proud
 // of the ground round it is coral. The ground as drawn gives way to the seabed
 // the water draws over `groundFade` m under the sea, and needs its shading no
-// further down than the deepest trough, `troughs` m.
+// further down than the deepest trough, `troughs` m. The water takes what the
+// opaque scene holds under the sea only within `groundNear` m of the shore (from,
+// to): there the ground runs on under the waterline, and the rocks stand
+// (tests/rock-placement.test.js holds every rock within its first); out on the
+// reef the water draws the seabed all the way up, coral the land's shaders know
+// nothing of, which they would show as pale sand where the crest nears the sea.
+// In shallow water a trough flattens: the waves draw the surface down no more than
+// `shallowTroughs` of the water under it, to the ground as drawn, or troughs would
+// bare a reef's crest in dark patches.
 const surfPeriod = 11.25; // s between the waves of the swell that reach the reef
 const swellFrom = 15; // degrees to the right of straight out to sea the swell comes from: the map's and the waves' alike
 export const water = {
@@ -643,6 +651,8 @@ export const water = {
   seabedRises: 32,
   groundFade: [0.05, 0.25],
   troughs: 2,
+  groundNear: [20, 30],
+  shallowTroughs: 0.35,
   // What the sea knows of the island (water/sea-map.js), `texel` metres apart.
   // The swell runs in from `from` degrees to the right of straight out to sea,
   // over a fan of [degrees off that, share]; it is held to the water under it
@@ -653,6 +663,12 @@ export const water = {
   // they slow over the shallows. The wind blows the way the sand's does, over a fan of gusts; its chop
   // grows over `fetch` m of open water, and is held to the water under it from
   // `depth` m deep up; `grows`: how far (m) over water a metre deep it can have grown, by the square of the depth.
+  // The open sea's chop comes in with the swell, over its fan (`chop`): held to the water
+  // under it from `breaks` m deep up, its waves being lower than the swell's; what crosses
+  // the shallows dies away over them, over `dies` m per metre of depth, as broken waves run
+  // on over a reef's flat and fade, and not at all from `deep` m down; `spreading` of it
+  // goes sideways per sample, and its edges soften over `round` m. The chop's reach is
+  // the larger of it and the wind's own, squared.
   // Past the map's square the open sea goes on: what the island held back gives way to it
   // over `open.over` m, and the reef's crest is taken to lie `open.reef` m off, past any surf's fade.
   map: {
@@ -660,6 +676,7 @@ export const water = {
     open: { over: 2000, reef: 2000 },
     swell: { from: swellFrom, spread: [[-40, 0.1], [-20, 0.2], [0, 0.4], [20, 0.2], [40, 0.1]], breaks: 1.6, spreading: 0.08, surf: 6, round: 20, full: 0.08, period: surfPeriod },
     wind: { blows: world.terrain.sand.wind, gusts: [[-15, 0.25], [0, 0.5], [15, 0.25]], fetch: 400, depth: 1, grows: 30 },
+    chop: { breaks: 1, dies: 80, deep: 10, spreading: 0.3, round: 8 },
   },
   // The waves (water/spectrum.js). Three cascades, the sides of their patches in
   // m, whose ratios aren't simple so each hides the others' repeats: the swell,
@@ -681,7 +698,9 @@ export const water = {
   // ripples a pixel wide don't crawl (the chop stays, the user's pick, PLAN.md 6.6). `gusts`:
   // patches the wind roughens and leaves smooth, moving with it: the sides (m) of the two reads of
   // the tile they're told from, how fast they go (m/s), how much they say, and the time (s) they
-  // come round in, long enough for whole tiles in it to keep their speed and way. `chop.spreadLeast`: how
+  // come round in, long enough for whole tiles in it to keep their speed and way; they fade out
+  // between `fades` m from the eye: further off, at a grazing angle, a patch's roughness swings
+  // what the sea mirrors as much as a hill of water would, and the far sea reads as lumpy. `chop.spreadLeast`: how
   // wide the shortest of the chop's waves spread, as its `spread` holds at its peak: the shorter a
   // wave the wider, or the ripples lie in parallel rows. `inJs`: what water/surface.js sums of each: all
   // but `rest` of its power, at most `most` waves.
@@ -695,7 +714,7 @@ export const water = {
     wander: { reach: 6, across: 160 },
     chopWander: { reach: 40, across: 1130 },
     highUp: { heights: [40, 250], ripples: 0.5 },
-    gusts: { sizes: [1700, 2300], speed: 3, strength: 1.6, loop: 7200 },
+    gusts: { sizes: [1700, 2300], speed: 3, strength: 1.6, loop: 7200, fades: [400, 1500] },
     swell: { height: 1.1, period: 11, gamma: 3.3, spread: 30, from: swellFrom, choppy: 0.5, shortest: 50 },
     chop: { height: 0.55, period: 3.8, gamma: 2, spread: 6, spreadLeast: 1.5, blows: world.terrain.sand.wind, split: 2.5, choppy: 0.65, rippleSlope: 0.09 },
     inJs: { rest: 0.02, most: 400 },
@@ -737,11 +756,17 @@ export const water = {
   // its period behind and in front of its crest by the reef; it dies over `fall` m running in. Its foam starts at
   // most `ahead` m seaward of the crest and dies over `run` m running in, `always` of it lying on the crest,
   // `wave` more per what the water took from it; it fades by `trail` over a period, and
-  // runs the share `toe` of one ahead of the crest; `albedo`, linear; its
-  // lace: how fast it `drift`s (m/s), the tile's sides as read (`lace`, m), and how
-  // wide a pixel has it soft through and through (`softOver`, m); `stands`: how high
+  // runs the share `toe` of one ahead of the crest; `albedo`, linear; how fast it
+  // `drift`s (m/s); where it lies thick and where thin, the seabed's tile as read at
+  // `patches` sides (m); its `lace`, the holes in it (textures/foam.js), that tile read
+  // at two sides (m), stretched along the way the swell runs to `stretch` across it,
+  // covering none of the water under the first of `covers` of foam and all over the
+  // second (the cover the surf was tuned with, PLAN.md 6.6); how wide a pixel has it
+  // as an even veil through and through (`softOver`, m); `stands`: how high
   // whitewater stands off the water (m), how much ground that may hide at most (m), and
-  // from what distance it does, to what in full (m), as nearer it's seen as it is;
+  // from what distance it does, to what in full (m), as nearer it's seen as it is; `standsBy`:
+  // how much of the swell a crest may let through for its whitewater to stand there in full,
+  // and at all (past a reef's end the crest's line runs on through water too deep to break);
   // `facing`: how much of the sun's light it takes with the sun on the horizon; `backlit`:
   // how much of it its thin tops and spray let through, and how much of that onwards
   // (Henyey-Greenstein g), so against a low sun it glows. A set's
@@ -767,9 +792,11 @@ export const water = {
     toe: 0.05,
     albedo: [0.88, 0.92, 0.92],
     drift: 0.4,
-    lace: [24, 5.3],
+    patches: [24, 5.3],
+    lace: { tiles: [3.1, 7.3], stretch: 0.7, covers: [0.32, 0.68] },
     softOver: 0.4,
     stands: [0.5, 40, 60, 200],
+    standsBy: [0.5, 0.9],
     facing: 0.4,
     backlit: [0.25, 0.6],
     sets: [8, 5],
@@ -906,7 +933,7 @@ export const capture = {
   // desktop GPU; a `%` for a floor-mod in the litter's tile, 83% shifted back);
   // shifted by half a tile, a deliberate mistake, it must change more than
   // `mistaken` of them. `tiles`: the tiles it checks.
-  surfaces: { levels: 2, share: 0.01, mistaken: 0.3, tiles: ['grain', 'ripples', 'rock', 'grass', 'litter', 'leaves', 'seabed', 'glints'] },
+  surfaces: { levels: 2, share: 0.01, mistaken: 0.3, tiles: ['grain', 'ripples', 'rock', 'grass', 'litter', 'leaves', 'seabed', 'glints', 'foam'] },
   // The patches fixture (src/fixtures/patches.js): how far the GPU's patches
   // (0 to 1) may land from world/green.js's (floats and an approximate exp on
   // the GPU); points shifted a tenth of a patch, a mistake, must land further.

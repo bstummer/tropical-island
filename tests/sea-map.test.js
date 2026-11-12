@@ -456,7 +456,7 @@ test('the lagoon lies calmer than the open sea: the reef stops the open sea\'s c
         map.at(map.origin[0] + i * map.texel, map.origin[1] + j * map.texel, here);
         if (here.reef > -40 || here.reef < -400 || here.shore < 15 || here.depth < 1) continue;
         lagoon++;
-        if (Math.max(here.wind * here.wind, here.swell * here.swell) > 0.5) rough++;
+        if (here.chop > 0.5) rough++;
       }
     }
     assert.ok(lagoon > 200 && rough / lagoon < 0.35, `${name}: ${rough} of ${lagoon} points behind a reef as rough as the sea`);
@@ -487,7 +487,7 @@ test('the wind: nothing on land, calm close under the lee of the island, grown b
 
 test('past the map\'s square the open sea takes over, from its edge on and wholly by open.over m out: all the swell and the wind, no surf, the reef\'s crest far off', () => {
   const { over, reef } = config.water.map.open;
-  const open = { swell: 1, wind: 1, surf: 0, breaks: 0, reef };
+  const open = { swell: 1, wind: 1, chop: 1, surf: 0, breaks: 0, reef };
   eachSea(({ name, map }) => {
     const last = map.samples - 1;
     // Straight out from samples along each edge, and from each corner.
@@ -531,7 +531,44 @@ test('a crest narrower than the samples are apart still holds the swell back', (
   const k = 32 * map.samples + (ridge - 1) / 2; // the line next to it
   assert.equal(map.depth[k], 10, 'the map\'s own line lies in deep water');
   assert.ok(map.swell[k] <= 0.3 / config.water.map.swell.breaks + 1e-5, `the swell reaches ${map.swell[k]} beside a crest 0.3 m deep`);
-  assert.ok(map.wind[k] <= 0.3 / config.water.map.wind.depth + 1e-5, `the chop reaches ${map.wind[k]} beside a crest 0.3 m deep`);
+  assert.ok(map.wind[k] <= 0.3 / config.water.map.wind.depth + 1e-5, `the wind's chop reaches ${map.wind[k]} beside a crest 0.3 m deep`);
+  // The chop crosses it as far as the water holds it, and dies away behind.
+  const behind = 32 * map.samples + (ridge + 1) / 2;
+  assert.ok(map.chop[behind] <= 0.3 / config.water.map.chop.breaks + 1e-5, `the chop reaches ${map.chop[behind]} behind a crest 0.3 m deep`);
+});
+
+// What the reef's crest takes from the chop fades out behind it over the flat, as
+// broken waves run on and die away, rather than stopping along a line on the water
+// that nothing on it explains; and what the wind raises in a lagoon grows from what
+// crossed. Between neighbours on the same side of a crest, within `near` m of it but
+// for the line it breaks on, where the surf's foam lies, and away from the shore.
+test("the chop fades across a reef's crest: no step on the water where it ends, and some of it runs on over the flat", () => {
+  const near = 40;
+  const steepest = 0.1; // of the chop's reach per metre
+  eachSea(({ name, map }) => {
+    const { samples, texel, depth, shore, reef, chop } = map;
+    const counts = (n) => depth[n] > 0 && shore[n] >= 20 && Math.abs(reef[n]) <= near && Math.abs(reef[n]) >= 4;
+    let [worst, at] = [0, ''];
+    let [inside, ran] = [0, 0];
+    for (let j = 1; j < samples - 1; j++) {
+      for (let i = 1; i < samples - 1; i++) {
+        const n = j * samples + i;
+        if (!counts(n)) continue;
+        for (const m of [n + 1, n + samples]) {
+          if (!counts(m) || reef[n] * reef[m] < 0) continue;
+          const step = Math.abs(chop[n] - chop[m]) / texel;
+          if (step > worst) [worst, at] = [step, `${i}, ${j}: ${chop[n].toFixed(2)} beside ${chop[m].toFixed(2)}, ${reef[n].toFixed(0)} m from the crest`];
+        }
+        // Just inside a crest the open sea's swell breaks on, how much of its chop runs on.
+        if (reef[n] < -4 && reef[n] > -12 && map.surf[n] + map.breaks[n] > 0.5) {
+          inside++;
+          ran += chop[n];
+        }
+      }
+    }
+    assert.ok(worst <= steepest, `${name}: the chop changes by ${worst.toFixed(3)} a metre at ${at}`);
+    assert.ok(inside > 20 && ran / inside > 0.12, `${name}: just inside the crest the chop is ${(ran / inside).toFixed(3)} on average, over ${inside} samples`);
+  });
 });
 
 test('the map\'s mip levels: each texel the mean of the four under it, but how deep the water is the mean over the water alone, and over land alone the land\'s', () => {
@@ -572,7 +609,7 @@ test('the map\'s mip levels: each texel the mean of the four under it, but how d
 });
 
 // A made-up map `size` square: every value of(i, j, name), or 1 without `of`.
-const NAMES = ['shore', 'depth', 'swell', 'wind', 'inlandA', 'inlandO', 'breaks', 'reef', 'late', 'wayA', 'wayO', 'speed'];
+const NAMES = ['shore', 'depth', 'swell', 'chop', 'inlandA', 'inlandO', 'breaks', 'reef', 'late', 'wayA', 'wayO', 'speed'];
 function madeUp(size, of) {
   const values = (name) => (of ? Float32Array.from({ length: size * size }, (_, n) => of(n % size, Math.floor(n / size), name)) : new Float32Array(size * size).fill(1));
   return Object.fromEntries(NAMES.map((name) => [name, values(name)]));
@@ -617,7 +654,7 @@ test('every seed\'s sea map has every mip level a texture its size has', () => {
 });
 
 test('the layers the GPU reads hold each value where water/sea-map.wgsl looks for it', () => {
-  const map = { shore: [1], depth: [2], swell: [3], wind: [4], inlandA: [5], inlandO: [6], breaks: [7], reef: [8], late: [9], wayA: [10], wayO: [11], speed: [12] };
+  const map = { shore: [1], depth: [2], swell: [3], chop: [4], inlandA: [5], inlandO: [6], breaks: [7], reef: [8], late: [9], wayA: [10], wayO: [11], speed: [12] };
   const [first, second, third] = seaMapLevels(map, (v) => v, 1)[0];
   assert.deepEqual([...first], [1, 2, 3, 4]);
   assert.deepEqual([...second], [5, 6, 7, 8]);

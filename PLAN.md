@@ -1474,6 +1474,114 @@ from the `overview`, a glowing ring round the coast.
   - Seen once and not again: `lagoon-sun`'s shimmer at 4.77% in a `verify` run on this laptop, its still and motion strip byte-identical to the other runs', which all read 0.43%, also run alone twice after. So one of its sub-pixel pan frames came out otherwise. Not found why; a guess: the GPU timing just before them renders as many frames as its answers take to come back, which varies from run to run, on hardware only. To watch for.
   - Cost. On high (`base`): at most 83 draw calls (`rocks`), 777 k triangles (`overview`), 9 passes, 48 pipelines, overdraw 1.45 (`surf`), textures 184 MB, render targets 180 MB. On medium: at most 73 draw calls, 346 k triangles, 8 passes, overdraw 1.45, textures 184 MB, render targets 111 MB. On low: at most 63 draw calls, 199 k triangles, 7 passes, overdraw 1.48, textures 120 MB of its 128, render targets 61 MB. All within their limits. Shimmer within its limit everywhere on high but `open-sea` (0.503%, limit 0.5, as before), moving at most 0.39% (`lagoon-sun`); on medium `open-sea` 0.72%, on low 1.0% and `lagoon-sun` 0.53%, the land's image in coarser cells. GPU time on this laptop at 1600 x 900 on high: 53 ms (`horizon`) to 178 ms (`air-headland`); it swings by a third between runs of identical pixels, so it can't weigh a change. The benchmark at 1920 x 1080, headless on this laptop: high 6.9 fps at the median (GPU 138 ms; at worst `air-headland`, 221 ms), medium 11.3 fps (81 ms), low 17.5 fps (52 ms; at worst `rocks`, 77 ms). A 2017 integrated GPU: whether it counts as CLAUDE.md §10's mid-range laptop is the user's call, as even low is a long way from 60 fps on it.
   - Still for the user: the sea in motion in the running game, and the benchmark on a mid-range laptop.
+- Known from the user's look at the sea from the air and swimming (2026-11-12). Their five spots are new disabled views:
+  `air-far-sea`, `reef-end`, `reef-swim`, `reef-edge-down`, `reef-foam`. Each finding reproduced and its cause found
+  by switching suspects off one at a time before anything was fixed:
+  - The far sea from 70 m looked lumpy, like hills of water. Not the swell, nor the chop's wander: only switching off
+    the wind's gusts took the lumps out. A gust scaled the ripples by 0.2 to 1.6, so their slopes' variance by up
+    to 64 times, and at a grazing angle that swings what the sea mirrors as much as a hill would. The gusts now fade
+    out between 400 and 1500 m from the eye (`waves.gusts.fades`); nearer they move over the water as before.
+  - A sudden change of roughness at the reef's end and along its crest, with nothing on the water to explain it.
+    The open sea's chop went by the swell squared, which the crest cut from 1 to 0.04 within about 12 m; on the
+    windward side the wind's own chop started over from nothing behind a crest, the same line. The sea map now
+    holds the chop's reach itself (`chop`, which the GPU reads where it read `wind`): the open sea's, in with the
+    swell, and the wind's, along its way, each held by the water from 1 m deep up and dying away behind the
+    shallows over 80 m per metre of depth, as broken waves run on over a reef's flat; softened over 8 m but never
+    past what the water holds, or troughs would bare a crest. At 40 m the chop through the pass died out sooner
+    than the old model had it (0.09 against 0.13 under `lagoon-sun`); at 80 the lagoon keeps about its old chop.
+    Just inside the crest 0.23 to 0.41 of the chop now runs on (0.04 to 0.07 before), and the lagoon lies as calm
+    as it did (`air-pass` alike). Near a crest the steepest change went from 0.24 to 0.09 a metre on the game's map;
+    the line it breaks on keeps its step, where the surf's foam lies. A new test holds the fade, red on the old field.
+  - The ripples, which the wind raises where it blows, go by the chop over their old floor. Its fourth root, as
+    they went by the wind's root, gave the open sea's chop ripples through the pass, and `lagoon-sun`'s glitter
+    flickered (0.61% turning, 0.53% moving, against 0.43 and 0.38%); bisected by switching back the gusts' fade and
+    the old chop field first, neither of which was it. All of them now die out over the last 30 cm of water at the
+    waterline (only the least of them did): ripple troughs bared the sand at the waterline in `sand` in dark specks,
+    as ground under the still sea is drawn as if under water. A test holds the still waterline.
+  - A pale disc with a streaky stem on the seabed, and pale scallops along the reef's edge. Where the crest comes
+    within 25 cm of the sea (17 cm at the disc), the land's shader still draws the ground and the water took it by
+    its alpha; the land knows nothing of coral, so it drew pale sand there, and its depth, per pixel, stair-stepped
+    the edge. Out on the reef nothing but the ground stands, so the water now takes the opaque scene only within
+    `groundNear` (20 to 30 m) of a shore, where the ground runs on under the waterline and the rocks stand, and
+    skips the walk elsewhere; out there coral runs up to the surface. The rocks' test now holds each rock's whole
+    footprint within 15 m of the coast (red at 6 m).
+  - Foam up close was soft blobs: its finest lace was 13 cm of smooth noise, cut with an edge at least 0.12 of its
+    range wide. A first answer, the seabed tile's cells opening holes, read as a regular honeycomb to the user, and its
+    walls alone met in star-shaped specks. Now foam has a tile of its own (`textures/foam.js`, a ninth layer of the
+    surface tiles, 5.6 MB on high): holes at four sizes from about 1 to 20 cm, each with a radius of its own, warped
+    at its own size, the small ones opening first, and running together as they grow (a soft minimum over them) into
+    torn openings with webs of foam between, then bits. It is read twice at sides of no simple ratio, stretched along
+    the way the swell runs, and cut at the level that leaves the share of foam wanted, which the tile's own texels
+    give, read back at boot (`textures/foam-levels.js`). How much foam covers keeps the curve the surf was tuned
+    with (`lace.covers`): the first exact cut covered as much as the foam's number, and the crest's standing foam
+    (0.26) whitened the whole flat. The reef's line from the beach and the surf at 30 m match what they were. Its
+    edges are as soft as the pixel is long, measured by the size of the hole: as sharp as the shorter side, the far
+    lace flickered at 0.40% in `reef-foam` at t 5; now 0.28.
+  - Known from the user's second look (2026-11-12), with a new disabled view, `reef-bared`, at their spot:
+    - Black patches standing in the water now and then, no rocks there: the reef's crest, 0.2 to 0.4 m deep, bared
+      in a trough and drawn as ground below the still sea, dark and with no sheen. The old notes' "seals from the
+      air" were these too. In shallow water a trough now flattens: the waves draw the surface down no more than
+      `shallowTroughs` (0.35) of the water under it, to the ground as drawn (`troughFloor()` in `sea-map.wgsl`, and
+      in JS `createSurface`'s `shallow`, from the grids' own heights), in the vertex shader and in the waves
+      fixture's twin of it. At t 21.5, which bared it by 7 cm, the crest stays under. A test holds the floor, and
+      that the waves go deeper without it. The waterline can't draw back past it either: Stage 7's run-up must.
+    - A dashed line of white pixels on the water: the surf's whitewater, seen from far off, stands up and hides a
+      band `hides` m wide seaward of the crest; near the eye `hides` goes to 0, but the band kept full strength over
+      the floor's 1 mm, and the crest's distance, filtered between 4 m texels in steps of a 256th, put only some
+      pixels in it, evenly spaced along the crest's line. Older than this session. A band narrower than the pixel
+      now counts by its share of it. Found by rendering the view at 120 times in one page and looking for bright
+      single pixels in a column, then switching suspects off: not the new foam's terms, not the glints or the land's
+      mirror; with no foam, gone.
+  - Cost: no pass, pipeline or triangle more; textures up by the foam's layer (5.6 MB on high, 1.4 on low). Per pixel
+    of water, two more reads of the tiles where there is foam, and none of the opaque scene's depth off a shore; per
+    vertex of the sea, the ground's height (eight gathers). The sea map takes 1.6 s to build on the main thread at
+    boot on the user's desktop, against 1.1 s: two more fans of sweeps for the chop. A worker would take it off the
+    main thread if boot needs it. Shimmer on high: `lagoon-sun` 0.42% (0.43), `open-sea` 0.50% (as before), the new
+    views at most 0.28% (`reef-foam` at t 5). SwiftShader frames weren't measured.
+  - Flaws left, for the user's eye or later stages. The seabed seen from a swimmer looking down is soft: its finest
+    mottling is about 0.8 m (Stage 7's caustics and near detail). The swell's own reach still drops from 1 to 0.2 over
+    the drop-off within about 12 m; its long waves hide that, and the surf's wave carries what shows. Sparse foam lies
+    as few small bits, as it did. How the foam's lace drifts and opens, how the gusts fade as they drift away, and
+    how the chop dies over the flat, are motion: the user's to judge in the running game.
+- An inspection of the sea by three reviewers who hadn't seen the code (2026-11-12): one at a swimmer's and wader's
+  eye, one from 10 to 400 m all round the island and through telephotos, one at every hour with an audit of the stage
+  against its checks. About 290 frames from free poses (a scratch helper reaching any pose through the capture
+  contract's `render`), each finding then checked on a build of the last commit. Fixed, all older than this session:
+  - From the air a dotted white thread ran on from each breaker's end along the crest's line (`air-pass` had white
+    dashes off the crest too): the whitewater band seen from far off (`hides`) whitened the water wherever the crest's
+    distance passes zero, also where the crest's line runs on through 5 m of water past a reef's end (`surf` 0 there,
+    `breaks`, the surf over tens of metres, 0.48). The band now stands only where the crest holds the swell back, read
+    just past it along the swell's way (`surf.standsBy`), and spreads over the pixel where it is narrower. The crest's
+    own swell, tried first as what the band leaves of the swell, took a fifth of the reef's white line from the beach
+    (white pixels in `reef` at 1280 x 720, 5153 to 4156); as a gate the line keeps its white (8597 at 1600 x 900, 8208 before).
+  - Slivers of sky down the frame's left and right edges wherever land is mirrored, plainest against dark dawn water:
+    rays the waves tilt out of the frame found no image and took sky. They read the side's column now.
+  - A grey ruled line across whitewater a few metres from a swimmer's eye, fixed to the screen: where a swell's top
+    turns edge-on, the lace's cut, softened to the pixel's length, covered a half to three quarters of solid foam.
+    Bisected through the mesh's morph, the trough floor, the surf's height and the far veil first. Such a pixel now
+    covers at least the foam's share on average: averaging alone took the sparse bits off the flat in `reef-bared`.
+  - A test holds the foam's levels as the shaders count them to JS's (`gpu/reflect.js` drops what doesn't fit).
+- Tried and dropped: foam lit by the sky on a face turned to the eye, for the dark line at dawn: 5 levels lighter at
+  its darkest, with the lagoon 55 lighter still, and greyer foam at midday. Foam thinning at its holes' edges to let the
+  water through, with a share of the sea's sheen and more glow where thin, for the looks up close below: barely changed
+  either, and thinned the reef's white line from the beach.
+- Found and left, for the user's eye or later stages:
+  - Whitewater within about 20 m of a swimmer reads as snow: a matte white sheet with grey specks, no relief, no sheen.
+    Backlit at golden hour it reads as tan sandstone with dark holes. Whitewater standing up as geometry, Stage 7's
+    likely fix for the band above, is where relief and translucency can come in, with the curl and spray it lacks.
+  - At dawn, while the reef lies in the island's shade (to about 7:30), its line from the beach is a dark slate band:
+    mostly the breaking waves' faces, mirroring sky from higher up, darker opposite the sun, with foam lit by shade alone.
+  - Through a telephoto from far off (fov 20 at 1.7 km) the reef's white line is a pixel thin and breaks into evenly
+    spaced dashes: it aliases, as nothing filters it over the pixel's footprint across the crest.
+  - At the far end of the afternoon sun's path seen from 30 to 120 m up, a smooth bright bar over a darker gap. Older;
+    its cause not found.
+  - Small: a dashed dark line along the top of a rock in 10 to 30 cm of water; a few dim orange glints in the cove's
+    shade at sunrise; the waterline a dashed orange pixel line from outside the reef at sunrise.
+  - The light fixture compares the sand with the far sea's albedo, not the lagoon's, whose light from below only JS
+    holds; the motion strip spans 10 s, more than the chop's waves but less than the swell's 11 s.
+  - Cost: one more read of the sea map where the band stands, at the crest seen from far off; nothing else. Shimmer
+    on high: `open-sea` 0.51% (0.50 before, limit 0.5: it warns), `lagoon-sun` 0.42%, `swimmer` moving 0.34%; the rest
+    as they were. `verify` green.
 
 ### 7. Shoreline (the hero)
 

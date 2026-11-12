@@ -7,22 +7,23 @@
 
 import { largestWaves } from './spectrum.js';
 
-export function createSurface(spectrum, map, toCove, { rest, most }, ripplesLeast, ripplesDepth = 1, surf = null, chopWander = { reach: 0, across: 1 }) {
+// shallow: { share, groundAt(x, z) }: the waves draw the surface down no more than `share` of
+// the water under it, to the ground as drawn (sea-map.wgsl troughFloor); none: as deep as they go.
+export function createSurface(spectrum, map, toCove, { rest, most }, ripplesLeast, ripplesDepth = 1, surf = null, chopWander = { reach: 0, across: 1 }, shallow = null) {
   const waves = spectrum.cascades.map((c) => ({ waves: largestWaves(c, rest, most), choppy: c.choppy }));
   const here = {};
   const breaking = {};
 
   // How the cascades reach a point (cascadeReach in water/sea-map.wgsl): the
-  // swell as far as it arrives, the chop's long waves where the wind has blown
-  // far, its ripples soon, and some anywhere there is water to move; and the
-  // open sea's own chop, which comes in with the swell.
+  // swell as far as it arrives, the chop's long waves as the map says, its
+  // ripples as much anywhere there is water to move, more where the chop is up,
+  // dying out over the last of the water at the waterline.
   function reachInto(x, z, out) {
     map.at(...toCove(x, z), here);
     const t = Math.min(Math.max(here.depth / ripplesDepth, 0), 1);
-    const open = here.swell * here.swell;
     out[0] = here.swell;
-    out[1] = Math.max(here.wind * here.wind, open);
-    out[2] = Math.max(Math.sqrt(here.wind), ripplesLeast * t * t * (3 - 2 * t), open);
+    out[1] = here.chop;
+    out[2] = Math.max(here.chop, ripplesLeast) * t * t * (3 - 2 * t);
     return out;
   }
 
@@ -69,6 +70,7 @@ export function createSurface(spectrum, map, toCove, { rest, most }, ripplesLeas
       displaced(cascade.waves, cascade.choppy, c === 1 ? chopAt[0] : x, c === 1 ? chopAt[1] : z, wrapped, out, reach[c]);
     });
     if (surf) out[1] += surf(here, x, z, wrapped, breaking).height;
+    if (shallow) out[1] = Math.max(out[1], shallow.share * Math.min(shallow.groundAt(x, z), 0));
     return out;
   }
 

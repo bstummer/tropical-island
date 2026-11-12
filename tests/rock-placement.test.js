@@ -103,15 +103,22 @@ test('rocks lie only where their kind allows', () => {
 
 // Off a rocky shore the seabed falls below where rocks lie within a few
 // metres, but the reef's crest rises as near the water hundreds of metres
-// out, and coral heads in the lagoon: no rock lies out there.
-test('rocks keep to the shore: none out on the reef or in the lagoon', () => {
+// out, and coral heads in the lagoon: no rock lies out there. The water takes
+// what stands on the seabed only near the shore (config.water.groundNear), so
+// every rock lies wholly within that, with room for how far the drawn waterline,
+// which it measures from, may lie off the island's coast.
+test('rocks keep to the shore: none out on the reef or in the lagoon, all within what the water sees of them', () => {
+  const room = 5;
+  const within = config.water.groundNear[0] - room;
   for (const seed of SEEDS) {
-    const { island, placed } = layoutFor(seed);
+    const { island, shapes, placed } = layoutFor(seed);
     const out = {};
     for (const rock of placed) {
+      let farthest = Infinity;
+      for (const [x, , z] of solid(rock, shapes[rock.shape]).corners) farthest = Math.min(farthest, island.evaluate(...island.toCove(x, z), out).coast);
       const [a, o] = island.toCove(rock.position[0], rock.position[2]);
-      const { coast, reef } = island.evaluate(a, o, out);
-      assert.ok(coast > -10, `seed ${seed}: a ${rock.kind} rock ${(-coast).toFixed(0)} m out to sea at ${a.toFixed(0)}, ${o.toFixed(0)}, ${reef.toFixed(0)} m from the reef's crest`);
+      const { reef } = island.evaluate(a, o, out);
+      assert.ok(farthest > -within, `seed ${seed}: a ${rock.kind} rock reaching ${(-farthest).toFixed(1)} m out to sea at ${a.toFixed(0)}, ${o.toFixed(0)}, ${reef.toFixed(0)} m from the reef's crest`);
     }
   }
 });

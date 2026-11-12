@@ -62,8 +62,9 @@ struct SeenBelow {
 // something far nearer the eye than the ray at that pixel, a rock that the ray never
 // comes near: it would float over deep water, a good way off. What stands well above
 // the water (a rock's side, the beach) can't be what the ray sees, so it adds nothing,
-// and nothing can bleed from it into the seabed beside it.
-fn seenBelow(surface: vec3f, bent: vec3f, size: vec2f, deepest: f32, guess: f32, footprint: f32) -> SeenBelow {
+// and nothing can bleed from it into the seabed beside it. `takes`: how much of what
+// the opaque scene holds counts here, 0 to 1; where none does, the ray doesn't look.
+fn seenBelow(surface: vec3f, bent: vec3f, size: vec2f, deepest: f32, guess: f32, footprint: f32, takes: f32) -> SeenBelow {
   let down = 1.0 / max(-bent.y, 0.1);
   let along = bent.xz * down;
   let first = clamp(guess, 0.0, deepest);
@@ -78,7 +79,7 @@ fn seenBelow(surface: vec3f, bent: vec3f, size: vec2f, deepest: f32, guess: f32,
   let perMetre = frame.projectionMatrix * frame.viewMatrix * vec4f(bent * down, 0.0);
   var last = -0.3;
   var at = min(SEEN_FIRST, seabed);
-  for (var i = 0; i < SEEN_STEPS; i++) {
+  for (var i = 0; i < select(0, SEEN_STEPS, takes > 0.0); i++) {
     let pixel = seenPixel(start + perMetre * at, size);
     if (pixel.x < 0) {
       break;
@@ -91,7 +92,7 @@ fn seenBelow(surface: vec3f, bent: vec3f, size: vec2f, deepest: f32, guess: f32,
         let stored = textureLoad(uOpaque, back, 0);
         if (stored.a > 0.0 && abs(met - shown) < max(SEEN_NEAR, SEEN_NEAR_SHARE * shown)) {
           // Its samples weighted by alpha (post/opaque-resolve.wgsl): what they hold, by how much of the pixel counts.
-          out.on = vec4f(stored.rgb / stored.a, stored.a * smoothstep(-0.3, -0.1, met));
+          out.on = vec4f(stored.rgb / stored.a, takes * stored.a * smoothstep(-0.3, -0.1, met));
           out.depth = mix(seabed, clamp(met, 0.0, seabed), out.on.a);
           break;
         }

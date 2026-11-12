@@ -205,7 +205,8 @@ it. A new system's async work goes behind `ready`, or behind `settled()` when it
   that blends anywhere else. Alpha-to-coverage cut-outs are opaque. Post effects are `frame.addPost()`
   passes on linear HDR before the output. **The water draws the seabed itself** (`water/water-seabed.wgsl`), so no
   mesh or land shader shows under it, and terrain nodes wholly under the sea aren't drawn. From the opaque scene it
-  takes only what stands on the seabed, by its alpha: so an opaque material's alpha says how much the water should
+  takes only what stands on the seabed, and only near a shore (`config.water.groundNear`, which the rocks keep
+  within), by its alpha: so an opaque material's alpha says how much the water should
   take it as seen under the surface (the ground's fades to 0 just under the sea), and `frame.opaque.color` holds the
   samples weighted by it, so what has none adds nothing to the edges of what has (colour / alpha). What lies under the sea leaves
   the haze to the water, which adds it for all of it, and has no sheen: the water's surface mirrors.
