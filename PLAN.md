@@ -352,38 +352,106 @@ Maritorena et al. 1994 (clear shallow water), Cichocki 2017 (pixel-projected ref
 
 ### 7. Shoreline (the hero)
 
-- Waves run up the beach and slide back. Foam lines, plus foam that lingers. Wet sand that is darker and
-  mirror-like, and dries slowly after each wave. Caustics dancing on the shallow seabed. A small shore
-  break.
-- Expect several sessions. Split this stage into sub-steps.
+Goal: the water's edge alive, where the eye goes first. Waves run up the beach and slide back, leaving foam
+lines, and foam that lingers; wet sand that is darker and mirror-like, and dries slowly after each wave;
+caustics dancing on the shallow seabed; a small shore break; whitewater that stands up off the water.
+**Done when** the low beach view is a wallpaper, its motion strip shows waves running up and draining back
+naturally, and the user finds the motion natural in the running game.
+
+Before (2026-11-12): nothing moves on the sand, and no white touches the beach. The waterline is a ruler's
+cut where the still sea meets the ground, with a dark gutter on its sea side (`sand`, `into-the-sun`) and
+a grey-tan band from standing height (`beach`); the wet band is one fixed outline, a tan stripe from afar
+(`shoreline`); the sun glints twice, on the water and on the wet sand, each its own way (`sand`);
+`swimmer`'s water is one flat teal; `air-shallows` shows no shore.
+
+- [ ] **7.1 Eyes on the water's edge.** Views for what the stage builds, each with a brief and frozen at a
+  moment that shows it: low at the water's edge along the beach (the hero), the edge at arm's length,
+  ankle-deep facing a wave coming in, looking down through knee-deep water, the waterline from the air, a
+  rocky waterline up close; views the stage doesn't touch make room (CLAUDE.md §4). The tool shows a wave's
+  whole run in stills: how far it reaches, how fast it goes up and back, how often one comes (the motion
+  strip's 2 s steps skip most of a run-up), proven on a test scene built to fail it. The frame's cost on
+  SwiftShader and CI's time measured where the shore fills the frame, and room made for what the stage
+  adds: what only the shore needs costs nothing elsewhere.
+- [ ] **7.2 The run-up.** The waves that cross the lagoon reach the beach in the rhythm of the reef's sets,
+  run up the sand as a thin clear sheet, slow, stop and drain back; each reaches its own line, in lobes
+  along the beach, further for a set's big waves. The cut goes: sea, sheet and sand are one surface with no
+  line, gutter or band between them, from standing height, from a hand above the sand and from the air,
+  and from far off the beach's edge holds steady. JS knows where the water stands on the beach and when
+  each wave lands (wading, sound), agreeing with the GPU at sample points, and any `t` gives the same frame
+  however it was reached.
+- [ ] **7.3 Wet sand.** What a wave leaves: sand dark and glassy where the water just drained, mirroring
+  the sky, the sun and the land as the sea beside it does, one glint of the sun across both. The gloss
+  drains away within seconds, from the top down and in patches, the darkness over minutes, so the beach
+  shows where the last wave reached and where the last big one did. Rock and the rocks within the waves'
+  reach wet and dry by the same input. Into a low sun the foreshore glows (`into-the-sun`).
+- [ ] **7.4 Foam on the beach.** Each wave's front carries a line of foam up the sand and leaves it where
+  it turns: it lingers, the backwash stretches and tears it into lace, and bits stay behind and fade; an
+  older line shows under a newer one. One surface with the surf's foam (6.6). From the far end of the bay
+  and from the air the beach is edged in white scallops that hold steady.
+- [ ] **7.5 The shore break, and whitewater that stands up.** In its last metres a wave stands up, breaks
+  and runs on as a low bore into the run-up, a big one sooner and harder, a small one barely. Whitewater
+  has height and hides what lies behind it itself, on the reef as at the beach, so the band painted from
+  60 m off and its straight line go; close to, it has relief, sheen and a glow against a low sun, and
+  spray where it breaks hardest. `ctx.water.surfAt` tells sound of the beach's waves too.
+- [ ] **7.6 Light under the water.** Caustics on the shallow floor, moving with the waves that make them:
+  a fine bright net in ankle-deep water, wider and softer with depth, none in shade, melting into even
+  light where a pixel can't hold them (no sparkle far off or from the air). The beach's ripples run on
+  under the water, and the floor has detail down to centimetres under a swimmer's eye. On the rocks under
+  water as on the sand.
+- [ ] **7.7 Where rock meets the sea.** Against rock the sea rises and falls with the waves, washes white
+  round the rocks' feet and drains off them; the wet line and the spray's dark band follow what the waves
+  do there. No pale blocks along the rocky waterline, and no pale wet foot in the mirror (`rocks`).
+- [ ] **7.8 The look, at every hour and from everywhere.** Every shoreline view at its own time, at midday
+  and at golden hour, and the hero at the four named times; from the air, steeply down, through a telephoto
+  and from a swimmer's eye, each finding reproduced in a view before it is fixed. An outside review. The
+  taste calls go to the user as picks: how far and how often the waves run, how much foam, how glassy the
+  sand, how strong the caustics, whether the beach's face gets cusps. The cost per preset, the benchmark
+  asked of the user, and the hand-over.
+
+Taken in three legs, each ending with `verify` green, commits on the `stage-7` branch and the user's look
+at the running game: 7.1 to 7.4 (the run-up, the wet sand and the foam read only together, and their
+timing is what the rest builds on), 7.5 and 7.6, then 7.7 and 7.8.
+
 - Stage 6 built for this stage: the sea map's distance to the shore in metres on the drawn ground, and the
   way inland (6.2); a surface in JS and on the GPU that the run-up joins (6.3); foam as a surface of its
   own that foam lines and lingering foam join (6.6). It leaves the waterline where the still sea meets the
   ground, and in shallow water a trough flattens to no lower than `shallowTroughs` of the water under it
   (`troughFloor()`), so the waterline can't draw back: the run-up must.
 - The wetness has one input for sand, rock and the rocks (`chunks/wet.wgsl`): drive `wetness` and its film
-  there, and keep `washed`, where the waves reach, which the ripples and swash marks follow, so drying sand
-  doesn't grow ripples. Spray darkens rock to 2 m above the sea (`chunks/rock.wgsl`): waves breaking on it
-  should drive that. A real waterline has beach cusps, scalloped by the swash every 20–40 m.
+  there (7.3), and keep `washed`, where the waves reach, which the ripples and swash marks follow, so
+  drying sand doesn't grow ripples. Spray darkens rock to 2 m above the sea (`chunks/rock.wgsl`): waves
+  breaking on it should drive that (7.7). A real waterline has beach cusps, scalloped by the swash every
+  20–40 m (7.8).
+- Measured in the cove: the beach's face rises 7 to 8.5 cm a metre at the waterline (5.7 towards the
+  headland) and the seabed falls 5.5 to 7, so the wet sand's zone (0.35 m up) is about 4.5 m of beach, and
+  the water is ankle-deep 2 m out and knee-deep at 7. The reef's waves come 11.25 s apart, in sets.
+- What the code allows: a water shader has no texture to spare, the terrain's has four and the rocks'
+  three. The land's image in the water (`water/mirror.js`) exists only after the opaque pass, so the
+  ground's own sheen can mirror the sky but not the land. The water's mesh has quads of 0.25 m within 24 m
+  of the eye on high and 0.5 m within 18 m on medium and low, coarser beyond: a wave a hand high keeps its
+  shape from the vertices only close to. SwiftShader frames stood at 7.4 of their 8 s at the end of Stage
+  6, and a shader's every line costs there at every pixel it draws.
+- Tried while planning, and thrown away: the water's mesh laid on the beach's face as a sheet with the
+  sea's own mirror. It joined the sea with no seam and mirrored the headland; from above a clear sheet
+  barely showed, as it reads by the dark sand under it, its foam and what it mirrors at a low angle; and a
+  few millimetres over the ground it fought the terrain's mesh for depth, in dashes along the waterline.
 - Left by Stage 6:
-  - Whitewater should stand up as geometry (foam lifting the surface), hiding what lies behind it itself.
-    Today a band painted from 60 m off (`surf.stands`) draws a hard straight line along the top of every
-    breaking wave between about 60 and 200 m (left for this stage by the user's pick); within about 20 m
-    of a swimmer whitewater reads as matte snow with grey specks, backlit at golden hour as tan sandstone,
-    with no relief, sheen, curl or spray.
-  - The waterline: a cut with a dark gutter in `sand` and `into-the-sun`, muddy in `beach`, with a thin
-    grey band along it there (the sky mirrored at a grazing angle over tan wet sand) and a tan line round
-    it from the air. In `into-the-sun` the near water is dark beside a bright beach. Looking into a low sun
-    the wet band stays darker than a real foreshore (the film is about 2 m wide, and the sky's light as SH
-    blurs the glow away); looking down, the sun's glint on it is a smooth oval that reads CG. In `rocks`
-    the rocky waterline shows pale blocks of the land's own pixels, and rocks in the water mirror a pale
-    wet foot.
-  - The seabed near a swimmer: `swimmer`'s near water reads as one flat teal (the floor's sand varies by
-    about 10%, its ripples shade it by about 6%), and looking down its finest mottling is about 0.8 m. The
-    beach's own ripples carried onto the floor, with caustics over them, should give the eye something to
-    see through the water.
-- **Done when** the low beach view is a wallpaper, its motion strip shows waves running up and draining
-  back naturally, and the user finds the motion natural in the running game.
+  - Whitewater (7.5) should stand up as geometry (foam lifting the surface), hiding what lies behind it
+    itself. Today a band painted from 60 m off (`surf.stands`) draws a hard straight line along the top of
+    every breaking wave between about 60 and 200 m (left for this stage by the user's pick); within about
+    20 m of a swimmer whitewater reads as matte snow with grey specks, backlit at golden hour as tan
+    sandstone, with no relief, sheen, curl or spray.
+  - The waterline (7.2, 7.3; on rock 7.7): a cut with a dark gutter in `sand` and `into-the-sun`, muddy in
+    `beach`, with a thin grey band along it there (the sky mirrored at a grazing angle over tan wet sand)
+    and a tan line round it from the air. In `into-the-sun` the near water is dark beside a bright beach.
+    Looking into a low sun the wet band stays darker than a real foreshore (the film is about 2 m wide, and
+    the sky's light as SH blurs the glow away); looking down, the sun's glint on it is a smooth oval that
+    reads CG. In `rocks` the rocky waterline shows pale blocks of the land's own pixels, and rocks in the
+    water mirror a pale wet foot.
+  - The seabed near a swimmer (7.6): `swimmer`'s near water reads as one flat teal (the floor's sand varies
+    by about 10%, its ripples shade it by about 6%), and looking down its finest mottling is about 0.8 m.
+    The beach's own ripples carried onto the floor, with caustics over them, should give the eye something
+    to see through the water.
 
 ### 8. Foliage foundation and coconut palms
 
