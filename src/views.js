@@ -38,6 +38,7 @@ const all = [
   },
   {
     name: 'shoreline',
+    disabled: true,
     position: [-187.15, 11.03, 22.32],
     yaw: -99.2,
     pitch: -9,
@@ -100,6 +101,7 @@ const all = [
   },
   {
     name: 'rocks',
+    disabled: true,
     position: [95.93, 3.32, 94.03],
     yaw: -160,
     pitch: 6,
@@ -132,19 +134,17 @@ const all = [
   },
   {
     name: 'ankle',
-    disabled: true,
     position: [-20, 1.45, -2.2],
     yaw: 168,
     pitch: -25,
     fov: 60,
     timeOfDay: 15,
-    brief: "Mid-afternoon standing ankle-deep at the edge of the lagoon, looking down and out at the next wave coming in: clear water over the sand, foam on its way in and running past your feet, the sun high ahead on the right.",
+    brief: "Mid-afternoon standing ankle-deep at the edge of the lagoon, looking down and out at the next wave coming in: clear water over rippled sand netted with sunlight, a wave standing up and breaking a few metres out, its foam running in past your feet, the sun high ahead on the right.",
     crops: { feet: [0.5, 0.85] },
     run: { seconds: 12, step: 0.75, line: [[0.5, 1], [0.5, 0.3]] },
   },
   {
     name: 'knee',
-    disabled: true,
     position: [-20, 1.1, 6.5],
     yaw: 160,
     pitch: -55,
@@ -187,13 +187,12 @@ const all = [
   },
   {
     name: 'surf',
-    disabled: true,
     position: [-61, 3, 227],
     yaw: 165,
     pitch: -3,
     fov: 60,
     timeOfDay: 15,
-    brief: "Mid-afternoon standing in the shallows of the reef flat, 30 m from the crest: a wave standing up and breaking, its white running in over the flat in lace that fades, the sun behind on the right.",
+    brief: "Mid-afternoon standing in the shallows of the reef flat, 30 m from the crest: a wave standing up and breaking, its whitewater heaped along the crest and spray blowing off it, its white running in over the flat in lace that fades, the sun behind on the right.",
     crops: { crest: [0.5, 0.45], lace: [0.5, 0.8] },
   },
   {
