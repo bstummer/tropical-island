@@ -12,6 +12,7 @@
 #include "/chunks/tiles.wgsl"
 #include "/chunks/pi.wgsl"
 #include "/chunks/sh.wgsl"
+#include "/chunks/sea-ripples.wgsl"
 
 struct SeabedLook {
   uSeabedSand: vec3f, // linear albedos, as all here
@@ -22,6 +23,8 @@ struct SeabedLook {
   uWeed: vec3f,
   uSeabedTile: vec3f, // the tile's size, m; how much larger its second read is; its texels across
   uSeabedTurns: vec2f, // m under the sea over which sand and rock turn to the seabed's, .x and .y
+  uSandGrainMean: vec3f, // the beach's grain (chunks/sand.wgsl): its tile's two reads' mean
+  uSandTiles: vec3f, // its tile, m (.x)
 }
 
 @group(1) @binding(7) var<uniform> seabedLook: SeabedLook;
@@ -38,9 +41,10 @@ fn seabedTileAt(uv: vec2f, size: f32, footprint: f32) -> vec4f {
 // wide along its longer side (dx, dy: its sides, m), its mottling read `sharp` wide,
 // under the sun that reaches the surface above it, with how much it stands above
 // the ground round it, how far the shore is (m), and how much the land's own ground
-// runs on under the water here (`ashore`, 0 to 1). Its light is worked out by the
-// sun as it bends into the water, so a low sun doesn't rake it.
-fn seabedRadiance(xz: vec2f, depth: f32, dx: vec2f, dy: vec2f, sharp: f32, sun: vec3f, rises: f32, shore: f32, ashore: f32, ior: f32) -> vec3f {
+// runs on under the water here (`ashore`, 0 to 1); `inland`: the way inland (world,
+// unit). Its light is worked out by the sun as it bends into the water, so a low sun
+// doesn't rake it.
+fn seabedRadiance(xz: vec2f, depth: f32, dx: vec2f, dy: vec2f, sharp: f32, sun: vec3f, rises: f32, shore: f32, ashore: f32, inland: vec2f, ior: f32) -> vec3f {
   let ao = terrainCove(xz);
   var info: vec4f;
   var cover: vec4f;
@@ -68,9 +72,16 @@ fn seabedRadiance(xz: vec2f, depth: f32, dx: vec2f, dy: vec2f, sharp: f32, sun: 
   sand *= 1.0 + 0.1 * clumps + 0.06 * small + 0.04 * fine;
   let weeds = smoothstep(0.1, 0.45, beds + 0.5 * clumps + 0.25 * small) * smoothstep(0.3, 1.0, depth);
   sand = mix(sand, seabedLook.uWeed * (1.0 + 0.35 * small + 0.35 * fine), 0.8 * weeds);
-  // Its ripples, where a pixel holds them, run along the shore's way.
-  let held = (1.0 - smoothstep(0.03, 0.1, sharp)) * (1.0 - coral) * (1.0 - weeds);
-  slope += terrainWorldSlope(vec2f(0.0, 0.1 * held * cos(8.0 * (ao.y + 4.0 * clumps))));
+  // The sand's ripples (chunks/sea-ripples.wgsl), as the terrain draws them just under the
+  // waterline, and its grain up close, as the beach's (chunks/sand.wgsl): not on coral or weed.
+  let sandy = (1.0 - coral) * (1.0 - weeds);
+  slope += sandy * seaRipples(xz, inland, depth, sharp);
+  let grained = sandy * (1.0 - smoothstep(0.006, 0.02, sharp));
+  if (grained > 0.0) {
+    let grainTile = seabedLook.uSandTiles.x;
+    let grain = textureSampleLevel(uSurfaceTiles, uSurfaceTilesSampler, xz / grainTile, i32(TILE_GRAIN), log2(max(sharp * seabedLook.uSeabedTile.z / grainTile, 1e-3))).rgb;
+    sand *= mix(vec3f(1.0), 2.0 * grain / max(seabedLook.uSandGrainMean, vec3f(1e-3)), grained);
+  }
 
   // A rocky shore's rock runs out under sand a little way off it, its edge wandering.
   let rocky = cover.y * (1.0 - smoothstep(10.0, 40.0, shore + 20.0 * beds + 8.0 * clumps));

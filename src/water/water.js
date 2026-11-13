@@ -137,6 +137,8 @@ export function create(ctx) {
       uWeed: { value: linear(settings.seabedWeed) },
       uSeabedTile: { value: new Vector3(settings.seabedTile.size, settings.seabedTile.larger, quality.surfaceTexture) },
       uSeabedTurns: { value: new Vector2(...settings.seabedTurns) },
+      uSandGrainMean: ctx.terrain.surfaces.uSandGrainMean,
+      uSandTiles: ctx.terrain.surfaces.uSandTiles,
       uSurfaceTiles: ctx.terrain.surfaces.uSurfaceTiles,
       uRisesLevel: { value: Math.log2(settings.seabedRises / settings.map.texel) },
       uGroundNear: { value: new Vector2(...settings.groundNear) },

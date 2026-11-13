@@ -25,6 +25,7 @@
 #include "chunks/rock.wgsl"
 #include "chunks/green.wgsl"
 #include "chunks/planet.wgsl"
+#include "chunks/sea-ripples.wgsl"
 
 override TERRAIN_SAND: bool = false;
 override TERRAIN_ROCK: bool = false;
@@ -131,7 +132,12 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
       w = groundWet(vWorldPos.xz, aboveSea, tall);
     }
     terrainGround(ao, dx, dy, &info, &cover);
-    let slope = terrainWorldSlope(info.xy);
+    var slope = terrainWorldSlope(info.xy);
+    // Under the sea the waves' ripples run on in the sand, as the water draws them further out.
+    if (TERRAIN_SAND && aboveSea < 0.0 && cover.x > 0.0) {
+      let inland = normalize(terrainWorld(seaShoreAt(vWorldPos.xz).xy) + vec2f(1e-6, 0.0));
+      slope += cover.x * seaRipples(vWorldPos.xz, inland, -aboveSea, max(length(pdx), length(pdy)));
+    }
     n = normalize(vec3f(-slope.x, 1.0, -slope.y));
   }
   s.normal = n;

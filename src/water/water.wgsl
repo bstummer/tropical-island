@@ -439,7 +439,7 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
     let round = seaAtLevel(below.xz, max(seaLevel(wide), water.uRisesLevel));
     // Its mottling sharper than the longer side where the pixel stretches, or the near sea's floor blurs.
     let sharp = wide * exp2(-min(0.5 * stretch, 1.5));
-    seabed = seabedRadiance(below.xz, below.depth, dx, dy, sharp, sun * light, round.y - below.depth, round.x, ashore, optics.uIor);
+    seabed = seabedRadiance(below.xz, below.depth, dx, dy, sharp, sun * light, round.y - below.depth, round.x, ashore, inland, optics.uIor);
   }
   seabed = mix(seabed, below.on.rgb, below.on.a);
   // Where the beach is bare, it is as it was drawn; the sheet over it white with bubbles and sand as it runs up.
