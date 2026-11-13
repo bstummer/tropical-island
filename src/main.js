@@ -128,7 +128,7 @@ async function boot() {
     quality,
     params,
     view,
-    clock: createClock({ frozen: params.capture, start: params.t ?? config.defaults.t }),
+    clock: createClock({ frozen: params.capture, start: params.t ?? view.t ?? config.defaults.t }),
     rng: createRandom(params.seed ?? config.defaults.seed),
     stats: display.stats,
   };

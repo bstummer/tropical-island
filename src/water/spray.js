@@ -33,9 +33,10 @@ export function createSpray(ctx, map, settings, surfUniforms) {
       ...surfUniforms,
       uSprayTime: { value: new Vector4(settings.lasts, settings.apart, ...settings.up) },
       uSprayThrow: { value: new Vector4(...settings.forward, settings.falls, settings.from) },
-      uSpraySize: { value: new Vector4(...settings.size, settings.spread, settings.takes) },
-      uSprayLook: { value: new Vector4(...settings.albedo, settings.dense) },
-      uSprayLight: { value: new Vector4(settings.facing, ...settings.backlit, settings.wide) },
+      uSpraySize: { value: new Vector4(...settings.size, settings.spread, settings.wide) },
+      uSprayLook: { value: new Vector4(...settings.albedo, settings.spots) },
+      uSprayLight: { value: new Vector4(settings.facing, ...settings.backlit, settings.dense) },
+      uSprayTakes: { value: settings.takes },
     },
     overrides: { SHADE_ONCE: true, SHADOW_MAP: false },
   });

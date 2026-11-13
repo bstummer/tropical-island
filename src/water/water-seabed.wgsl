@@ -75,13 +75,15 @@ fn seabedRadiance(xz: vec2f, depth: f32, dx: vec2f, dy: vec2f, sharp: f32, sun: 
   // The sand's ripples (chunks/sea-ripples.wgsl), as the terrain draws them just under the
   // waterline, and its grain up close, as the beach's (chunks/sand.wgsl): not on coral or weed.
   let sandy = (1.0 - coral) * (1.0 - weeds);
+  // By the pixel's longer side: what lies in rows wavers into moire along it.
+  let long = max(length(dx), length(dy));
   if (close) {
-    slope += sandy * seaRipples(xz, inland, depth, sharp);
+    slope += sandy * seaRipples(xz, inland, depth, long);
   }
-  let grained = sandy * (1.0 - smoothstep(0.006, 0.02, sharp));
+  let grained = 0.6 * sandy * (1.0 - smoothstep(0.006, 0.02, long));
   if (close && grained > 0.0) {
     let grainTile = seabedLook.uSandTiles.x;
-    let grain = textureSampleLevel(uSurfaceTiles, uSurfaceTilesSampler, xz / grainTile, i32(TILE_GRAIN), log2(max(sharp * seabedLook.uSeabedTile.z / grainTile, 1e-3))).rgb;
+    let grain = textureSampleLevel(uSurfaceTiles, uSurfaceTilesSampler, xz / grainTile, i32(TILE_GRAIN), log2(max(long * seabedLook.uSeabedTile.z / grainTile, 1e-3))).rgb;
     sand *= mix(vec3f(1.0), 2.0 * grain / max(seabedLook.uSandGrainMean, vec3f(1e-3)), grained);
   }
 

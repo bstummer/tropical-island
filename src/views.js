@@ -7,6 +7,8 @@
 // pitch:    degrees, positive looks up.
 // fov:      optional vertical FOV in degrees (defaults to config.camera.fov), 2 to 120.
 // timeOfDay: hours of daylight or a named time (sky/sun.js). ?time= overrides it.
+// t:        optional s of the world's time it opens at, a moment that shows what its brief asks
+//           for (a wave breaking); ?t= overrides it, and without either it is config.defaults.t.
 // brief:    one line on what the shot is for (focal point, where the sun sits, mood). Every view needs
 //           one; reviews judge each capture against it.
 // crops:    optional { name: [x, y] }: centres of regions the screenshot tool also saves zoomed in,
@@ -123,6 +125,7 @@ const all = [
   },
   {
     name: 'swash',
+    t: 161.25,
     position: [22, 1.6, -0.5],
     yaw: 122,
     pitch: -5,
@@ -134,6 +137,7 @@ const all = [
   },
   {
     name: 'ankle',
+    t: 158.6,
     position: [-20, 1.45, -2.2],
     yaw: 168,
     pitch: -25,
@@ -187,12 +191,13 @@ const all = [
   },
   {
     name: 'surf',
+    t: 1.5,
     position: [-61, 3, 227],
     yaw: 165,
     pitch: -3,
     fov: 60,
     timeOfDay: 15,
-    brief: "Mid-afternoon standing in the shallows of the reef flat, 30 m from the crest: a wave standing up and breaking, its whitewater heaped along the crest and spray blowing off it, its white running in over the flat in lace that fades, the sun behind on the right.",
+    brief: "Mid-afternoon standing in the shallows of the reef flat, 30 m from the crest: a wave standing up and breaking, its whitewater heaped along the crest and spray blowing off it, its white running in over the flat in lace that fades, the sun ahead on the right laying its glitter on the water.",
     crops: { crest: [0.5, 0.45], lace: [0.5, 0.8] },
   },
   {

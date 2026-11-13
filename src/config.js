@@ -807,7 +807,7 @@ export const water = {
     loop: wavesLoop,
     facing: 0.4,
     backlit: [0.25, 0.6],
-    relief: [0.03, 0.006, 0.3],
+    relief: [0.03, 0.003, 0.15],
     sheen: 0.4,
     sets: [8, 5],
     beat: 0.35,
@@ -900,7 +900,7 @@ export const water = {
     deepest: 4,
     strength: 0.6,
     peak: 5,
-    fade: 0.15,
+    fade: 0.2,
     spread: 0.4,
     reach: 25,
   },
@@ -908,8 +908,9 @@ export const water = {
   // where it breaks at least `breaks` hard, `puffs` puffs each, going up `apart` s apart as a wave
   // breaks there, each lasting `lasts` s: thrown `up` and `forward` (m/s, at least and at most)
   // from `from` m above the still sea, falling back at `falls` m/s2 as the air holds it; `size` m
-  // across as it starts and m more each second, `wide` times as wide as tall, spread `spread` m along the crest; none where the
-  // water takes less than `takes` of a wave; linear `albedo`, as `dense` as it gets; its light
+  // across as it starts and m more each second, each half again more or less, `wide` times as
+  // wide as tall, spread `spread` m along the crest; none where the water takes less than `takes`
+  // of a wave, and each wave throws it off `spots` of the spots; linear `albedo`, as `dense` as it gets; its light
   // as the foam's (`facing`, `backlit`); drawn within `reach` m of the eye.
   spray: {
     breaks: 0.5,
@@ -919,13 +920,14 @@ export const water = {
     up: [1.2, 3],
     forward: [2.5, 4.5],
     falls: 4,
-    from: 0.4,
+    from: 0.8,
     size: [1.2, 1.6],
     wide: 1.6,
     spread: 6,
     takes: 0.15,
+    spots: 0.45,
     albedo: [0.88, 0.92, 0.92],
-    dense: 0.22,
+    dense: 0.28,
     facing: 0.4,
     backlit: [0.6, 0.7],
     reach: 1200,

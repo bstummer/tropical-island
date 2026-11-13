@@ -40,7 +40,8 @@ for (const view of views) {
       assert.ok(step > 0 && step <= 1, `run: frames ${step} s apart`);
       assert.ok(line.length === 2 && line.flat().every((c) => c >= 0 && c <= 1), 'run: its line is [[x, y], [x, y]] in 0–1');
     }
-    const extra = Object.keys(view).filter((k) => !['name', 'position', 'yaw', 'pitch', 'fov', 'timeOfDay', 'brief', 'crops', 'run'].includes(k));
+    if (view.t !== undefined) assert.ok(Number.isFinite(view.t) && view.t >= 0, `t: ${view.t}`);
+    const extra = Object.keys(view).filter((k) => !['name', 'position', 'yaw', 'pitch', 'fov', 'timeOfDay', 't', 'brief', 'crops', 'run'].includes(k));
     assert.deepEqual(extra, []);
   });
 }

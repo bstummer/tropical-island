@@ -230,7 +230,9 @@ export function createSwash(settings, surf, way, period, loop) {
     const ashore = appear * smoothstep(0, 2 * draws * runs, depth);
     const trails = ashore * foamy * now.broke * now.share * Math.exp(-f / trail);
     const leads = ashore * foamy * next.broke * next.share * Math.exp(-(((1 - f) / toe) ** 2));
-    out.foam = trails + leads;
+    // It breaks whiter in places along the beach, where the foam it strands gathers too.
+    const gathers = 0.4 + 0.6 * Math.max(0.35 + 0.9 * seededNoise(a / linePatches, o / linePatches, LINE_SEED), 0);
+    out.foam = (trails + leads) * gathers;
     out.milk = ashore * milky * Math.min(now.broke * now.share * Math.exp(-f / (2 * trail)), 1);
     const since = t - lands - k * period;
     out.along = (flow * c0 * (trails * since + leads * (since - period))) / Math.max(trails + leads, 1e-6);

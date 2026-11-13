@@ -309,7 +309,8 @@ fn swashBore(place: SwashPlace, shore: f32, depth: f32) -> SwashBore {
   let ashore = appear * smoothstep(0.0, 2.0 * swash.uSwashTime.z * place.runs, depth);
   let trails = ashore * foam.x * broke.x * share.x * exp(-f / foam.y);
   let leads = ashore * foam.x * broke.y * share.y * exp(-((1.0 - f) / foam.z) * ((1.0 - f) / foam.z));
-  out.foam = trails + leads;
+  // It breaks whiter in places along the beach, where the foam it strands gathers too.
+  out.foam = (trails + leads) * (0.4 + 0.6 * place.gathers);
   out.milk = ashore * swash.uSwashLook.w * min(broke.x * share.x * exp(-f / (2.0 * foam.y)), 1.0);
   let since = frame.uWaveSeconds - place.lands - k * period;
   out.along = foam.w * c0 * (trails * since + leads * (since - period)) / max(trails + leads, 1e-6);
