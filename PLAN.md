@@ -431,11 +431,19 @@ Leg 1 (7.1 to 7.4), handed to the user 2026-11-13:
   high as this beach's highest wave. `into-the-sun`'s foreshore glows again, as the sun's path runs on from
   the lagoon onto the wet sand.
 
-Open after leg 1:
-- No bore comes in over the shallows: a wave appears at the waterline and runs up (7.5). The uprush reads as
-  clear water more than a bubbly bore, and from standing height (`beach`) its foam front is faint.
-- From the air the edge's lobes are gentle and the stranded lines thin; no beach cusps (7.8's pick).
-- A dark stepped wedge at the far waterline in `swash` at a grazing angle: cause not found.
+Open after leg 1 (with an outside review's findings):
+- No bore comes in over the shallows: a wave appears at the waterline and runs up (7.5); from the air the
+  uprush slides along the beach as a milky slab. A full wave runs 0.32 m up, the largest about 0.52 m.
+- The sheet mirrors the sky over it as the sea does, so where it faces the dark sky away from a low sun it
+  reads as a dark band darker than the sand (`swash`), and from standing height at midday as a grey-taupe
+  stripe (`beach`). The glassy film after the drain, gold with the sun in its rumples, is the best of it.
+- Foam: the front an even ribbon with a speckled edge, the stranded line streaky up close and dashed far off;
+  no foam brighter than the sand from standing height.
+- Edges: the run-up's edge is straight or a smooth arc in most views, its lobes gentle; the drying margin
+  steps rather than fades; no beach cusps (7.8's pick).
+- Seams: a dotted bright line and a dark hairline through the sheet (`sand`); rows of black dots and a dark
+  stepped wedge in the far water at a grazing angle (`swash`); a blue-black streak along the rocks'
+  waterline (`rocks`). Causes not found.
 - The rocks take the beach's run-up up their faces as if they were sand (7.7).
 - Cost: SwiftShader frames of 8.6 to 9.3 s where the shore fills the frame (`swash`, `beach`,
   `into-the-sun`, `rocks`), 5.4 to 5.5 s (`sand`, `air-swash`), with the budget raised to 10 s; the
