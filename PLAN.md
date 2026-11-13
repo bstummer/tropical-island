@@ -451,7 +451,8 @@ Open after leg 1 (with an outside review's findings):
   terrain's only in pieces with sand or rock, but every pixel of those still runs it, and the terrain needs
   only the wetness of what it works out. Overdraw rises by 0.3 to 0.8 where the water lies over the beach.
   On the GPU here, frame times rose by a third to a half on the shore views; the benchmark on the
-  laptop will tell more.
+  laptop will tell more. CI's `verify` in the Linux container takes 20.5 minutes on the dev machine; the
+  runner's own time shows on the next push.
 
 - Stage 6 built for this stage: the sea map's distance to the shore in metres on the drawn ground, and the
   way inland (6.2); a surface in JS and on the GPU that the run-up joins (6.3); foam as a surface of its
