@@ -43,7 +43,7 @@ When choosing between approaches, pick the one that looks better in the screensh
 | `npm test` | Unit and invariant tests, `tests/*.test.js` (Node's built-in runner). |
 | `npm run build` | `dist/index.html`. Fails on any other output, or a module from outside `src/`. |
 | `npm run check` | `tools/check-build.js`: one self-contained file within the size budget, and the `src/` lint. |
-| `npm run shot -- [args]` | Builds, then `tools/screenshot.js`: a PNG per view, `contact-sheet.png` and `info.json` in `screenshots/<label>/`, and per view its measurements (banding, zoomed crops, shimmer as the camera turns and as it moves, a motion strip, overdraw) and frame costs, with warnings past their limits. `--checks` adds the tool's checks of itself and of the game: test scenes built to fail the measurements, the GPU's results against their JS twins (`src/fixtures/`), reproducible captures, nothing leaked over a quality change, a run in player mode and a short benchmark. `tools/screenshot.js` lists them. |
+| `npm run shot -- [args]` | Builds, then `tools/screenshot.js`: a PNG per view, `contact-sheet.png` and `info.json` in `screenshots/<label>/`, and per view its measurements (banding, zoomed crops, shimmer as the camera turns and as it moves, a motion strip, a wave's run where the view asks for it, overdraw) and frame costs, with warnings past their limits. `--checks` adds the tool's checks of itself and of the game: test scenes built to fail the measurements, the GPU's results against their JS twins (`src/fixtures/`), reproducible captures, nothing leaked over a quality change, a run in player mode and a short benchmark. `tools/screenshot.js` lists them. |
 | `npm run verify` | test + build + check + shot with `--checks`. **The definition-of-done command.** |
 | `node tools/screenshot.js --compare A B` | Before/after sheet `screenshots/compare/A_vs_B.png`, with a diff column per view. |
 | `npm run map -- [args]` | `tools/map.js`: a top-down map of the island (relief, depths, zones, where the views stand), to judge the layout without rendering. |
@@ -126,7 +126,7 @@ src/
   sky/                the sky and its tables, the light state, the sun's path and the time of day, the sun's shadows
   post/               the frame: HDR target, its passes, the output pass
   world/              the island's shape (island.js), its heightmap, the terrain, rocks, the island's own shade
-  water/              the sea: how it looks by its depth, what it knows of the island, its waves and surface
+  water/              the sea: how it looks by its depth, what it knows of the island, its waves and surface, the beach's waves
   textures/           procedural textures made on the GPU at boot: the ground's tiles
   shaders/chunks/     shared WGSL: the frame (group 0), lighting, shadows, terrain, the ground's surfaces, noise, planet
   fixtures/           test scenes (?fixture=) for the screenshot tool's checks; not part of the island
@@ -153,9 +153,9 @@ systems are listed in `WORLD_SYSTEMS` in `src/main.js`, and update in that order
 heights, the mesh as drawn and its JS twin, the ground's surfaces), `rocks` (placed rocks, read-only, and their
 clearance for later placement), `sky` (the light state; `follow(fn)` for what must land with a time change),
 `shadows` (what casts registers with `cast(fn)` and `from(spheres)`), `water` (where the sea stands, `heightAt(x, z, t)`,
-whether a point is surely over it, `over(x, y, z, t)`, the surf, `surfAt(x, z, t)`, and what it knows of the island) and
-`frame` (`post/frame.js`: the drawing
-buffer's size, the uniforms every scene material binds at group 0, `beforeScene()` and `afterOpaque()` for
+whether a point is surely over it, `over(x, y, z, t)`, the surf, `surfAt(x, z, t)`, the beach's water, `swashAt(x, z, t)`,
+and what it knows of the island) and `frame` (`post/frame.js`: the drawing
+buffer's size, the uniforms every scene material binds at group 0, the sea map among them, `beforeScene()` and `afterOpaque()` for
 passes of a system's own, the passes, `translucent()`, `opaque`, `addPost()`). A system that reads one of them in `create()` comes
 after its owner in `WORLD_SYSTEMS`.
 
@@ -198,7 +198,7 @@ it. A new system's async work goes behind `ready`, or behind `settled()` when it
   with `greater-equal`, as depth is reversed). A texture that can't be filtered is read with `textureGather`
   through an unfiltered `<name>Texels` sampler, or `textureLoad` (slower per pixel). Group 2 is the mesh's
   transform (`chunks/object.wgsl`). Chunks with bindings of their own keep a fixed binding number in group 1.
-  A shader can count on 16 textures: group 0 takes 11.
+  A shader can count on 16 textures: group 0 takes 11, and 12 with the sea map (`water/sea-map.wgsl`).
 - **The frame draws in passes** (`post/frame.js`), picked by a mesh's `pass`. Meshes that read the opaque
   scene's colour or depth (`frame.opaque`: water) set `pass = 'afterOpaque'`. **Anything translucent goes
   through `frame.translucent(object)`**, which blends it in linear light; capture mode fails on a material
@@ -209,7 +209,10 @@ it. A new system's async work goes behind `ready`, or behind `settled()` when it
   within), by its alpha: so an opaque material's alpha says how much the water should
   take it as seen under the surface (the ground's fades to 0 just under the sea), and `frame.opaque.color` holds the
   samples weighted by it, so what has none adds nothing to the edges of what has (colour / alpha). What lies under the sea leaves
-  the haze to the water, which adds it for all of it, and has no sheen: the water's surface mirrors.
+  the haze to the water, which adds it for all of it, and has no sheen: the water's surface mirrors. Over the beach,
+  as high as the waves may wet it, the water's surface lies just over the ground and draws what each pixel shows
+  of it as it is, with the waves' sheet, the glassy film they leave and their foam over it (`water/swash.wgsl`),
+  so those mirror what the sea does; where they lie, the ground shows no sheen of its own.
 - **Compute** goes through `gpu/compute.js`, in a system's own `frame.beforeScene()` pass, or `frame.afterOpaque()`
   to read the opaque scene (the water's mirror), its pipelines made ahead through that pass's `compile`.
 - **What casts a shadow adds meshes in pass `'shadow'`**: the same shader and uniforms as its own material,

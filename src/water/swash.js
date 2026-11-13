@@ -53,6 +53,13 @@ const smoothstep = (a, b, x) => {
   return t * t * (3 - 2 * t);
 };
 
+// The highest a wave can run up a beach, per a full wave's run-up there: the largest of
+// a set, at the top of every lobe.
+export function highest({ sizes, lobes }, { least }) {
+  const largest = (least + (1 - least)) * (0.6 + 0.7);
+  return largest ** sizes * (1 + lobes.reduce((sum, [share]) => sum + share, 0));
+}
+
 // The way the swell runs in the cove's frame (water/sea-map.js's), from config.
 export function swellWay(config) {
   const t = (config.water.waves.swell.from * Math.PI) / 180;
@@ -71,7 +78,7 @@ export function swashUniforms(settings, surf, way, period, loop) {
     uSwashFilm: { value: new Vector4(film, filmPatches, filmAcross, dries) },
     uSwashFoam: { value: new Vector4(front, frontWidth, lingers, lineWidth) },
     uSwashMore: { value: new Vector4(dragged, Math.round(loop / period), way[0], way[1]) },
-    uSwashLook: { value: new Vector4(milk, linePatches, 0, 0) },
+    uSwashLook: { value: new Vector4(milk, linePatches, highest(settings, surf), 0) },
     uSwashSets: { value: new Vector4(surf.sets[0], surf.sets[1], surf.beat, surf.least) },
     uSwashAlong: { value: new Vector4(...surf.along[0], ...surf.along[1]) },
   };

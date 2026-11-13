@@ -125,7 +125,10 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
   var w = wetAt(0.0);
   let view = normalize(frame.cameraPosition - vWorldPos);
   if (!hidden) {
-    w = groundWet(vWorldPos.xz, aboveSea, tall);
+    // The waves wet sand and rock; a piece of neither has none of their code.
+    if (TERRAIN_SAND || TERRAIN_ROCK || TERRAIN_WET) {
+      w = groundWet(vWorldPos.xz, aboveSea, tall);
+    }
     terrainGround(ao, dx, dy, &info, &cover);
     let slope = terrainWorldSlope(info.xy);
     n = normalize(vec3f(-slope.x, 1.0, -slope.y));

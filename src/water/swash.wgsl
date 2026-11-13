@@ -15,7 +15,7 @@ struct SwashSettings {
   uSwashFilm: vec4f, // s the glassy film lasts at most; a share more or less in patches, m across; s the ground takes to dry
   uSwashFoam: vec4f, // how much foam its front carries, m in height; s what it strands lingers; the line's width, m in height
   uSwashMore: vec4f, // how much of the line the backwash drags back; waves in the loop; the way the swell runs (a, o)
-  uSwashLook: vec4f, // how white the uprush is; m along the beach over which the line gathers in places
+  uSwashLook: vec4f, // how white the uprush is; m along the beach over which the line gathers in places; the highest a wave runs, per a full one
   uSwashSets: vec4f, // the surf's sets (water/surf.js): the waves each of two beats goes round over, how far each moves a size, the smallest's share
   uSwashAlong: vec4f, // per beat: how a wave's size varies along it, rad/m, and how many turns it moves along it
 }

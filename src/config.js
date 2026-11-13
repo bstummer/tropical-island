@@ -828,13 +828,13 @@ export const water = {
   // lingers `lingers` s, `lineWidth` m in height, gathering in places `linePatches` m
   // along the beach; the backwash drags `dragged` of it back down.
   swash: {
-    height: 0.38,
+    height: 0.45,
     full: 0.45,
     least: 0.25,
     sizes: 0.8,
-    lobes: [[0.22, 23], [0.1, 7.3]],
-    pace: 1,
-    back: 1.5,
+    lobes: [[0.25, 23], [0.2, 7.3]],
+    pace: 0.8,
+    back: 1.4,
     draws: 0.12,
     sheet: 0.12,
     edge: 0.05,
@@ -844,11 +844,11 @@ export const water = {
     filmPatches: 0.6,
     filmAcross: 3.7,
     dries: 30,
-    milk: 0.35,
+    milk: 0.5,
     front: 1,
-    frontWidth: 0.015,
-    lingers: 9,
-    lineWidth: 0.008,
+    frontWidth: 0.02,
+    lingers: 12,
+    lineWidth: 0.012,
     linePatches: 2.3,
     dragged: 0.3,
     // The water's surface (water/water.wgsl): the beach's water takes over from the sea's
@@ -864,6 +864,7 @@ export const water = {
     variance: [0.003, 0.012],
     flow: 0.6,
     mirrors: 0.15, // m: how much higher than the ground under it what it mirrors must stand
+    reach: 25, // m from a waterline within which the water's surface draws the beach's water
   },
   // Degrees above the rim of the sea by which it has gone 63% of the way over into the sky just above it.
   horizonFade: 0.5,
@@ -918,8 +919,9 @@ export const capture = {
   // leave: every lit pixel reads them, and a pass over the terrain shader's
   // cost waits (PLAN.md 5.1). 6000 since the sea (Stage 6), with the user's
   // leave: the seabed is back, and the water reads it. 8000 since its mirror,
-  // glints and surf, likewise (PLAN.md, Decisions).
-  frameBudgetMs: 8000,
+  // glints and surf, likewise (PLAN.md, Decisions). 10000 since the beach's waves
+  // (Stage 7), likewise: the ground near the sea and the water by it both work them out.
+  frameBudgetMs: 10000,
   // Seconds a capture waits before it fails rather than hang the tool: for the
   // work a frame waits on (core/capture.js; the sky's light after a time
   // change), and for a view, or one of the tool's checks, to be done once its

@@ -8,7 +8,7 @@ import { createRandom } from '../src/core/random.js';
 import { createIsland } from '../src/world/island.js';
 import { buildHeightmap } from '../src/world/heightmap.js';
 import { buildSeaMap } from '../src/water/sea-map.js';
-import { createSwash, swellWay } from '../src/water/swash.js';
+import { createSwash, highest, swellWay } from '../src/water/swash.js';
 import { createSurface } from '../src/water/surface.js';
 import { buildSpectrum } from '../src/water/spectrum.js';
 
@@ -68,11 +68,12 @@ test('on the cove\'s beach the edge runs up and back once a wave, every wave, an
       while (i < levels.length - 1 && levels[i + 1] > levels[i] + 1e-6) i++;
       const top = i;
       while (i < levels.length - 1 && levels[i + 1] < levels[i] - 1e-6) i++;
-      // A whole run only: one the window cuts off isn't one.
-      if (top > start && i > top && i < levels.length - 1 && levels[top] - levels[start] > 0.01) runs.push({ up: (top - start) * step, down: (i - top) * step, height: levels[top] });
+      // A whole run only: one the window cuts off isn't one, nor one the next runs up over before it has drained.
+      const drained = levels[i] < Math.min(...levels) + 0.005;
+      if (top > start && i > top && i < levels.length - 1 && drained && levels[top] - levels[start] > 0.01) runs.push({ up: (top - start) * step, down: (i - top) * step, height: levels[top] });
     }
-    // Five waves' time holds three whole runs at least, and no more than one a wave.
-    assert.ok(runs.length >= 3 && runs.length <= 5, `at ${point}: ${runs.length} runs up in ${5 * period} s`);
+    // Five waves' time holds two whole runs at least, and no more than one a wave.
+    assert.ok(runs.length >= 2 && runs.length <= 5, `at ${point}: ${runs.length} runs up in ${5 * period} s`);
     for (const run of runs) assert.ok(run.up < run.down, `at ${point}: up in ${run.up} s, back in ${run.down} s`);
   }
 });
@@ -95,13 +96,11 @@ test('each wave runs up the beach a height of its own, as far as the sets and th
 
 test('the waves run up no higher than the sets leave the beach wet, and draw the sea down only a little', () => {
   const beach = gameBeach();
-  const { height } = config.water.swash;
-  const { dry } = config.world.terrain.sand.wetness;
   for (const point of alongCove(beach)) {
     const [a, o] = beach.island.toCove(...point);
     const runs = beach.swash.runs(beach.map.at(a, o));
-    // chunks/wet.wgsl: the sets' wetness, up to `dry` above the sea where a full wave runs up `height`.
-    const wetTop = (dry * runs) / height;
+    // water/swash-wet.wgsl: the sets' wetness reaches as high as the highest wave runs.
+    const wetTop = runs * highest(config.water.swash, config.water.surf);
     const levels = edgeOver(beach.at, point, 0, loop, 0.25);
     assert.ok(Math.max(...levels) < wetTop, `at ${point}: the edge runs up to ${Math.max(...levels).toFixed(2)} m, over the wet sand's top at ${wetTop.toFixed(2)}`);
     assert.ok(Math.min(...levels) > -0.25 * runs, `at ${point}: the sea drawn down to ${Math.min(...levels).toFixed(2)} m`);

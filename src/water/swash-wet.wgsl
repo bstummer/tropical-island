@@ -1,5 +1,5 @@
 // How wet the waves leave the ground (chunks/wet.wgsl's Wet), for the terrain and the
-// rocks: what the sets did over minutes, as high as a full wave runs up this beach
+// rocks: what the sets did over minutes, as high as the highest wave runs up this beach
 // (groundDamp), with what the last waves did on top (swash.wgsl). Needs terrainCove().
 
 #include "/chunks/wet.wgsl"
@@ -9,9 +9,13 @@
 // of it the sheet or the glassy film it leaves covers, which the water draws. width: how
 // much aboveSea changes across the pixel.
 fn groundWet(xz: vec2f, aboveSea: f32, width: f32) -> Wet {
+  // Higher than the sets wet any beach, with the lobes of their reach, it is dry.
+  if (aboveSea - width > (wetParams.uWet.z + WET_REACH) * swash.uSwashRun.x * swash.uSwashLook.z / wetParams.uWet.z) {
+    return wetAt(0.0);
+  }
   let s = swashAt(xz, aboveSea, seaAt(xz).x, seaShoreAt(xz).xy, width);
-  // This beach's run-up per the one the sets' wetness is set for.
-  let scale = max(s.runs / swash.uSwashRun.x, 0.05);
+  // The sets have wetted the beach as high as its highest wave runs: so high is the sets' wetness's dry top.
+  let scale = max(s.runs * swash.uSwashLook.z / wetParams.uWet.z, 0.01);
   var w = groundDamp(xz, aboveSea / scale, width / scale);
   w.wetness = max(w.wetness, s.soaked);
   w.film = s.film;

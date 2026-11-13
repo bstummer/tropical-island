@@ -83,7 +83,7 @@ when a choice is about taste or scope rather than engineering (see Open question
 | 4c | Maths of our own | The cove | done |
 | 5 | Shadows | The cove | done |
 | 6 | Ocean | The cove | done |
-| 7 | Shoreline | The cove | todo |
+| 7 | Shoreline | The cove | in progress |
 | 8 | Foliage foundation and coconut palms | The cove | todo |
 | 9 | Cove vegetation | The cove | todo |
 | 10 | Clouds | The cove | todo |
@@ -364,7 +364,7 @@ a grey-tan band from standing height (`beach`); the wet band is one fixed outlin
 (`shoreline`); the sun glints twice, on the water and on the wet sand, each its own way (`sand`);
 `swimmer`'s water is one flat teal; `air-shallows` shows no shore.
 
-- [ ] **7.1 Eyes on the water's edge.** Views for what the stage builds, each with a brief and frozen at a
+- [x] **7.1 Eyes on the water's edge.** Views for what the stage builds, each with a brief and frozen at a
   moment that shows it: low at the water's edge along the beach (the hero), the edge at arm's length,
   ankle-deep facing a wave coming in, looking down through knee-deep water, the waterline from the air, a
   rocky waterline up close; views the stage doesn't touch make room (CLAUDE.md §4). The tool shows a wave's
@@ -372,19 +372,19 @@ a grey-tan band from standing height (`beach`); the wet band is one fixed outlin
   strip's 2 s steps skip most of a run-up), proven on a test scene built to fail it. The frame's cost on
   SwiftShader and CI's time measured where the shore fills the frame, and room made for what the stage
   adds: what only the shore needs costs nothing elsewhere.
-- [ ] **7.2 The run-up.** The waves that cross the lagoon reach the beach in the rhythm of the reef's sets,
+- [x] **7.2 The run-up.** The waves that cross the lagoon reach the beach in the rhythm of the reef's sets,
   run up the sand as a thin clear sheet, slow, stop and drain back; each reaches its own line, in lobes
   along the beach, further for a set's big waves. The cut goes: sea, sheet and sand are one surface with no
   line, gutter or band between them, from standing height, from a hand above the sand and from the air,
   and from far off the beach's edge holds steady. JS knows where the water stands on the beach and when
   each wave lands (wading, sound), agreeing with the GPU at sample points, and any `t` gives the same frame
   however it was reached.
-- [ ] **7.3 Wet sand.** What a wave leaves: sand dark and glassy where the water just drained, mirroring
+- [x] **7.3 Wet sand.** What a wave leaves: sand dark and glassy where the water just drained, mirroring
   the sky, the sun and the land as the sea beside it does, one glint of the sun across both. The gloss
   drains away within seconds, from the top down and in patches, the darkness over minutes, so the beach
   shows where the last wave reached and where the last big one did. Rock and the rocks within the waves'
   reach wet and dry by the same input. Into a low sun the foreshore glows (`into-the-sun`).
-- [ ] **7.4 Foam on the beach.** Each wave's front carries a line of foam up the sand and leaves it where
+- [x] **7.4 Foam on the beach.** Each wave's front carries a line of foam up the sand and leaves it where
   it turns: it lingers, the backwash stretches and tears it into lace, and bits stay behind and fade; an
   older line shows under a newer one. One surface with the surf's foam (6.6). From the far end of the bay
   and from the air the beach is edged in white scallops that hold steady.
@@ -411,6 +411,39 @@ a grey-tan band from standing height (`beach`); the wet band is one fixed outlin
 Taken in three legs, each ending with `verify` green, commits on the `stage-7` branch and the user's look
 at the running game: 7.1 to 7.4 (the run-up, the wet sand and the foam read only together, and their
 timing is what the rest builds on), 7.5 and 7.6, then 7.7 and 7.8.
+
+Leg 1 (7.1 to 7.4), handed to the user 2026-11-13:
+- Views: `swash`, the hero (golden hour, along the bay from damp sand just above the waves' reach), and
+  `air-swash` (from 25 m), with `sand` and `beach`, each with a run of a wave (views.js `run`: frames over
+  a wave, and a time-slice along a line, proven by tests/image.test.js on frames of a moving edge and of a
+  still one). `ankle` waits for 7.5, disabled; the view down through knee-deep water is 7.6's, the rocky
+  waterline 7.7's. `horizon`, `overview` and `swimmer` stand aside.
+- The run-up (`water/swash.js`, its WGSL twin): each wave lands when the sea map says (a fourth layer: when
+  the waves reach the waterline nearest, how hard they break there, the beach's slope; the map now binds at
+  group 0 for every material), runs up as a thrown stone would and drains back slower, its reach its set's and
+  its own in lobes along the beach; the front sweeps along the bay as the waves land later towards the
+  headland. JS knows it (`ctx.water.swashAt`, and `heightAt` on the beach), the waves fixture holds the GPU to
+  it (the edge within 1.3 mm, once the landing times, hundreds of seconds, were mixed from their texels: half-
+  float filtering rounded them), tests/swash.test.js its properties.
+- The water lies over the beach as high as the waves may wet it and draws the sheet, the glassy film it leaves
+  over the sand's rumples and the foam there, with the sea's mirror, the land in it and the sun's glitter;
+  the terrain and the rocks wet and dry by the same model (`water/swash-wet.wgsl`), the sets' wetness as
+  high as this beach's highest wave. `into-the-sun`'s foreshore glows again, as the sun's path runs on from
+  the lagoon onto the wet sand.
+
+Open after leg 1:
+- No bore comes in over the shallows: a wave appears at the waterline and runs up (7.5). The uprush reads as
+  clear water more than a bubbly bore, and from standing height (`beach`) its foam front is faint.
+- From the air the edge's lobes are gentle and the stranded lines thin; no beach cusps (7.8's pick).
+- A dark stepped wedge at the far waterline in `swash` at a grazing angle: cause not found.
+- The rocks take the beach's run-up up their faces as if they were sand (7.7).
+- Cost: SwiftShader frames of 8.6 to 9.3 s where the shore fills the frame (`swash`, `beach`,
+  `into-the-sun`, `rocks`), 5.4 to 5.5 s (`sand`, `air-swash`), with the budget raised to 10 s; the
+  water's code for the beach is a variant of its own for the pieces within reach of a waterline, and the
+  terrain's only in pieces with sand or rock, but every pixel of those still runs it, and the terrain needs
+  only the wetness of what it works out. Overdraw rises by 0.3 to 0.8 where the water lies over the beach.
+  On the GPU here, frame times rose by a third to a half on the shore views; the benchmark on the
+  laptop will tell more.
 
 - Stage 6 built for this stage: the sea map's distance to the shore in metres on the drawn ground, and the
   way inland (6.2); a surface in JS and on the GPU that the run-up joins (6.3); foam as a surface of its
@@ -802,8 +835,9 @@ Made with the user. Don't reopen them unless the user does.
 - **Half the sun's light in its path** (`config.water.glitter` 0.5), on the sea and on wet sand's film of
   water: the white band narrows by about half. A quarter and an eighth narrowed it more but dulled the
   glare seen from above at a high sun and cut the path short of the shore in `into-the-sun`. (2026-11-12)
-- **The capture budget is 8 s a SwiftShader frame**, raised with the user's leave as the shadows and the
-  sea came (2.5, 4, 6, then 8 s), as long as everything stays as cheap as it can. (2026-10-30)
+- **The capture budget is 10 s a SwiftShader frame**, raised with the user's leave as the shadows, the
+  sea and the beach's waves came (2.5, 4, 6, 8, then 10 s), as long as everything stays as cheap as it can.
+  (2026-10-30, 10 s 2026-11-13)
 - **CI checks, it doesn't measure**: it runs `verify` with `--no-measurements`, every check that can fail
   but none of the views' measurements, which only warn; sessions measure in their own `verify`. Splitting
   the captures across parallel jobs and publishing before the screenshots finish were the alternatives.

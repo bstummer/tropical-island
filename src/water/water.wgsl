@@ -26,6 +26,9 @@
 #include "swash.wgsl"
 #include "chunks/rumples.wgsl"
 
+// Whether this piece of the sea lies within reach of a waterline, and draws the beach's water (water.js).
+override WATER_SHORE: bool = true;
+
 struct Water {
   uPatches: vec3f, // 1 / each cascade's patch, m (water/spectrum.js)
   uFineSlopes: f32, // the variance of the slopes of waves too small for any cascade, per axis
@@ -137,7 +140,7 @@ fn vertexMain(in: VertexIn) -> Varyings {
   moved.y = max(moved.y, troughFloor(ground));
   // Near the shore the beach's water: the sheet a wave runs up as, and the sea's edge drawn
   // down after it; over the beach as high as the waves may wet it, just over the ground.
-  if (ground > -water.uShore.x && ground < water.uShore.y * swashRuns(rest)) {
+  if (WATER_SHORE && ground > -water.uShore.x && ground < water.uShore.y * swashRuns(rest)) {
     let wash = swashAt(rest, ground, sea.x, shore.xy, 0.0);
     moved = mix(moved, vec3f(0.0, ground + wash.cover, 0.0), 1.0 - smoothstep(0.5 * water.uShore.x, water.uShore.x, -ground));
     let lift = water.uShore.z + water.uShore.w * length(rest - frame.cameraPosition.xz) + water.uShoreSpacing * in.aNode.z * (1.0 + k);
@@ -280,13 +283,19 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
   // The beach: what this pixel shows of the ground, as it is, and how far its water goes over
   // to the beach's, by how deep the sea is here; what the waves do where it shows.
   let pixel = vec2i(in.position.xy);
-  let seen = opaqueSeen(pixel, size);
-  let seenHeight = seen.y + planetDrop(seen.xz);
-  let seenTall = fwidth(seenHeight);
-  let beach = 1.0 - smoothstep(0.5 * water.uShore.x, water.uShore.x, sea.y);
+  var seen = p;
+  var seenHeight = 0.0;
+  var seenTall = 0.0;
+  var beach = 0.0;
+  if (WATER_SHORE) {
+    seen = opaqueSeen(pixel, size);
+    seenHeight = seen.y + planetDrop(seen.xz);
+    seenTall = fwidth(seenHeight);
+    beach = 1.0 - smoothstep(0.5 * water.uShore.x, water.uShore.x, sea.y);
+  }
   let shore = seaShoreAt(in.vRest);
   var wash = Swash(0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0);
-  if (beach > 0.0) {
+  if (WATER_SHORE && beach > 0.0) {
     wash = swashAt(seen.xz, seenHeight, sea.x, shore.xy, seenTall);
     // The sheet ripples as it runs; the film it leaves, a little, as the sand under it.
     reach.z = max(reach.z, beach * mix(water.uShoreRipples.y, water.uShoreRipples.x, smoothstep(0.0, 0.01, wash.cover)));
@@ -313,7 +322,7 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
   }
   // The film the sheet leaves on the sand lies over its rumples: so does what it mirrors.
   var rumpled = vec3f(0.0);
-  if (beach > 0.0) {
+  if (WATER_SHORE && beach > 0.0) {
     let lies = beach * wash.film * (1.0 - smoothstep(0.0, 0.01, wash.cover));
     rumpled = lies * rumples(seen.xz, sqrt(longest), water.uShoreRumples.x, water.uShoreRumples.y);
     slopes.x += rumpled.x;
@@ -354,7 +363,7 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
   // On the beach this pixel's own ground, straight through the few centimetres of water
   // over it, as the terrain drew it, its haze taken out: this adds the haze for all of it.
   let air = aerialAt(p);
-  if (beach > 0.0) {
+  if (WATER_SHORE && beach > 0.0) {
     let stored = textureLoad(uOpaque, pixel, 0);
     let hazed = smoothstep(-0.01, 0.01, seenHeight);
     let drawn = (sceneRadiance(stored.rgb / max(stored.a, 1e-3)) / frame.uExposure - hazed * air.added) / mix(vec3f(1.0), max(air.through, vec3f(1e-3)), hazed);
@@ -394,7 +403,7 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
   let far = select(max(sea.x, 0.0) + water.uMirrorBeyond, toLand, toLand > 0.0);
   let blur = 8.0 * variance;
   // On the beach the water lies over the ground: what stands round it no higher isn't mirrored.
-  let mirrorsAbove = seenHeight + water.uShoreMirror;
+  let mirrorsAbove = select(LAND_ANY, seenHeight + water.uShoreMirror, WATER_SHORE && beach > 0.0);
   let spread = (sqrt(flat2 + water.uMirrorTaps.z * variance) - sqrt(flat2 + water.uMirrorTaps.x * variance)) * frame.projectionMatrix[1][1] * water.uMirrorCells.y * 0.5;
   var skyPart = vec3f(0.0);
   var landPart = vec3f(0.0);

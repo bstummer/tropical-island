@@ -191,18 +191,24 @@ export function create(ctx) {
       uWaves: { value: waves.texture },
     },
     // The island's shade alone: the water reads no shadow maps, so the rocks' shadows fall on neither it nor the seabed it draws.
-    overrides: { SHADE_ONCE: true, SHADOW_MAP: false },
+    overrides: { SHADE_ONCE: true, SHADOW_MAP: false, WATER_SHORE: false },
   });
+  // The pieces within reach of a waterline draw the beach's water too (water.wgsl WATER_SHORE):
+  // the rest of the sea leaves out its code, which SwiftShader would run at every pixel.
+  const shoreMaterial = new Material({ name: 'water-shore', shader, uniforms: material.uniforms, overrides: { ...material.overrides, WATER_SHORE: true } });
   const nodes = new Attribute(new Float32Array(4 * MAX_NODES), 4, { instance: true });
-  const meshes = [quality.waterGrid, quality.waterGrid / 2].map((quads) => {
-    const mesh = new Mesh(gridGeometry(quads, nodes, false), material);
-    mesh.name = 'water';
-    mesh.pass = 'afterOpaque';
-    mesh.frustumCulled = false; // culled node by node
-    mesh.visible = false; // until the sea map is in
-    scene.add(mesh);
-    return mesh;
-  });
+  // [sea's whole nodes, its quarters, the shore's whole nodes, its quarters]
+  const meshes = [material, shoreMaterial].flatMap((drawn) =>
+    [quality.waterGrid, quality.waterGrid / 2].map((quads) => {
+      const mesh = new Mesh(gridGeometry(quads, nodes, false), drawn);
+      mesh.name = drawn.name;
+      mesh.pass = 'afterOpaque';
+      mesh.frustumCulled = false; // culled node by node
+      mesh.visible = false; // until the sea map is in
+      scene.add(mesh);
+      return mesh;
+    }),
+  );
 
   let seaTexture = null;
   let map = null;
@@ -303,18 +309,23 @@ export function create(ctx) {
         },
         selected,
       );
-      const [whole, quarters] = meshes.map((mesh) => mesh.geometry);
+      // Which pieces reach the beach's water: within reach of a waterline.
+      for (const node of selected) {
+        const size = node.spacing * (node.quarter ? quality.waterGrid / 2 : quality.waterGrid);
+        const [a, o] = island.toCove(node.x + size / 2, node.z + size / 2);
+        node.shore = Math.abs(map.at(a, o, here).shore) < size * Math.SQRT1_2 + map.texel + settings.swash.reach;
+      }
       let count = 0;
-      for (const quarter of [false, true]) {
-        const geometry = quarter ? quarters : whole;
+      meshes.forEach(({ geometry }, k) => {
+        const [shore, quarter] = [k >= 2, k % 2 === 1];
         geometry.firstInstance = count;
         for (const node of selected) {
-          if (node.quarter !== quarter) continue;
+          if (node.quarter !== quarter || node.shore !== shore) continue;
           if (count >= MAX_NODES) throw new Error(`water: more than ${MAX_NODES} nodes`);
           nodes.array.set([node.x, node.z, node.spacing, node.level], 4 * count++);
         }
         geometry.instanceCount = count - geometry.firstInstance;
-      }
+      });
       nodes.update(0, count);
     },
     () => waves.compiled,
@@ -346,6 +357,7 @@ export function create(ctx) {
         mesh.geometry.dispose();
       }
       material.dispose();
+      shoreMaterial.dispose();
       waves.dispose();
       seaTexture?.destroy();
       frame.uniforms.uSeaMap.value = null;

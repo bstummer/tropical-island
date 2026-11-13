@@ -9,6 +9,7 @@ const MIRROR_INDEX_BITS = 22u; // as mirror-project.wgsl
 const MIRROR_NEAR_OCTAVES = 17.0;
 const MIRROR_NEAR_LEVELS = 1022.0;
 const MIRROR_NEARER = 0.98; // a level of how near is 1.2%: what stands at the water's foot counts as behind it
+const LAND_ANY = -1e8; // as `above` (landCell): whatever its height
 
 // Where the first thing along the view at this pixel of the opaque scene lies, in the world.
 fn opaqueSeen(pixel: vec2i, size: vec2f) -> vec3f {
@@ -41,9 +42,11 @@ fn landCell(cell: vec2i, eyeW: f32, above: f32) -> vec4f {
   let source = vec2u(index % across, index / across);
   let stride = u32(water.uMirrorCells.z);
   let pixel = min(source * stride + stride / 2u, vec2u(textureDimensions(uOpaque)) - 1u);
-  let standing = opaqueSeen(vec2i(pixel), vec2f(textureDimensions(uOpaqueDepth)));
-  if (standing.y + planetDrop(standing.xz) < above) {
-    return vec4f(0.0);
+  if (above > LAND_ANY) {
+    let standing = opaqueSeen(vec2i(pixel), vec2f(textureDimensions(uOpaqueDepth)));
+    if (standing.y + planetDrop(standing.xz) < above) {
+      return vec4f(0.0);
+    }
   }
   let stored = textureLoad(uOpaque, pixel, 0);
   // At an edge its samples are weighted by alpha (post/opaque-resolve.wgsl), so what
