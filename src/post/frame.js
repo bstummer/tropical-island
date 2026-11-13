@@ -36,8 +36,9 @@
 //                     uExposure, the light state that chunks/lighting.wgsl reads and
 //                     sky/sky.js keeps in step with the time of day, the terrain's
 //                     grids that chunks/terrain.wgsl reads and world/terrain.js fills,
-//                     and the shadows that chunks/shadows.wgsl reads and sky/shadows.js
-//                     fills (neutral until then)
+//                     the shadows that chunks/shadows.wgsl reads and sky/shadows.js
+//                     fills, and the sea map and the waves' time that water/sea-map.wgsl
+//                     reads and water/water.js fills (neutral until then)
 //   beforeScene(fn, compile)  fn(renderer) every frame after all systems updated and
 //                     before the scene renders, for passes of their own; compile(),
 //                     if given, makes their pipelines ahead (compile() below) and
@@ -218,6 +219,15 @@ export function createFrame(ctx, display) {
     uShadowCascades: { value: Array.from({ length: 4 }, () => new Vector4()) },
     uShadowParams: { value: new Vector4() },
     uShadowSoftness: { value: new Vector4() },
+    // What the sea knows of the island and the waves' time (water/sea-map.wgsl), which
+    // water/water.js fills: until then no map, which every shader reads as deep sea.
+    uSeaMap: { value: null },
+    uSeaLayout: { value: new Vector4(0, 0, 0, config.water.waves.ripplesLeast) },
+    uSeaOpen: { value: new Vector2(config.water.map.open.over, config.water.map.open.reef) },
+    uChopWander: { value: new Vector2(config.water.waves.chopWander.reach, (2 * Math.PI) / config.water.waves.chopWander.across) },
+    uRipplesDepth: { value: config.water.waves.ripplesDepth },
+    uShallowTroughs: { value: config.water.shallowTroughs },
+    uWaveSeconds: { value: 0 },
   };
   renderer.setGlobals(uniforms);
 

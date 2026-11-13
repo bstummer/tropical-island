@@ -48,7 +48,6 @@ struct Water {
   uMirrorTaps: vec3f, // the rays through what the pixel's waves tilt: each one's height squared, per the variance of the slopes
   uMirrorBeyond: f32, // how far past the shore (m) a ray that meets nothing at its own pixel is taken to reach land
   uMirrorSteep: f32, // how much higher, in the square of its height per the variance of the slopes, a mirrored ray needs only one ray
-  uSeconds: f32, // the time, wrapped as the waves' is
   uGustSeconds: f32, // the time, wrapped at the gusts' loop
   uGlintMean: f32, // the tile's mean (textures/glints.js)
   uGlintSizes: vec3f, // the three reads of the tile: its side, m
@@ -117,7 +116,7 @@ fn vertexMain(in: VertexIn) -> Varyings {
     moved += reach[c] * textureSampleLevel(uWaves, uWavesSampler, wavesUv(read, patches, water.uWaveTexels), 2 * c, lod).xyz;
   }
 
-  moved.y += surfAt(sea, seaShoreAt(rest), seaWaveAt(rest), 0.0, 0.0, rest, water.uSeconds).height;
+  moved.y += surfAt(sea, seaShoreAt(rest), seaWaveAt(rest), 0.0, 0.0, rest, frame.uWaveSeconds).height;
   moved.y = max(moved.y, troughFloor(terrainHeight(terrainCove(rest), 0)));
 
   var world = vec3f(rest.x + moved.x, moved.y, rest.y + moved.z);
@@ -255,7 +254,7 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
   var reach = cascadeReach(sea);
   // The gusts fade out far off, where at a grazing angle their patches read as hills of water.
   reach.z *= mix(seaGusts(in.vRest, water.uGustSeconds), 1.0, smoothstep(water.uGustFades.x, water.uGustFades.y, length(in.vRest - frame.cameraPosition.xz)));
-  let chopped = vec4f(s1.xy * wanderedStretch(in.vRest, seaLayout.uChopWander), s1.zw);
+  let chopped = vec4f(s1.xy * wanderedStretch(in.vRest, frame.uChopWander), s1.zw);
   let rippled = s2 + water.uFinest.y * vec4f(finest.xy * FINEST_TURN, 0.0, 0.0);
   var slopes = reach.x * s0 + reach.y * chopped + reach.z * vec4f(rippled.xy * rippleStretch, rippled.zw);
   // The swell's long waves and how they break, their slope along the way they run.
@@ -267,7 +266,7 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
     let eye = frame.cameraPosition - in.vWorldPos;
     let hides = min(water.uFoamStands.x / max(normalize(eye).y, 1e-3), water.uFoamStands.y) * smoothstep(water.uFoamStands.z, water.uFoamStands.w, length(eye));
     let wave = seaWaveAt(in.vRest);
-    let breaking = surfAt(sea, shore, wave, hides, sqrt(longest), in.vRest, water.uSeconds);
+    let breaking = surfAt(sea, shore, wave, hides, sqrt(longest), in.vRest, frame.uWaveSeconds);
     foam = breaking.foam;
     slopes.x += breaking.slope * (wave.y * frame.uTerrainFrame.x + wave.z * frame.uTerrainFrame.z);
     slopes.y += breaking.slope * (wave.y * frame.uTerrainFrame.y + wave.z * frame.uTerrainFrame.w);
@@ -359,13 +358,13 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
   var radiance = (1.0 - mirrored) * leaving + mirrored * skyPart;
 
   // The sun is mirrored only where the land doesn't stand in front of it, as the sky.
-  radiance += (1.0 - landShare) * seaGlints(water.uGlitter * beam * seaGlitter(nSun, view, frame.uSunDirection, variance), in.vRest, dx, dy, ground, water.uSeconds);
+  radiance += (1.0 - landShare) * seaGlints(water.uGlitter * beam * seaGlitter(nSun, view, frame.uSunDirection, variance), in.vRest, dx, dy, ground, frame.uWaveSeconds);
 
   // Foam over all of it, a surface of its own.
   var foamCover = 0.0;
   if (foam > 0.0) {
     // Sharper than the pixel's longer side, or it smears across the eye's line.
-    let lace = seaFoamCover(foam, in.vRest, water.uSeconds, wide * exp2(-min(0.5 * stretch, 1.5)), wide);
+    let lace = seaFoamCover(foam, in.vRest, frame.uWaveSeconds, wide * exp2(-min(0.5 * stretch, 1.5)), wide);
     foamCover = lace.x;
     radiance = mix(radiance, lace.y * foamLight(beam, sky, view), foamCover);
   }

@@ -9,6 +9,8 @@
 // surfAt(x, z, t), map (sea-map.js's, once ready), surface (surface.js's, once ready) }.
 // heightAt is 0 and surfAt none until ready, and t defaults to the clock's. Needs the
 // terrain's grids, so comes after it in WORLD_SYSTEMS; the terrain reads over() each frame.
+// It fills the frame's sea map and the waves' time (ctx.frame.uniforms, water/sea-map.wgsl),
+// which every scene material may read.
 import { Box3, Frustum, Matrix4, Vector2, Vector3, Vector4, toHalfFloatNearest } from '../maths/index.js';
 import shader from './water.wgsl';
 import { Material } from '../gpu/material.js';
@@ -38,16 +40,6 @@ export function opticsUniforms({ dimming, body, through, ior, seabedFade }) {
     uThrough: { value: through },
     uIor: { value: ior },
     uSeabedFade: { value: new Vector2(...seabedFade) },
-  };
-}
-
-// The uniforms of sea-map.wgsl but the map and its layout, from config.water.
-export function seaUniforms({ waves, map, shallowTroughs }) {
-  return {
-    uShallowTroughs: { value: shallowTroughs },
-    uRipplesDepth: { value: waves.ripplesDepth },
-    uChopWander: { value: new Vector2(waves.chopWander.reach, (2 * Math.PI) / waves.chopWander.across) },
-    uSeaOpen: { value: new Vector2(map.open.over, map.open.reef) },
   };
 }
 
@@ -168,7 +160,6 @@ export function create(ctx) {
       uMirrorTaps: { value: new Vector3(...settings.mirror.taps) },
       uHorizonFade: { value: Math.sin((settings.horizonFade * Math.PI) / 180) },
       uHorizonFrom: { value: new Vector2(...settings.horizonFrom) },
-      uSeconds: { value: 0 },
       uGustSeconds: { value: 0 },
       uGlintMean: ctx.terrain.surfaces.uGlintMean,
       uGlintSizes: { value: new Vector3(...settings.glints.sizes) },
@@ -188,9 +179,6 @@ export function create(ctx) {
       uSharper: { value: settings.sharper },
       uLogPatches: { value: new Vector3(...waveSettings.patches.map((patch) => -Math.log2(patch))) },
       uWaves: { value: waves.texture },
-      uSeaLayout: { value: new Vector4(0, 0, 0, waveSettings.ripplesLeast) },
-      ...seaUniforms(settings),
-      uSeaMap: { value: null },
     },
     // The island's shade alone: the water reads no shadow maps, so the rocks' shadows fall on neither it nor the seabed it draws.
     overrides: { SHADE_ONCE: true, SHADOW_MAP: false },
@@ -221,11 +209,11 @@ export function create(ctx) {
       seaTexture = new Texture(gpu, { name: 'sea map', width: samples, height: samples, depth: 3, array: true, format: 'rgba16float', mips: true, data: true, mipsUploaded: true, sampler: { mag: 'linear', min: 'linear', mipmap: 'linear' } });
       if (built.levels.length !== seaTexture.mipLevelCount) throw new Error(`water: ${built.levels.length} levels of the sea map for a texture of ${seaTexture.mipLevelCount}`);
       built.levels.forEach((layers, level) => layers.forEach((texels, layer) => seaTexture.upload(texels, { layer, layers: 1, level })));
-      material.uniforms.uSeaMap.value = seaTexture;
-      material.uniforms.uSeaLayout.value.set(origin[0] - texel / 2, origin[1] - texel / 2, 1 / (samples * texel), waveSettings.ripplesLeast);
+      frame.uniforms.uSeaMap.value = seaTexture;
+      frame.uniforms.uSeaLayout.value.set(origin[0] - texel / 2, origin[1] - texel / 2, 1 / (samples * texel), waveSettings.ripplesLeast);
       surf = createSurf(settings.surf, swellWay);
       surface = createSurface(spectrum, map, island.toCove, waveSettings.inJs, waveSettings.ripplesLeast, waveSettings.ripplesDepth, surf, waveSettings.chopWander, { share: settings.shallowTroughs, groundAt: built.heightmap.heightAt });
-      Object.assign(ctx.water, { map, surface, seaTexture, seaLayout: material.uniforms.uSeaLayout.value });
+      Object.assign(ctx.water, { map, surface, seaTexture, seaLayout: frame.uniforms.uSeaLayout.value });
       for (const mesh of meshes) mesh.visible = true;
     })
     // Whatever failed, the pipelines too: update() throws it, so the game shows the error.
@@ -269,10 +257,10 @@ export function create(ctx) {
   const here = {};
   const stop = frame.beforeScene(
     () => {
+      const wrapped = (loop) => ctx.clock.elapsed - loop * Math.floor(ctx.clock.elapsed / loop);
+      frame.uniforms.uWaveSeconds.value = wrapped(spectrum.loop);
       if (!map) return;
       waves.compute(ctx.clock.elapsed);
-      const wrapped = (loop) => ctx.clock.elapsed - loop * Math.floor(ctx.clock.elapsed / loop);
-      material.uniforms.uSeconds.value = wrapped(spectrum.loop);
       material.uniforms.uGustSeconds.value = wrapped(waveSettings.gusts.loop);
       viewProjection.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
       frustum.setFromProjectionMatrix(viewProjection);
@@ -338,6 +326,7 @@ export function create(ctx) {
       material.dispose();
       waves.dispose();
       seaTexture?.destroy();
+      frame.uniforms.uSeaMap.value = null;
       delete ctx.water;
     },
   };

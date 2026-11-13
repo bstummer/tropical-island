@@ -1,8 +1,9 @@
 // What every scene material shares, at bind group 0: the camera, and
 // ctx.frame.uniforms (post/frame.js), which the systems fill: the exposure, the
 // light state that sky/sky.js keeps in step with the time of day (lighting.wgsl),
-// the terrain's grids that world/terrain.js fills (terrain.wgsl), and the
-// shadows that sky/shadows.js fills (shadows.wgsl). The
+// the terrain's grids that world/terrain.js fills (terrain.wgsl), the
+// shadows that sky/shadows.js fills (shadows.wgsl), and the sea map and the
+// waves' time that water/water.js fills (water/sea-map.wgsl). The
 // renderer (gpu/renderer.js) packs it by field name once per pass.
 
 #include "frame-struct.wgsl"
@@ -36,3 +37,6 @@
 @group(0) @binding(20) var uShadowMap: texture_depth_2d_array;
 @group(0) @binding(21) var uShadowMapSampler: sampler_comparison;
 @group(0) @binding(22) var uShadowMapTexels: sampler; // unfiltered, for textureGather of its depths (gpu/bindings.js)
+// What the sea knows of the island (water/sea-map.wgsl), which water/water.js fills: a placeholder until then.
+@group(0) @binding(23) var uSeaMap: texture_2d_array<f32>;
+@group(0) @binding(24) var uSeaMapSampler: sampler;

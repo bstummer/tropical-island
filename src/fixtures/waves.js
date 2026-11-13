@@ -20,7 +20,7 @@ import { createTarget, Texture } from '../gpu/texture.js';
 import { wave } from '../water/spectrum.js';
 import { createSurface } from '../water/surface.js';
 import { createSurf } from '../water/surf.js';
-import { seaUniforms, surfUniforms } from '../water/water.js';
+import { surfUniforms } from '../water/water.js';
 
 const TIMES = [0, 7.3, 3 * 3600 + 1.1];
 const POINTS = 48; // texels per cascade per time
@@ -130,18 +130,19 @@ export function create(ctx) {
     const material = new Material({
       name: 'fixture-waves',
       shader,
-      uniforms: { uPoints: { value: input }, uSeaMap: { value: ctx.water.seaTexture }, uSeaLayout: { value: layout }, ...seaUniforms(ctx.config.water), ...surfUniforms(ctx.config.water.surf, ctx.water.swellWay), uSeconds: { value: SURFACE_TIME }, uMode: { value: 0 }, uPatches: { value: ctx.water.patches }, uWaveTexels: { value: size }, uWaves: { value: waves.texture } },
+      uniforms: { uPoints: { value: input }, ...surfUniforms(ctx.config.water.surf, ctx.water.swellWay), uSeconds: { value: SURFACE_TIME }, uMode: { value: 0 }, uPatches: { value: ctx.water.patches }, uWaveTexels: { value: size }, uWaves: { value: waves.texture } },
     });
     const pass = renderer.fullscreen(material);
+    // The map's layout is the frame's (chunks/frame.wgsl), shifted for a run and put back.
     const run = async (mode, offset = 0) => {
       material.uniforms.uMode.value = mode;
-      material.uniforms.uSeaLayout.value = layout.clone();
-      material.uniforms.uSeaLayout.value.x -= offset * map.texel;
-      material.uniforms.uSeaLayout.value.y -= offset * map.texel;
+      const { x, y } = layout;
+      layout.x -= offset * map.texel;
+      layout.y -= offset * map.texel;
       pass.render(target);
-      const read = await target.color.read();
-      material.uniforms.uSeaLayout.value = layout;
-      return read;
+      layout.x = x;
+      layout.y = y;
+      return target.color.read();
     };
 
     // What the sea knows, on the GPU and in JS: shore, depth, swell, chop.

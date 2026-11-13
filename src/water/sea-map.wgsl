@@ -1,26 +1,15 @@
 // What the sea knows of the island (water/sea-map.js, whose header says what each
-// means), as the water reads it: three layers of a texture over the cove's frame.
-// Needs terrainCove() (chunks/terrain.wgsl).
-
-struct SeaLayout {
-  uSeaLayout: vec4f, // the corner of the map's first texel (a, o), 1 / its width in m; how much of the ripples reaches the calmest water
-  uRipplesDepth: f32, // from how deep (m) that much of them does
-  uChopWander: vec2f, // how far the chop's tile wanders, m; 2 pi over how far apart it does
-  uSeaOpen: vec2f, // over how far (m) past the map's square the open sea takes over; how far off it has the reef's crest (m)
-  uShallowTroughs: f32, // the most the waves draw the surface down, as a share of the water under it
-}
-
-@group(1) @binding(10) var<uniform> seaLayout: SeaLayout;
-@group(1) @binding(11) var uSeaMap: texture_2d_array<f32>;
-@group(1) @binding(12) var uSeaMapSampler: sampler;
+// means), as every shader near the sea reads it: layers of a texture over the cove's
+// frame, bound with its layout for every scene material (chunks/frame.wgsl), which
+// water/water.js fills. Needs terrainCove() (chunks/terrain.wgsl).
 
 fn seaUv(xz: vec2f) -> vec2f {
-  return (terrainCove(xz) - seaLayout.uSeaLayout.xy) * seaLayout.uSeaLayout.z;
+  return (terrainCove(xz) - frame.uSeaLayout.xy) * frame.uSeaLayout.z;
 }
 
 // How far apart the map's samples are (m).
 fn seaTexel() -> f32 {
-  return 1.0 / (seaLayout.uSeaLayout.z * f32(textureDimensions(uSeaMap).x));
+  return 1.0 / (frame.uSeaLayout.z * f32(textureDimensions(uSeaMap).x));
 }
 
 // How much of what the map holds still counts at world xz: 1 on its square, going
@@ -29,9 +18,9 @@ fn seaTexel() -> f32 {
 fn seaKept(xz: vec2f) -> f32 {
   let samples = f32(textureDimensions(uSeaMap).x);
   let texel = seaTexel();
-  let u = (terrainCove(xz) - seaLayout.uSeaLayout.xy) / texel - 0.5; // in samples from the first
+  let u = (terrainCove(xz) - frame.uSeaLayout.xy) / texel - 0.5; // in samples from the first
   let past = texel * length(u - clamp(u, vec2f(0.0), vec2f(samples - 1.0)));
-  return 1.0 - smoothstep(0.0, seaLayout.uSeaOpen.x, past);
+  return 1.0 - smoothstep(0.0, frame.uSeaOpen.x, past);
 }
 
 // At world xz: how far the shore is (m), how deep the water is (m), how much of
@@ -52,7 +41,7 @@ fn seaAtLevel(xz: vec2f, level: f32) -> vec4f {
 fn seaShoreAt(xz: vec2f) -> vec4f {
   let read = textureSampleLevel(uSeaMap, uSeaMapSampler, seaUv(xz), 1, 0.0);
   let kept = seaKept(xz);
-  return vec4f(read.xy, read.z * kept, mix(seaLayout.uSeaOpen.y, read.w, kept));
+  return vec4f(read.xy, read.z * kept, mix(frame.uSeaOpen.y, read.w, kept));
 }
 
 // At world xz, the swell's waves: how many s later than over deep water they get here;
@@ -63,7 +52,7 @@ fn seaWaveAt(xz: vec2f) -> vec4f {
 
 // The map's mip level for a pixel `footprint` metres wide.
 fn seaLevel(footprint: f32) -> f32 {
-  return log2(max(footprint * f32(textureDimensions(uSeaMap).x) * seaLayout.uSeaLayout.z, 1.0));
+  return log2(max(footprint * f32(textureDimensions(uSeaMap).x) * frame.uSeaLayout.z, 1.0));
 }
 
 // How much of each cascade reaches a point (water/surface.js reachInto is its
@@ -73,14 +62,14 @@ fn seaLevel(footprint: f32) -> f32 {
 // where it blows, as much anywhere there is water to move, more where the chop is up,
 // dying out over the last of the water at the waterline.
 fn cascadeReach(sea: vec4f) -> vec3f {
-  let ripples = max(sea.w, seaLayout.uSeaLayout.w) * smoothstep(0.0, seaLayout.uRipplesDepth, sea.y);
+  let ripples = max(sea.w, frame.uSeaLayout.w) * smoothstep(0.0, frame.uRipplesDepth, sea.y);
   return vec3f(sea.z, sea.w, ripples);
 }
 
 // The lowest the surface may stand over ground as drawn at `ground` m (below 0 under the
 // sea): in shallow water a trough flattens rather than bare the ground (water/surface.js's twin).
 fn troughFloor(ground: f32) -> f32 {
-  return seaLayout.uShallowTroughs * min(ground, 0.0);
+  return frame.uShallowTroughs * min(ground, 0.0);
 }
 
 // Where a tile is read at xz as it wanders `wander` (how far, m; 2 pi over how far
@@ -110,7 +99,7 @@ fn wanderedStretch(xz: vec2f, wander: vec2f) -> mat2x2f {
 // Where the chop's tile is read, shape and all: so from high up it doesn't show as a
 // lattice in the sun's glitter.
 fn chopRest(xz: vec2f) -> vec2f {
-  return wandered(xz, seaLayout.uChopWander);
+  return wandered(xz, frame.uChopWander);
 }
 
 // Where a cascade's texture holds its waves at world xz: texel i holds them at

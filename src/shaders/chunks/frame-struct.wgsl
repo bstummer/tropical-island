@@ -30,4 +30,12 @@ struct Frame {
   uShadowCascades: array<vec4f, 4>, // per cascade, its centre in the sun's frame and its radius (m)
   uShadowParams: vec4f, // how many cascades (0: none); their reach towards the sun (m); 1 / their texels across; the share of the last one over which they fade
   uShadowSoftness: vec4f, // x: the tangent of the sun's disk's radius as the maps soften it: a penumbra's half-width per metre to its caster
+  // What the sea knows of the island (water/sea-map.wgsl), which water/water.js fills: the corner of
+  // the map's first texel (a, o), 1 / its width in m (0 until it is in); how much of the ripples reaches the calmest water
+  uSeaLayout: vec4f,
+  uSeaOpen: vec2f, // over how far (m) past the map's square the open sea takes over; how far off it has the reef's crest (m)
+  uChopWander: vec2f, // how far the chop's tile wanders, m; 2 pi over how far apart it does
+  uRipplesDepth: f32, // from how deep (m) the calmest water's share of the ripples reaches
+  uShallowTroughs: f32, // the most the waves draw the surface down, as a share of the water under it
+  uWaveSeconds: f32, // the waves' time, wrapped at their loop (config.water.waves.loop), which water/water.js keeps
 }
