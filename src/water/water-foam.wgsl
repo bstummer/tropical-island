@@ -28,7 +28,8 @@ fn foamTileAt(uv: vec2f, size: f32, footprint: f32) -> vec4f {
 // `along` it (m), twice at sides of no simple ratio, all drifting with the swell for
 // `drifting` s, and cut at the level that leaves as much as the foam covers, its edges as
 // soft as the pixel is long (`longest`, m), or where it stretches its holes would flicker.
-// None at all where there is none.
+// None at all where there is none. Up close it has relief: its heaps are lit on the side that
+// faces the sun, dimmer on the other, as how far into the foam a point lies rises and falls.
 fn seaFoamCover(foam: f32, xz: vec2f, way: vec2f, along: f32, drifting: f32, wide: f32, longest: f32) -> vec2f {
   let t = drifting;
   let large = seabedTileAt(SEABED_TURN * xz / water.uFoamLook.x - water.uFoamDrift.xy * t, water.uFoamLook.x, wide);
@@ -54,7 +55,17 @@ fn seaFoamCover(foam: f32, xz: vec2f, way: vec2f, along: f32, drifting: f32, wid
   // Brightest where it lies thickest, far from any hole; greyer at their edges, where it thins.
   let thick = smoothstep(level, level + 0.8, into);
   let far = smoothstep(water.uFoamLook.z, 4.0 * water.uFoamLook.z, wide);
-  let bright = mix((0.68 + 0.32 * thick) * (0.9 + 0.2 * near.g), 0.68 + 0.32 * covers, far);
+  // Its relief: how far into it the foam lies a step towards the sun, in the lace's frame.
+  var relief = 0.0;
+  let sunWay = frame.uSunDirection.xz / max(length(frame.uSunDirection.xz), 1e-4);
+  if (far < 1.0 && frame.uSunDirection.y > 0.0) {
+    let step = water.uFoamRelief.x;
+    let toward = vec2f(dot(sunWay, way) * water.uFoamLace.z, dot(sunWay, vec2f(-way.y, way.x))) * step;
+    let sunward = foamTileAt((flow + toward) / water.uFoamLace.x - vec2f(water.uFoamLaceDrift.x * t, 0.0), water.uFoamLace.x, wide);
+    // Rising towards the sun, a heap's side faces away from it: dimmer.
+    relief = (1.0 - far) * clamp(water.uFoamRelief.y * (near.r - sunward.r) / step, -water.uFoamRelief.z, water.uFoamRelief.z);
+  }
+  let bright = mix((0.68 + 0.32 * thick) * (0.9 + 0.2 * near.g), 0.68 + 0.32 * covers, far) * (1.0 + relief);
   return vec2f(mix(lace, amount, far), bright);
 }
 

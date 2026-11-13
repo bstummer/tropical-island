@@ -74,6 +74,8 @@ struct Water {
   uFoamLevels: array<vec4f, 5>, // the levels of its tile that leave each sixteenth of the foam (textures/foam.js)
   uFoamFacing: f32, // how much of the sun's light it takes with the sun on the horizon
   uFoamBacklit: vec2f, // how much of the sun's light its thin tops let through, and how much of that goes on onwards (Henyey-Greenstein g)
+  uFoamRelief: vec3f, // m towards the sun its relief is told over; how much a rise of a hole's radius per m brightens or dims it, and by how much at most
+  uFoamSheen: f32, // how much of what the water mirrors its wet bubbles mirror too
   // The beach: m of depth over which its water takes over from the sea's; how far up it the surface lies over the
   // ground, per a full wave's run-up; how far over it, m, and m more per m from the eye
   uShore: vec4f,
@@ -509,7 +511,8 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
     // Sharper than the pixel's longer side, or it smears across the eye's line.
     let lace = seaFoamCover(foam + ashoreFoam, in.vRest, select(surf.uSurfWay.xy, inland, onBeach), select(0.0, moves, onBeach), select(frame.uWaveSeconds, 0.0, onBeach), wide * exp2(-min(0.5 * stretch, 1.5)), wide);
     foamCover = lace.x;
-    radiance = mix(radiance, lace.y * foamLight(beam, sky, view), foamCover);
+    // Wet, its bubbles mirror a little of what the water does.
+    radiance = mix(radiance, lace.y * foamLight(beam, sky, view) + water.uFoamSheen * mirrored * skyPart, foamCover);
   }
 
   // What it mirrors of the land comes through the air on screen as it is: the air

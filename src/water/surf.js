@@ -8,7 +8,8 @@
 // lets it: what the swell's own reach (`swell`) leaves of it. What that takes from it
 // breaks. So a big wave of a set breaks seaward of the crest and whitens it through; a
 // small one breaks only on the crest, in lace, and the smallest not at all. What breaks
-// stands up off the water as whitewater, as tall as `stands` where it breaks hardest. Behind it
+// stands up off the water as whitewater, as tall as `stands` where it breaks hardest, in
+// lumps along the crest, each wave its own. Behind it
 // foam runs in over the flat and fades, as far as the sea map says the surf breaks
 // round here (`breaks`). A wave differs along its length, each its own way.
 //
@@ -18,6 +19,10 @@
 // where it lies thick; how high the wave stands (m); how steeply it rises along the
 // way it runs. The GPU's twin also takes how wide a pixel is.
 import { waveSpeed } from './sea-map.js';
+import { seededNoise } from '../world/noise.js';
+
+// The seed of a wave's lumps along its crest: LUMP_SEED + its number in the waves' loop.
+const LUMP_SEED = 7867;
 
 // A wave's share of a full one, in its set and along its length (m across the way it
 // runs). All the periods divide the waves' loop (config.water.waves), so the sets go on
@@ -34,8 +39,11 @@ const edge = (from, to, x) => {
 };
 
 export function createSurf(settings, [wayX, wayZ]) {
-  const { period, height, shoals, limit, dips, fades, back, front, fall, ahead, run, always, wave, trail, toe, stands } = settings;
+  const { period, height, shoals, limit, dips, fades, back, front, fall, ahead, run, always, wave, trail, toe, stands, lumps: [lumpy, lumpSize], loop } = settings;
   const deep = waveSpeed(Infinity, period);
+  const waves = Math.round(loop / period);
+  // How much more or less of wave n breaks at x, z: lumps along its crest, each wave its own.
+  const lumps = (n, x, z) => 1 + lumpy * seededNoise(x / lumpSize, z / lumpSize, LUMP_SEED + n - waves * Math.floor(n / waves));
   return function at({ swell, depth, breaks, reef, late, speed }, x, z, t, out = {}) {
     out.foam = 0;
     out.height = 0;
@@ -73,9 +81,9 @@ export function createSurf(settings, [wayX, wayZ]) {
     const last = Math.exp(-trail);
     const fading = (Math.exp(-f * trail) - last) / (1 - last);
     const coming = Math.exp(-(((1 - f) / toe) ** 2));
-    const [behindLost, aheadLost] = [Math.max(now - swell, 0), Math.max(next - swell, 0)];
-    const lost = behindLost * fading + aheadLost * coming;
     const breaking = breaks * edge(ahead, 0, reef) * edge(0, 0.05, swell) * Math.exp(Math.min(reef, 0) / run);
+    const [behindLost, aheadLost] = breaking > 0 ? [Math.max(now - swell, 0) * lumps(n, x, z), Math.max(next - swell, 0) * lumps(n + 1, x, z)] : [0, 0];
+    const lost = behindLost * fading + aheadLost * coming;
     out.foam = breaking * (always + wave * lost);
     // What breaks stands up off the water, as tall as `stands` where it breaks hardest.
     const standing = stands * breaking * Math.exp(-wave * lost);

@@ -635,6 +635,7 @@ export const world = {
 // `shallowTroughs` of the water under it, to the ground as drawn, or troughs would
 // bare a reef's crest in dark patches.
 const surfPeriod = 11.25; // s between the waves of the swell that reach the reef
+const wavesLoop = 900; // s the waves come round in: the surf's sets come round in it too
 const swellFrom = 15; // degrees to the right of straight out to sea the swell comes from: the map's and the waves' alike
 export const water = {
   ior: 1.33,
@@ -708,7 +709,7 @@ export const water = {
   // but `rest` of its power, at most `most` waves.
   waves: {
     patches: [800, 120, 17],
-    loop: 900,
+    loop: wavesLoop,
     smallest: 0.03,
     ripplesLeast: 0.6,
     ripplesDepth: 0.3,
@@ -769,9 +770,13 @@ export const water = {
   // covering none of the water under the first of `covers` of foam and all over the
   // second (the cover the surf was tuned with, PLAN.md 6.6); how wide a pixel has it
   // as an even veil through and through (`softOver`, m); `stands`: how high
-  // whitewater stands off the water where it breaks hardest (m); `facing`: how much of the sun's light it takes with the sun on the horizon; `backlit`:
+  // whitewater stands off the water where it breaks hardest (m), and how much more or less of a
+  // wave breaks in `lumps` along its crest, each wave its own, and m across; `facing`: how much of the sun's light it takes with the sun on the horizon; `backlit`:
   // how much of it its thin tops and spray let through, and how much of that onwards
-  // (Henyey-Greenstein g), so against a low sun it glows. A set's
+  // (Henyey-Greenstein g), so against a low sun it glows; its `relief` up close: m towards the
+  // sun over which it is told, how much a rise of one of the lace's holes' radii per m brightens
+  // or dims it, and by how much at most; its `sheen`, how much of what the water mirrors its
+  // wet bubbles mirror too. A set's
   // rhythm: a wave's size beats over `sets` waves (whole sets in the loop), each beat
   // moving it by `beat`; along its crest it varies per beat at `along` [rad/m, turns over
   // the beat's waves]; its front `wander`s, [m, rad/m along x and z] per term.
@@ -798,8 +803,12 @@ export const water = {
     lace: { tiles: [3.1, 7.3], stretch: 0.7, covers: [0.32, 0.68] },
     softOver: 0.4,
     stands: 0.5,
+    lumps: [0.5, 3],
+    loop: wavesLoop,
     facing: 0.4,
     backlit: [0.25, 0.6],
+    relief: [0.03, 0.006, 0.3],
+    sheen: 0.4,
     sets: [8, 5],
     beat: 0.35,
     along: [[0.031, 3], [0.0127, 2]],

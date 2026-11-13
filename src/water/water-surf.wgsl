@@ -2,6 +2,7 @@
 // are. How its foam looks: water-foam.wgsl.
 
 #include "/chunks/pi.wgsl"
+#include "/chunks/noise.wgsl"
 
 struct SurfSettings {
   uSurfTiming: vec4f, // s between waves; m/s over deep water; how far it stands in the open sea (m); how fast it rises as it slows
@@ -13,6 +14,15 @@ struct SurfSettings {
   uSurfAlong: vec4f, // per beat: how a wave's size varies along its crest, rad/m, and how many turns it moves along it over the beat
   uSurfWander: array<vec4f, 5>, // its front's wander, per term: m, and rad/m along x and z
   uSurfStands: f32, // m: how high whitewater stands off the water where it breaks hardest
+  uSurfLumps: vec3f, // how much more or less of a wave breaks in lumps along its crest; m across; waves in the loop
+}
+
+const SURF_LUMP_SEED: u32 = 7867u;
+
+// How much more or less of wave n breaks at xz: lumps along its crest, each wave its own (water/surf.js).
+fn surfLumps(n: f32, xz: vec2f) -> f32 {
+  let waves = surf.uSurfLumps.z;
+  return 1.0 + surf.uSurfLumps.x * seededNoise(xz / surf.uSurfLumps.y, SURF_LUMP_SEED + u32(n - waves * floor(n / waves)));
 }
 
 @group(1) @binding(13) var<uniform> surf: SurfSettings;
@@ -80,13 +90,17 @@ fn surfAt(sea: vec4f, shore: vec4f, wave: vec4f, wide: f32, xz: vec2f, t: f32) -
   let swell = sea.z;
   // A pixel across more than a good part of a wave sees what it holds on average, or it would blink as each goes by.
   let melts = smoothstep(0.15, 0.7, wide / (speed * period));
-  let behindLost = max(now - swell, 0.0);
-  let aheadLost = max(next - swell, 0.0);
+  let breaking = shore.z * (1.0 - smoothstep(0.0, surf.uSurfFoam.y, reef)) * smoothstep(0.0, 0.05, sea.z) * exp(min(reef, 0.0) / surf.uSurfFoam.z);
+  var behindLost = 0.0;
+  var aheadLost = 0.0;
+  if (breaking > 0.0) {
+    behindLost = max(now - swell, 0.0) * surfLumps(n, xz);
+    aheadLost = max(next - swell, 0.0) * surfLumps(n + 1.0, xz);
+  }
   let whiter = behindLost * fading + aheadLost * coming;
   // On average over a period: what follows a crest, and what runs ahead of the next, whose mean is toe x root pi / 2.
   let mean = max(mix(now, next, f) - swell, 0.0) * (((1.0 - last) / surf.uSurfBreak.y - last) / (1.0 - last) + 0.8862 * surf.uSurfBreak.z);
   let lost = mix(whiter, mean, melts);
-  let breaking = shore.z * (1.0 - smoothstep(0.0, surf.uSurfFoam.y, reef)) * smoothstep(0.0, 0.05, sea.z) * exp(min(reef, 0.0) / surf.uSurfFoam.z);
   let foam = breaking * (surf.uSurfFoam.w + surf.uSurfBreak.x * lost);
   // What breaks stands up off the water, as tall as uSurfStands where it breaks hardest, and
   // hides what lies behind it itself.
