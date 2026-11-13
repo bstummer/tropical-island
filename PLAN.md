@@ -450,9 +450,11 @@ Open after leg 1 (with an outside review's findings):
   water's code for the beach is a variant of its own for the pieces within reach of a waterline, and the
   terrain's only in pieces with sand or rock, but every pixel of those still runs it, and the terrain needs
   only the wetness of what it works out. Overdraw rises by 0.3 to 0.8 where the water lies over the beach.
-  On the GPU here, frame times rose by a third to a half on the shore views; the benchmark on the
-  laptop will tell more. CI's `verify` in the Linux container takes 20.5 minutes on the dev machine; the
-  runner's own time shows on the next push.
+  CI's `verify` in the Linux container takes 20.5 minutes on the dev machine; the runner's own time shows
+  on the next push.
+- The user's look (2026-11-13): the motion looks natural. The benchmark (desktop, 2562×1237, high): 60 fps
+  on five views; `sand` and `into-the-sun` 51 fps, GPU 18.7 ms at the median; the shore views' median
+  15.3 ms (Stage 6's views: 8.3), `rocks` 13.4 (Stage 6: 11.1). Leg 2 wins some back before it adds.
 
 - Stage 6 built for this stage: the sea map's distance to the shore in metres on the drawn ground, and the
   way inland (6.2); a surface in JS and on the GPU that the run-up joins (6.3); foam as a surface of its
