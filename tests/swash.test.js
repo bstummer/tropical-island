@@ -237,3 +237,132 @@ test('JS knows the water on the beach: the sheet over the sand, the bare sand, a
     }
   }
 });
+
+// The waves coming in at world x, z and time t, as the game reads them.
+function boreAt(beach, x, z, t, out = {}) {
+  const [a, o] = beach.island.toCove(x, z);
+  return beach.swash.bore(beach.map.at(a, o), a, o, t - loop * Math.floor(t / loop), out);
+}
+
+// Points along a line straight out from the cove's beach, `step` m apart as far as the waves come in from.
+function outFrom(beach, [x, z0], step = 0.5) {
+  const points = [];
+  for (let z = z0 + step; ; z += step) {
+    const [a, o] = beach.island.toCove(x, z);
+    if (beach.map.at(a, o).depth >= config.water.swash.bore.from[0]) return points;
+    points.push([x, z]);
+  }
+}
+
+test('each wave comes in over the shallows at the speed shallow water lets it, and reaches the waterline as it lands there', () => {
+  const beach = gameBeach();
+  const out = {};
+  for (const point of alongCove(beach).filter((_, i) => i % 3 === 0)) {
+    const line = outFrom(beach, point);
+    const [a, o] = beach.island.toCove(...point);
+    const lands = beach.map.at(a, o).lands;
+    // When each crest passes each point, over a few waves: the highest it stands there.
+    for (let k = 20; k < 23; k++) {
+      const landing = lands + k * period;
+      const crests = line.map(([x, z]) => {
+        let best = { t: 0, h: -Infinity };
+        for (let t = landing - 8; t < landing + 0.5; t += 0.02) {
+          const h = boreAt(beach, x, z, t, out).height;
+          if (h > best.h) best = { t, h };
+        }
+        return { z, ...best };
+      }).filter((c) => c.h > 0.01);
+      assert.ok(crests.length > 4, `at ${point}, wave ${k}: ${crests.length} points it stands up at`);
+      // Nearer the shore, later; never faster than a bore twice as tall as the water is deep would run.
+      for (let i = 1; i < crests.length; i++) {
+        const [near, far] = [crests[i - 1], crests[i]];
+        assert.ok(near.t >= far.t - 0.03, `at ${point}, wave ${k}: the crest at ${near.z} passes at ${near.t.toFixed(2)}, before it passes ${far.z} at ${far.t.toFixed(2)}`);
+      }
+      const speed = (crests.at(-1).z - crests[0].z) / Math.max(crests[0].t - crests.at(-1).t, 1e-3);
+      assert.ok(speed > 0.5 && speed < 4, `at ${point}, wave ${k}: it comes in at ${speed.toFixed(2)} m/s`);
+      // Its crest by the waterline passes as it lands: within the time to cross the last half metre.
+      assert.ok(Math.abs(crests[0].t - landing) < 1, `at ${point}, wave ${k}: its crest ${crests[0].z - point[1]} m out at ${crests[0].t.toFixed(2)} s, landing at ${landing.toFixed(2)}`);
+    }
+  }
+});
+
+test('a big wave breaks further out and leaves more foam than a small one, and none stands taller than the water lets it', () => {
+  const beach = gameBeach();
+  const out = {};
+  const { breaks } = config.water.swash.bore;
+  for (const point of alongCove(beach).filter((_, i) => i % 3 === 1)) {
+    const line = outFrom(beach, point, 0.25);
+    const [a, o] = beach.island.toCove(...point);
+    const here = beach.map.at(a, o);
+    const waves = [];
+    for (let k = 0; k < loop / period; k += 3) {
+      const landing = here.lands + k * period;
+      let outermost = 0;
+      let foam = 0;
+      for (let t = landing - 6; t < landing; t += 0.1) {
+        for (const [x, z] of line) {
+          const [pa, po] = beach.island.toCove(x, z);
+          const depth = beach.map.at(pa, po).depth;
+          boreAt(beach, x, z, t, out);
+          assert.ok(out.height <= breaks * depth + 1e-6, `at ${x}, ${z}, t ${t}: ${out.height.toFixed(3)} m over ${depth.toFixed(3)} m of water`);
+          if (out.foam > 0.1) outermost = Math.max(outermost, z - point[1]);
+          foam = Math.max(foam, out.foam);
+        }
+      }
+      waves.push({ runUp: Math.max(...edgeOver(beach.at, point, landing, landing + period, 0.1)), outermost, foam });
+    }
+    waves.sort((p, q) => p.runUp - q.runUp);
+    const [small, big] = [waves.slice(0, 5), waves.slice(-5)];
+    const mean = (list, key) => list.reduce((s, w) => s + w[key], 0) / list.length;
+    assert.ok(mean(big, 'outermost') > mean(small, 'outermost') + 0.5, `at ${point}: the big waves break ${mean(big, 'outermost').toFixed(2)} m out, the small ${mean(small, 'outermost').toFixed(2)}`);
+    assert.ok(mean(big, 'foam') > 1.3 * mean(small, 'foam'), `at ${point}: the big waves' foam ${mean(big, 'foam').toFixed(2)}, the small's ${mean(small, 'foam').toFixed(2)}`);
+  }
+});
+
+test('the waves coming in raise the sea no higher on average, change smoothly, and the surface JS knows takes them in', () => {
+  const beach = gameBeach();
+  const [b, c] = [{}, {}];
+  for (const point of alongCove(beach).filter((_, i) => i % 4 === 2)) {
+    for (const [x, z] of outFrom(beach, point, 1.5)) {
+      let sum = 0;
+      let count = 0;
+      for (let t = 0; t < loop; t += 0.25) {
+        boreAt(beach, x, z, t, b);
+        boreAt(beach, x, z, t + 0.02, c);
+        for (const v of Object.values(b)) assert.ok(Number.isFinite(v), `at ${x}, ${z}, t ${t}: ${JSON.stringify(b)}`);
+        assert.ok(Math.abs(b.height - c.height) < 0.03 && Math.abs(b.foam - c.foam) < 0.25, `at ${x}, ${z}, t ${t}: from ${JSON.stringify(b)} to ${JSON.stringify(c)}`);
+        sum += b.height;
+        count++;
+      }
+      assert.ok(Math.abs(sum / count) < 0.01, `at ${x}, ${z}: the sea stands ${(sum / count).toFixed(4)} m higher on average`);
+    }
+  }
+  // Across the waves' loop's end.
+  const [x, z] = outFrom(beach, alongCove(beach)[5], 2)[1];
+  boreAt(beach, x, z, loop - 0.01, b);
+  boreAt(beach, x, z, loop + 0.01, c);
+  assert.ok(Math.abs(b.height - c.height) < 0.03, `across the loop: ${b.height} then ${c.height}`);
+  // Out where the sea's own surface holds, JS's surface stands as high as the waves coming in raise it.
+  const { waves } = config.water;
+  const spectrum = buildSpectrum(waves, 64, createRandom(config.defaults.seed)('water/spectrum'), (degrees) => {
+    const t = (degrees * Math.PI) / 180;
+    return beach.island.fromCove(side * Math.sin(t), Math.cos(t));
+  });
+  const shallow = { share: config.water.shallowTroughs, groundAt: beach.heightmap.heightAt };
+  const make = (beachSettings) => createSurface(spectrum, beach.map, beach.island.toCove, waves.inJs, waves.ripplesLeast, waves.ripplesDepth, null, waves.chopWander, shallow, beachSettings);
+  const [bare, withBeach] = [make(null), make({ swash: beach.swash, band: settings.band, wets: settings.wets })];
+  const [p, q] = [[0, 0, 0], [0, 0, 0]];
+  let moved = 0;
+  for (const point of alongCove(beach).filter((_, i) => i % 4 === 0)) {
+    for (const [px, pz] of outFrom(beach, point, 1).filter(([qx, qz]) => beach.heightmap.heightAt(qx, qz) < -settings.band)) {
+      for (const t of [30, 33, 36]) {
+        bare.displacement(px, pz, t, p);
+        withBeach.displacement(px, pz, t, q);
+        const coming = boreAt(beach, px, pz, t, b).height;
+        assert.ok(Math.abs(q[1] - Math.max(p[1] + coming, config.water.shallowTroughs * beach.heightmap.heightAt(px, pz))) < 1e-9, `at ${px}, ${pz}, t ${t}: ${q[1]} for ${p[1]} and the wave coming in, ${coming}`);
+        moved = Math.max(moved, Math.abs(coming));
+      }
+    }
+  }
+  assert.ok(moved > 0.02, `the waves coming in move the surface only ${moved} m`);
+});

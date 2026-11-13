@@ -1144,7 +1144,7 @@ export function seaHoles(distances, width, height, from, far) {
 // The waves fixture's results (src/fixtures/waves.js): the GPU's fields, a mip
 // and a loop later; what the sea knows; the surface: each within its limit and
 // each mistake beyond it.
-export function wavesProblems(w, { fields, mips, looped, map, surface, inJs, least, surf, swash }) {
+export function wavesProblems(w, { fields, mips, looped, map, surface, inJs, least, surf, swash, bore }) {
   const problems = [];
   if (!(w?.fields?.gpu <= fields)) problems.push(`the GPU's fields are off the waves' sum in JS by ${w?.fields?.gpu} (limit ${fields})`);
   if (!(w?.fields?.time > fields)) problems.push(`the fields at a time off are only ${w?.fields?.time} off: the check misses it`);
@@ -1170,6 +1170,11 @@ export function wavesProblems(w, { fields, mips, looped, map, surface, inJs, lea
     if (!(w?.swash?.[key] <= swash[key])) problems.push(`the beach's water's ${key} is off its JS twin by ${w?.swash?.[key]} (limit ${swash[key]})`);
   }
   if (!(w?.swash?.time > swash.level)) problems.push(`the beach's water's edge at a time off is only ${w?.swash?.time} m off: the check misses it`);
+  if (!(w?.bore?.points >= least)) problems.push(`only ${w?.bore?.points} points of the shallows judged (at least ${least})`);
+  for (const key of ['height', 'slope', 'foam']) {
+    if (!(w?.bore?.[key] <= bore[key])) problems.push(`the waves coming in: their ${key} is off its JS twin by ${w?.bore?.[key]} (limit ${bore[key]})`);
+  }
+  if (!(w?.bore?.time > bore.height)) problems.push(`the waves coming in at a time off are only ${w?.bore?.time} m off: the check misses it`);
   return problems;
 }
 

@@ -114,14 +114,14 @@ struct Varyings {
   @location(0) @interpolate(perspective, centroid) vWorldPos: vec3f,
   @location(1) vRest: vec2f, // where the water here rests: where the waves' texture is read
   // The beach's water's place (swash.wgsl SwashPlace), in the shore's pieces: lands, rise,
-  // runs, fray; patches, gathers, the run-up in slot 4, none; the run-ups in slots 0 to 3.
+  // runs, fray; patches, gathers, the run-ups in slots 4 and 5; the run-ups in slots 0 to 3.
   @location(2) vPlace0: vec4f,
   @location(3) vPlace1: vec4f,
   @location(4) vPlace2: vec4f,
 }
 
 fn placeOf(in: Varyings) -> SwashPlace {
-  return SwashPlace(in.vPlace0.x, in.vPlace0.y, in.vPlace0.z, in.vPlace0.w, in.vPlace1.x, in.vPlace1.y, in.vPlace2, in.vPlace1.z);
+  return SwashPlace(in.vPlace0.x, in.vPlace0.y, in.vPlace0.z, in.vPlace0.w, in.vPlace1.x, in.vPlace1.y, in.vPlace2, in.vPlace1.z, in.vPlace1.w);
 }
 
 @vertex
@@ -151,23 +151,30 @@ fn vertexMain(in: VertexIn) -> Varyings {
   let shore = seaShoreAt(rest);
   moved.y += surfAt(sea, shore, seaWaveAt(rest), 0.0, 0.0, rest, frame.uWaveSeconds).height;
   let ground = terrainHeight(terrainCove(rest), 0);
-  moved.y = max(moved.y, troughFloor(ground));
   var out: Varyings;
   out.vPlace0 = vec4f(0.0);
   out.vPlace1 = vec4f(0.0);
   out.vPlace2 = vec4f(0.0);
+  var place: SwashPlace;
+  var bore = SwashBore(0.0, 0.0, 0.0, 0.0, 0.0);
   if (WATER_SHORE) {
-    // The beach's water's place, for this vertex and the pixels round it.
-    let place = swashPlace(rest, sea.x, shore.xy);
+    // The beach's water's place, for this vertex and the pixels round it, and the waves
+    // coming in over the last of the shallows.
+    place = swashPlace(rest, sea.x, shore.xy);
     out.vPlace0 = vec4f(place.lands, place.rise, place.runs, place.fray);
-    out.vPlace1 = vec4f(place.patches, place.gathers, place.runUp4, 0.0);
+    out.vPlace1 = vec4f(place.patches, place.gathers, place.runUp4, place.runUp5);
     out.vPlace2 = place.runUps;
+    bore = swashBore(place, sea.x, sea.y);
+    moved.y += bore.height;
+  }
+  moved.y = max(moved.y, troughFloor(ground));
+  if (WATER_SHORE) {
     // Near the shore the beach's water: the sheet a wave runs up as, and the sea's edge drawn
     // down after it; over the beach as high as the waves wet it now, just over the ground,
     // and a few steps of the mesh more, where it gives back the bare ground as the terrain drew
     // it. Higher it lies under the ground, which the terrain alone draws.
     if (ground > -water.uShore.x && ground < water.uShore.y * place.runs) {
-      let wash = swashFrom(place, ground, 0.0);
+      let wash = swashFrom(place, ground, 0.0, bore.height);
       let spacing = in.aNode.z * (1.0 + k);
       moved = mix(moved, vec3f(0.0, ground + wash.cover, 0.0), 1.0 - smoothstep(0.5 * water.uShore.x, water.uShore.x, -ground));
       let lift = water.uShore.z + water.uShore.w * length(rest - frame.cameraPosition.xz) + water.uShoreSpacing * spacing;
@@ -323,8 +330,13 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
   }
   let shore = seaShoreAt(in.vRest);
   var wash = Swash(0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0);
+  // The waves coming in over the last of the shallows, as the vertices have them.
+  var bore = SwashBore(0.0, 0.0, 0.0, 0.0, 0.0);
+  if (WATER_SHORE) {
+    bore = swashBore(placeOf(in), sea.x, sea.y);
+  }
   if (WATER_SHORE && beach > 0.0) {
-    wash = swashFrom(placeOf(in), seenHeight, seenTall);
+    wash = swashFrom(placeOf(in), seenHeight, seenTall, bore.height);
     // The sheet ripples as it runs; the film it leaves, a little, as the sand under it.
     reach.z = max(reach.z, beach * mix(water.uShoreRipples.y, water.uShoreRipples.x, smoothstep(0.0, 0.01, wash.cover)));
   }
@@ -335,6 +347,10 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
   let chopped = vec4f(s1.xy * wanderedStretch(in.vRest, frame.uChopWander), s1.zw);
   let rippled = s2 + water.uFinest.y * vec4f(finest.xy * FINEST_TURN, 0.0, 0.0);
   var slopes = reach.x * s0 + reach.y * chopped + reach.z * vec4f(rippled.xy * rippleStretch, rippled.zw);
+  // Each wave's face as it comes in, rising out to sea.
+  let inland = normalize(terrainWorld(shore.xy) + vec2f(1e-6, 0.0));
+  slopes.x -= bore.slope * inland.x;
+  slopes.y -= bore.slope * inland.y;
   // The swell's long waves and how they break, their slope along the way they run.
   var foam = 0.0;
   if (sea.z > 0.0 && shore.w < surf.uSurfWay.w) {
@@ -419,7 +435,7 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
   seabed = mix(seabed, below.on.rgb, below.on.a);
   // Where the beach is bare, it is as it was drawn; the sheet over it white with bubbles and sand as it runs up.
   var leaving = mix(seabed, waterLeaving(optics, seabed, below.depth, max(facing, 0.02), frame.uSunDirection.y, sun, sky), wet);
-  leaving = mix(leaving, water.uFoamAlbedo * (sun + sky) / PI, beach * wash.milk);
+  leaving = mix(leaving, water.uFoamAlbedo * (sun + sky) / PI, 1.0 - (1.0 - beach * wash.milk) * (1.0 - bore.milk));
 
   // The sun's light by height, its way through the air, as sunLight() has it.
   let height = p.y + planetDrop(p.xz);
@@ -473,14 +489,14 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
   radiance += wet * (1.0 - landShare) * seaGlints(water.uGlitter * beam * seaGlitter(nSun, view, frame.uSunDirection, variance), in.vRest, dx, dy, ground, frame.uWaveSeconds);
 
   // Foam over all of it, a surface of its own: the surf's, drifting with the swell, and
-  // the beach's, in the frame of the way inland, the sheet's moving with it and what it
-  // left where it turned lying still.
-  let ashoreFoam = beach * (wash.foam + wash.line);
+  // the beach's, in the frame of the way inland: what a wave's break leaves, drifting in with
+  // it, the sheet's moving with it and what it left where it turned lying still.
+  let sheetFoam = beach * wash.foam;
+  let ashoreFoam = bore.foam + sheetFoam + beach * wash.line;
   var foamCover = 0.0;
   if (foam + ashoreFoam > 0.0) {
-    let onBeach = beach > 0.5;
-    let inland = normalize(terrainWorld(shore.xy) + vec2f(1e-6, 0.0));
-    let moves = water.uShoreFlow * max(wash.level, 0.0) / max(wash.rise, 0.02) * wash.foam / max(wash.foam + wash.line, 1e-4);
+    let onBeach = ashoreFoam > foam;
+    let moves = (bore.foam * bore.along + sheetFoam * water.uShoreFlow * max(wash.level, 0.0) / max(wash.rise, 0.02)) / max(ashoreFoam, 1e-4);
     // Sharper than the pixel's longer side, or it smears across the eye's line.
     let lace = seaFoamCover(foam + ashoreFoam, in.vRest, select(surf.uSurfWay.xy, inland, onBeach), select(0.0, moves, onBeach), select(frame.uWaveSeconds, 0.0, onBeach), wide * exp2(-min(0.5 * stretch, 1.5)), wide);
     foamCover = lace.x;

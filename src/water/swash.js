@@ -17,8 +17,11 @@
 // is soaked for longer; what a wave did fades within two waves, by when the ground's own
 // wetness (chunks/wet.wgsl) holds what the sets did over minutes.
 //
-// createSwash(settings, surf, way, period, loop) -> at(here, a, o, ground, t, out, width), and
-// at.runs(here), how high a full wave runs up there:
+// The waves come in over the last metres of the shallows as at.bore() says, and break there.
+//
+// createSwash(settings, surf, way, period, loop) -> at(here, a, o, ground, t, out, width, swell),
+// at.runs(here), how high a full wave runs up there, and at.bore(here, a, o, t, out), the waves
+// coming in (swell: the height that adds to the sea at the edge):
 // settings: config.water.swash; surf: config.water.surf, whose sets the beach's waves keep;
 // way: the way the swell runs in the cove's frame (unit); period: s between waves; loop:
 // s the waves come round in. here: the sea map at a, o (water/sea-map.js at(), in the cove's
@@ -82,9 +85,12 @@ export function swashUniforms(settings, surf, way, period, loop) {
     uSwashFilm: { value: new Vector4(film, filmPatches, filmAcross, dries) },
     uSwashFoam: { value: new Vector4(front, frontWidth, lingers, lineWidth) },
     uSwashMore: { value: new Vector4(dragged, Math.round(loop / period), way[0], way[1]) },
-    uSwashLook: { value: new Vector4(milk, linePatches, highest(settings, surf), 0) },
+    uSwashLook: { value: new Vector4(milk, linePatches, highest(settings, surf), settings.bore.milk) },
     uSwashSets: { value: new Vector4(surf.sets[0], surf.sets[1], surf.beat, surf.least) },
     uSwashAlong: { value: new Vector4(...surf.along[0], ...surf.along[1]) },
+    uSwashBore: { value: new Vector4(settings.bore.height, settings.bore.breaks, ...settings.bore.from) },
+    uSwashBoreFace: { value: new Vector4(...settings.bore.faces, settings.bore.back, settings.bore.spread) },
+    uSwashBoreFoam: { value: new Vector4(settings.bore.foam, settings.bore.trail, settings.bore.toe, settings.bore.flow) },
   };
 }
 
@@ -175,7 +181,61 @@ export function createSwash(settings, surf, way, period, loop) {
     return wave;
   }
 
-  function at(here, a, o, ground, t, out = {}, width = 0) {
+  // The waves as they come in over the last of the shallows (settings.bore), at a, o, where
+  // the sea map (here) says the water is `depth` m deep and the waterline nearest `shore` m off:
+  // into out, { height, slope, foam, milk, along }: m above the still sea; how it rises per m
+  // further out; how much foam its break leaves, as the beach's; how white with sand and
+  // bubbles the water it broke in is; and how far (m) that foam has drifted inland with it.
+  // Each wave comes in as fast as water this shallow lets it, timed to reach the waterline
+  // when it lands there, standing taller as the water shallows (Green's law), until it stands
+  // `breaks` times as tall as the water is deep: there it breaks, a big wave further out and
+  // harder, a small one barely, its face steepening into a bore that runs on into its run-up,
+  // as tall as the water lets it. Its foam trails behind its front, and runs ahead on its face.
+  function bore(here, a, o, t, out = {}) {
+    const { lands, shore, depth, inlandA, inlandO } = here;
+    const { height: tall, breaks, from, faces, back: falls, spread, foam: foamy, trail, toe, flow, milk: milky } = settings.bore;
+    out.height = out.slope = out.foam = out.milk = out.along = 0;
+    if (depth <= 0 || depth >= from[0]) return out;
+    const runs = runsAt(here);
+    const fa = a + inlandA * shore;
+    const fo = o + inlandO * shore;
+    // How fast it comes in: as a bore as tall as a full wave in a metre of water, over water
+    // shallowing evenly to the waterline (the time to it is 2 s / (c + c0) then).
+    const scale = tall * runs;
+    const c0 = Math.sqrt(G * scale);
+    const c = Math.sqrt(G * (depth + scale));
+    const phase = (t - lands + (2 * Math.max(shore, 0)) / (c + c0)) / period;
+    const k = Math.floor(phase);
+    const f = phase - k;
+    const appear = 1 - smoothstep(from[1], from[0], depth);
+    const one = (j) => {
+      const comes = tall * runUp(j, runs, fa, fo); // how tall it stands in a metre of water
+      const breaksAt = (comes / breaks) ** 0.8;
+      const tallHere = appear * Math.min(comes / Math.sqrt(Math.sqrt(depth)), breaks * depth);
+      const broke = smoothstep(0, 1, (breaksAt - depth) / (spread * breaksAt + 0.01));
+      return { tall: tallHere, broke, share: comes / scale, front: faces[0] + (faces[1] - faces[0]) * broke };
+    };
+    const now = one(k);
+    const next = one(k + 1);
+    const behind = Math.exp(-((f / falls) ** 2));
+    const before = Math.exp(-(((1 - f) / next.front) ** 2));
+    // Less its mean over the period, so it raises the sea no higher on average.
+    const mean = 0.886 * ((1 - f) * now.tall * (falls + now.front) + f * next.tall * (falls + next.front));
+    out.height = now.tall * behind + next.tall * before - mean;
+    const rising = (-2 * f * now.tall * behind) / (falls * falls) + (2 * (1 - f) * next.tall * before) / (next.front * next.front);
+    out.slope = rising / (period * c);
+    // Its foam: none over the last of the water, where the run-up's own takes over.
+    const ashore = appear * smoothstep(0, 2 * draws * runs, depth);
+    const trails = ashore * foamy * now.broke * now.share * Math.exp(-f / trail);
+    const leads = ashore * foamy * next.broke * next.share * Math.exp(-(((1 - f) / toe) ** 2));
+    out.foam = trails + leads;
+    out.milk = ashore * milky * Math.min(now.broke * now.share * Math.exp(-f / (2 * trail)), 1);
+    const since = t - lands - k * period;
+    out.along = (flow * c0 * (trails * since + leads * (since - period))) / Math.max(trails + leads, 1e-6);
+    return out;
+  }
+
+  function at(here, a, o, ground, t, out = {}, width = 0, swell = 0) {
     const { lands, rise, shore, inlandA, inlandO } = here;
     const runs = runsAt(here);
     // The waterline nearest, whose waves these are.
@@ -208,14 +268,15 @@ export function createSwash(settings, surf, way, period, loop) {
     out.film = Math.max(out.film - FILM_GONE, 0) / (1 - FILM_GONE);
     // What they strand gathers in places along the beach.
     out.line *= Math.max(0.35 + 0.9 * seededNoise(a / linePatches, o / linePatches, LINE_SEED), 0);
-    // The sea at the edge drawn down with it, less and less deeper out.
-    const sea = Math.min(level, 0) * Math.exp(Math.min(g, 0) / SEA_DRAWN);
+    // The sea at the edge drawn down with it, less and less deeper out, and the waves coming in (bore()).
+    const sea = Math.min(level, 0) * Math.exp(Math.min(g, 0) / SEA_DRAWN) + swell;
     out.level = level;
     out.cover = Math.max(thick, sea - g, 0);
     out.runs = runs;
     return out;
   }
   at.runs = runsAt;
+  at.bore = bore;
   return at;
 }
 

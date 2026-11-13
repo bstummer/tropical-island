@@ -865,6 +865,15 @@ export const water = {
     flow: 0.6,
     mirrors: 0.15, // m: how much higher than the ground under it what it mirrors must stand
     reach: 25, // m from a waterline within which the water's surface draws the beach's water
+    // How the waves come in over the last of the shallows and break (water/swash.js bore):
+    // a wave stands `height` m in a metre of water per m it will run up the beach, rising out of
+    // the lagoon's own waves between `from` m of depth and the second; it breaks once it stands
+    // `breaks` times as tall as the water is deep, and has broken in full `spread` of that depth
+    // further in. Its face takes `faces` of its period, before it breaks and once it has; it
+    // falls behind its crest over `back` of it. Its break leaves `foam`, trailing behind it over
+    // `trail` of its period and running `toe` of it ahead on its face, drifting inland at `flow`
+    // times its speed, and the water it broke in is `milk` white with sand and bubbles.
+    bore: { height: 0.6, breaks: 0.8, from: [1.2, 0.8], faces: [0.035, 0.012], back: 0.12, spread: 0.3, foam: 1.6, trail: 0.25, toe: 0.02, flow: 0.5, milk: 0.4 },
   },
   // Degrees above the rim of the sea by which it has gone 63% of the way over into the sky just above it.
   horizonFade: 0.5,
@@ -1062,8 +1071,10 @@ export const capture = {
   // in JS (m: 0.031 on SwiftShader, the texels' bilinear read; 0.137 half a texel
   // off), and from the game's smaller sum, which leaves out the small waves (`inJs`:
   // 0.157, 2% of the swell's power); the beach's water from its twin (`swash`: its
-  // edge and depth, m; its foam and film, shares). Each one's mistake must land further.
-  waves: { fields: 0.01, mips: 0.002, looped: 0.002, map: 0.02, surface: 0.06, inJs: 0.25, least: 100, surf: { foam: 0.05, height: 0.05, slope: 0.05, seam: 0.02, time: 0.2 }, swash: { level: 0.005, cover: 0.005, foam: 0.02, film: 0.02 } },
+  // edge and depth, m; its foam and film, shares); the waves coming in (`bore`: m, per m, a
+  // share: the foam on a wave's face changes by 8 a second, and the GPU reads the sea map's
+  // distances and depths as half floats, which moves it a few ms). Each one's mistake must land further.
+  waves: { fields: 0.01, mips: 0.002, looped: 0.002, map: 0.02, surface: 0.06, inJs: 0.25, least: 100, surf: { foam: 0.05, height: 0.05, slope: 0.05, seam: 0.02, time: 0.2 }, swash: { level: 0.005, cover: 0.005, foam: 0.02, film: 0.02 }, bore: { height: 0.002, slope: 0.02, foam: 0.1 } },
   // The sea's surface must have no holes: at these times, in `view`'s frame from `below`
   // rows under the rim of the sea down, the far sea's levels of detail too, nothing lies on the far plane.
   seaHoles: { view: 'air-pass', times: [15.5, 120.25], below: 2 },

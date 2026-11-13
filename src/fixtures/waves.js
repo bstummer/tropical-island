@@ -13,7 +13,8 @@
 // only has to be near. And the surf, its foam and its height, where it breaks, against
 // water/surf.js; its mistake a time off. And the beach's water where the waves wash,
 // its edge, its depth, its foam and its film, against water/swash.js (ctx.water.swashAt);
-// its mistake a time off.
+// its mistake a time off. And the waves coming in over the last of the shallows, their height,
+// their slope and their foam (ctx.water.boreAt); its mistake a time off.
 // window.__WAVES__ holds the worst differences for tools/screenshot.js. The island
 // and the sea draw as usual meanwhile. Not part of the island.
 import shader from './waves-check.wgsl';
@@ -205,9 +206,12 @@ export function create(ctx) {
     const seams = await run(3);
     material.uniforms.uPoints.value = input;
     result.surf = { points: breaking.length, foam: 0, height: 0, slope: 0, seam: 0, time: 0 };
+    // The reef's surf alone: ctx.water.surfAt tells sound of the beach's waves too.
+    const reef = createSurf(config.water.surf, ctx.water.swellWay);
+    const surfAt = (x, z, t) => reef(map.at(...island.toCove(x, z)), x, z, t - loop * Math.floor(t / loop));
     breaking.forEach(({ xz }, n) => {
-      const twin = ctx.water.surfAt(xz[0], xz[1], SURFACE_TIME);
-      const later = ctx.water.surfAt(xz[0], xz[1], SURFACE_TIME + MISTAKE.surfTime);
+      const twin = surfAt(xz[0], xz[1], SURFACE_TIME);
+      const later = surfAt(xz[0], xz[1], SURFACE_TIME + MISTAKE.surfTime);
       result.surf.foam = Math.max(result.surf.foam, Math.abs(surfSeen[4 * n] - twin.foam));
       result.surf.height = Math.max(result.surf.height, Math.abs(surfSeen[4 * n + 1] - twin.height));
       result.surf.slope = Math.max(result.surf.slope, Math.abs(surfSeen[4 * n + 2] - twin.slope));
@@ -254,6 +258,37 @@ export function create(ctx) {
       result.swash.moving = Math.max(result.swash.moving, Math.abs(washTwin.level - washLater.level));
     });
     washInput.destroy();
+
+    // The waves coming in over the last of the shallows, at points of the beaches' shallows.
+    const coming = [];
+    for (let tries = 0; tries < 400000 && coming.length < AT_POINTS; tries++) {
+      const a = map.origin[0] + r.range(0.02, 0.98) * span2;
+      const o = map.origin[1] + r.range(0.02, 0.98) * span2;
+      const here = map.at(a, o);
+      if (here.shore > 0 && here.shore < 25 && here.depth > 0 && here.depth < config.water.swash.bore.from[0]) coming.push({ xz: island.fromCove(a, o) });
+    }
+    const boreInput = new Texture(gpu, { name: 'fixture-waves bore points', width: AT_POINTS, height: 1, format: 'rgba32float', data: true, sampler: { mag: 'nearest', min: 'nearest' } });
+    const boreData = new Float32Array(4 * AT_POINTS);
+    coming.forEach(({ xz }, n) => boreData.set([xz[0], xz[1], 0, 0], 4 * n));
+    boreInput.upload(boreData);
+    material.uniforms.uPoints.value = boreInput;
+    seconds.value = SWASH_TIME;
+    const boreSeen = await run(6);
+    seconds.value = was;
+    material.uniforms.uPoints.value = input;
+    result.bore = { points: coming.length, height: 0, slope: 0, foam: 0, time: 0 };
+    const boreTwin = {};
+    const boreLater = {};
+    coming.forEach(({ xz }, n) => {
+      ctx.water.boreAt(xz[0], xz[1], SWASH_TIME, boreTwin);
+      ctx.water.boreAt(xz[0], xz[1], SWASH_TIME + MISTAKE.swashTime, boreLater);
+      const seen = boreSeen.slice(4 * n, 4 * n + 4);
+      result.bore.height = Math.max(result.bore.height, Math.abs(seen[0] - boreTwin.height));
+      result.bore.slope = Math.max(result.bore.slope, Math.abs(seen[1] - boreTwin.slope));
+      result.bore.foam = Math.max(result.bore.foam, Math.abs(seen[2] - boreTwin.foam));
+      result.bore.time = Math.max(result.bore.time, Math.abs(seen[0] - boreLater.height));
+    });
+    boreInput.destroy();
 
     window.__WAVES__ = result;
     pass.dispose();

@@ -6,8 +6,8 @@
 // reaches a point (sea-map.js), and JS knows where it stands (surface.js).
 //
 // Puts ctx.water on the context: { ready, heightAt(x, z, t), over(x, y, z, t),
-// surfAt(x, z, t), swashAt(x, z, t), map (sea-map.js's, once ready), surface (surface.js's,
-// once ready) }. heightAt and over() take in the beach's water (water/swash.js).
+// surfAt(x, z, t), swashAt(x, z, t), boreAt(x, z, t), map (sea-map.js's, once ready), surface
+// (surface.js's, once ready) }. heightAt and over() take in the beach's water (water/swash.js).
 // heightAt is 0 and surfAt none until ready, and t defaults to the clock's. Needs the
 // terrain's grids, so comes after it in WORLD_SYSTEMS; the terrain reads over() each frame.
 // It fills the frame's sea map and the waves' time (ctx.frame.uniforms, water/sea-map.wgsl),
@@ -262,11 +262,28 @@ export function create(ctx) {
       const [a, o] = island.toCove(x, z);
       return swash(map.at(a, o), a, o, groundAt(x, z), t - spectrum.loop * Math.floor(t / spectrum.loop), out);
     },
-    // The surf at world x, z: { foam, height, slope } (water/surf.js), for sound.
+    // The waves coming in over the last of the shallows at world x, z: { height, slope, foam,
+    // milk, along } (water/swash.js bore); none until ready.
+    boreAt(x, z, t = ctx.clock.elapsed, out = {}) {
+      if (!swash) return Object.assign(out, { height: 0, slope: 0, foam: 0, milk: 0, along: 0 });
+      const [a, o] = island.toCove(x, z);
+      return swash.bore(map.at(a, o), a, o, t - spectrum.loop * Math.floor(t / spectrum.loop), out);
+    },
+    // The surf at world x, z: { foam, height, slope } (water/surf.js), for sound: on the reef,
+    // and at the beach the waves breaking as they come in (water/swash.js bore) and the foam at
+    // the front of each one's run-up.
     surfAt(x, z, t = ctx.clock.elapsed) {
       if (!surf) return { foam: 0, height: 0, slope: 0 };
-      const here = map.at(...island.toCove(x, z));
-      return surf(here, x, z, t - spectrum.loop * Math.floor(t / spectrum.loop));
+      const [a, o] = island.toCove(x, z);
+      const here = map.at(a, o);
+      const wrapped = t - spectrum.loop * Math.floor(t / spectrum.loop);
+      const out = surf(here, x, z, wrapped);
+      const coming = swash.bore(here, a, o, wrapped);
+      const ashore = swash(here, a, o, groundAt(x, z), wrapped, {}, 0, coming.height);
+      out.foam += coming.foam + ashore.foam;
+      out.height += coming.height;
+      out.slope += coming.slope;
+      return out;
     },
     // For the fixtures: the waves', which holds the GPU's side to JS's, and sea-light's.
     waves,

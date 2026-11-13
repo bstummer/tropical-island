@@ -133,9 +133,9 @@ const all = [
   {
     name: 'ankle',
     disabled: true,
-    position: [-20, 1.5, -1.8],
+    position: [-20, 1.45, -2.2],
     yaw: 168,
-    pitch: -22,
+    pitch: -25,
     fov: 60,
     timeOfDay: 15,
     brief: "Mid-afternoon standing ankle-deep at the edge of the lagoon, looking down and out at the next wave coming in: clear water over the sand, foam on its way in and running past your feet, the sun high ahead on the right.",

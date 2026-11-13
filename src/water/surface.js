@@ -10,14 +10,16 @@ import { largestWaves } from './spectrum.js';
 // shallow: { share, groundAt(x, z) }: the waves draw the surface down no more than `share` of
 // the water under it, to the ground as drawn (sea-map.wgsl troughFloor); none: as deep as they go.
 // beach: { swash, band, wets } (water/swash.js's at(); config.water.swash): near a shore, as
-// water/water.wgsl's vertices, the beach's water, the sheet a wave runs up and the sea's edge
-// drawn down after it, takes over from the sea's over `band` m of depth, as high up the
-// beach as `wets` times a full wave's run-up; over that, bare ground has none. Needs shallow.
+// water/water.wgsl's vertices, the waves coming in over the last of the shallows (at.bore()),
+// and the beach's water, the sheet a wave runs up and the sea's edge drawn down after it, which
+// takes over from the sea's over `band` m of depth, as high up the beach as `wets` times a full
+// wave's run-up; over that, bare ground has none. Needs shallow.
 export function createSurface(spectrum, map, toCove, { rest, most }, ripplesLeast, ripplesDepth = 1, surf = null, chopWander = { reach: 0, across: 1 }, shallow = null, beach = null) {
   const waves = spectrum.cascades.map((c) => ({ waves: largestWaves(c, rest, most), choppy: c.choppy }));
   const here = {};
   const breaking = {};
   const wash = {};
+  const coming = {};
   const smoothstep = (a, b, x) => {
     const t = Math.min(Math.max((x - a) / (b - a), 0), 1);
     return t * t * (3 - 2 * t);
@@ -79,12 +81,18 @@ export function createSurface(spectrum, map, toCove, { rest, most }, ripplesLeas
       displaced(cascade.waves, cascade.choppy, c === 1 ? chopAt[0] : x, c === 1 ? chopAt[1] : z, wrapped, out, reach[c]);
     });
     if (surf) out[1] += surf(here, x, z, wrapped, breaking).height;
+    coming.height = 0;
+    if (beach) {
+      const [a, o] = toCove(x, z);
+      beach.swash.bore(here, a, o, wrapped, coming);
+      out[1] += coming.height;
+    }
     if (shallow) {
       const ground = shallow.groundAt(x, z);
       out[1] = Math.max(out[1], shallow.share * Math.min(ground, 0));
       if (beach && ground > -beach.band && ground < beach.wets * beach.swash.runs(here)) {
         const [a, o] = toCove(x, z);
-        beach.swash(here, a, o, ground, wrapped, wash);
+        beach.swash(here, a, o, ground, wrapped, wash, 0, coming.height);
         const takes = 1 - smoothstep(0.5 * beach.band, beach.band, -ground);
         out[0] *= 1 - takes;
         out[2] *= 1 - takes;
