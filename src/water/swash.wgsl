@@ -94,10 +94,12 @@ fn swashWave(tau: f32, r: f32, d: f32, rise: f32, g: f32, patches: f32, width: f
     let under = smoothstep(-soft, soft, behind);
     let b = max(behind, 0.0);
     w.thick = under * sheet.x * r * (1.0 - exp(-b / (sheet.y * r)));
-    w.foam = under * foamLook.x * (1.0 - 0.6 * s) * (exp(-b / foamLook.y) + 0.35 * exp(-b / (5.0 * foamLook.y)));
+    // What it carries grows in as it starts: where it lands it takes over from the last wave, which carries none.
+    let starts = smoothstep(0.0, 0.2, s);
+    w.foam = starts * under * foamLook.x * (1.0 - 0.6 * s) * (exp(-b / foamLook.y) + 0.35 * exp(-b / (5.0 * foamLook.y)));
     w.film = under;
     w.soaked = under;
-    w.milk = under * swash.uSwashLook.x * (1.0 - 0.5 * s);
+    w.milk = starts * under * swash.uSwashLook.x * (1.0 - 0.5 * s);
   } else {
     // Draining back, slow at first and gathering speed, to d below the still sea.
     let s = min((tau - up) / down, 1.0);

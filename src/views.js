@@ -34,6 +34,7 @@ const all = [
     timeOfDay: 11,
     brief: "Late morning on the dry sand in the middle of the bay, looking straight out to sea: the lagoon's turquoise deepening to the reef's surf line and the deep blue beyond, the headland on the left; the sun high behind your right shoulder.",
     crops: { shoreline: [0.5, 0.63], horizon: [0.5, 0.46] },
+    run: { seconds: 12, step: 0.75, line: [[0.5, 0.75], [0.5, 0.6]] },
   },
   {
     name: 'shoreline',
@@ -95,6 +96,7 @@ const all = [
     timeOfDay: 16.5,
     brief: "Late afternoon, looking down at the sand at your feet near the water: its grain and ripples in the low sun from ahead on the left, the wet margin and the water's edge across the top.",
     crops: { grain: [0.6, 0.7], edge: [0.5, 0.2] },
+    run: { seconds: 12, step: 0.75, line: [[0.8, 0.95], [0.3, 0.1]] },
   },
   {
     name: 'rocks',
@@ -130,6 +132,7 @@ const all = [
   },
   {
     name: 'ankle',
+    disabled: true,
     position: [-20, 1.5, -1.8],
     yaw: 168,
     pitch: -22,

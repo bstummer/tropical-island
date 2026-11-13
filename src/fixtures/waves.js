@@ -239,19 +239,19 @@ export function create(ctx) {
     seconds.value = was;
     material.uniforms.uPoints.value = input;
     result.swash = { points: washing.length, level: 0, cover: 0, foam: 0, film: 0, time: 0, moving: 0 };
-    const twin = {};
-    const later = {};
+    const washTwin = {};
+    const washLater = {};
     washing.forEach(({ xz }, n) => {
-      ctx.water.swashAt(xz[0], xz[1], SWASH_TIME, twin);
-      ctx.water.swashAt(xz[0], xz[1], SWASH_TIME + MISTAKE.swashTime, later);
+      ctx.water.swashAt(xz[0], xz[1], SWASH_TIME, washTwin);
+      ctx.water.swashAt(xz[0], xz[1], SWASH_TIME + MISTAKE.swashTime, washLater);
       const seen = washSeen.slice(4 * n, 4 * n + 4);
-      result.swash.level = Math.max(result.swash.level, Math.abs(seen[0] - twin.level));
-      result.swash.cover = Math.max(result.swash.cover, Math.abs(seen[1] - twin.cover));
-      result.swash.foam = Math.max(result.swash.foam, Math.abs(seen[2] - (twin.foam + twin.line)));
-      result.swash.film = Math.max(result.swash.film, Math.abs(seen[3] - twin.film));
-      result.swash.time = Math.max(result.swash.time, Math.abs(seen[0] - later.level));
+      result.swash.level = Math.max(result.swash.level, Math.abs(seen[0] - washTwin.level));
+      result.swash.cover = Math.max(result.swash.cover, Math.abs(seen[1] - washTwin.cover));
+      result.swash.foam = Math.max(result.swash.foam, Math.abs(seen[2] - (washTwin.foam + washTwin.line)));
+      result.swash.film = Math.max(result.swash.film, Math.abs(seen[3] - washTwin.film));
+      result.swash.time = Math.max(result.swash.time, Math.abs(seen[0] - washLater.level));
       // Whether the edge moves at all there then: the check means something only where it does.
-      result.swash.moving = Math.max(result.swash.moving, Math.abs(twin.level - later.level));
+      result.swash.moving = Math.max(result.swash.moving, Math.abs(washTwin.level - washLater.level));
     });
     washInput.destroy();
 

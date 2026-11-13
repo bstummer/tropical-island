@@ -116,9 +116,11 @@ export function createSwash(settings, surf, way, period, loop) {
       const under = smoothstep(-soft, soft, behind);
       const b = Math.max(behind, 0);
       thick = under * sheet * R * (1 - Math.exp(-b / (edge * R)));
-      foam = under * front * (1 - 0.6 * s) * (Math.exp(-b / frontWidth) + 0.35 * Math.exp(-b / (5 * frontWidth)));
+      // What it carries grows in as it starts: where it lands it takes over from the last wave, which carries none.
+      const starts = smoothstep(0, 0.2, s);
+      foam = starts * under * front * (1 - 0.6 * s) * (Math.exp(-b / frontWidth) + 0.35 * Math.exp(-b / (5 * frontWidth)));
       wet = soaked = under;
-      milky = under * milk * (1 - 0.5 * s);
+      milky = starts * under * milk * (1 - 0.5 * s);
     } else {
       // Draining back, slow at first and gathering speed, to D below the still sea.
       const s = Math.min((tau - up) / down, 1);

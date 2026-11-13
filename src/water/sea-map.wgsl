@@ -53,9 +53,17 @@ fn seaWaveAt(xz: vec2f) -> vec4f {
 // At world xz, the waterline nearest (water/swash.wgsl): when a wave of the swell gets
 // there, s past its timing at the open sea's start (as the surf's); how hard the surf breaks
 // there; how steeply the ground rises there, per metre inland.
+// When is tens to hundreds of seconds, which filtering would round as half floats: its two
+// halves' texels are read as they are and mixed here (as chunks/terrain.wgsl's heights).
 fn seaBeachAt(xz: vec2f) -> vec3f {
-  let read = textureSampleLevel(uSeaMap, uSeaMapSampler, seaUv(xz), 3, 0.0);
-  return vec3f(read.x + read.y, read.zw);
+  let uv = seaUv(xz);
+  let st = uv * vec2f(textureDimensions(uSeaMap).xy) - 0.5;
+  let t = st - floor(st);
+  let hi = textureGather(0, uSeaMap, uSeaMapSampler, uv, 3);
+  let lo = textureGather(1, uSeaMap, uSeaMapSampler, uv, 3);
+  let at = hi + lo;
+  let lands = mix(mix(at.w, at.z, t.x), mix(at.x, at.y, t.x), t.y);
+  return vec3f(lands, textureSampleLevel(uSeaMap, uSeaMapSampler, uv, 3, 0.0).zw);
 }
 
 // The map's mip level for a pixel `footprint` metres wide.
