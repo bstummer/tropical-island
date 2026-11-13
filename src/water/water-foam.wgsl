@@ -1,7 +1,7 @@
-// How foam looks. It is a surface of its own under the shared light, so what else
-// foams (Stage 7's lines on the beach) can join the surf's (water-surf.wgsl):
-// seaFoamCover() turns how much foam there is into how much of the pixel it covers,
-// foamLight() lights that. Needs `water`, water-surf.wgsl, water-seabed.wgsl, chunks/tiles.wgsl.
+// How foam looks. It is a surface of its own under the shared light, the surf's
+// (water-surf.wgsl) and the beach's (swash.wgsl) alike: seaFoamCover() turns how much
+// foam there is into how much of the pixel it covers, foamLight() lights that. Needs
+// `water`, water-seabed.wgsl, chunks/tiles.wgsl.
 
 // The level of the foam's tile that leaves `share` of it above (textures/foam.js).
 fn foamLevel(share: f32) -> f32 {
@@ -24,17 +24,18 @@ fn foamTileAt(uv: vec2f, size: f32, footprint: f32) -> vec4f {
 // thick and where thin over metres comes from the mottling of the seabed's tile; up close,
 // the holes of open water its bubbles leave as they burst, from its own tile, small ones
 // first, then larger, till only a web of it is left, then bits. That tile is read in the
-// frame of the way the swell runs, stretched along it, twice at sides of no simple ratio,
-// all drifting with the swell, and cut at the level that leaves as much as the foam
-// covers, its edges as soft as the pixel is long (`longest`, m), or where it stretches its
-// holes would flicker. None at all where there is none.
-fn seaFoamCover(foam: f32, xz: vec2f, t: f32, wide: f32, longest: f32) -> vec2f {
+// frame of the way the water carries it (`way`, unit), stretched along it and moved
+// `along` it (m), twice at sides of no simple ratio, all drifting with the swell for
+// `drifting` s, and cut at the level that leaves as much as the foam covers, its edges as
+// soft as the pixel is long (`longest`, m), or where it stretches its holes would flicker.
+// None at all where there is none.
+fn seaFoamCover(foam: f32, xz: vec2f, way: vec2f, along: f32, drifting: f32, wide: f32, longest: f32) -> vec2f {
+  let t = drifting;
   let large = seabedTileAt(SEABED_TURN * xz / water.uFoamLook.x - water.uFoamDrift.xy * t, water.uFoamLook.x, wide);
   let small = seabedTileAt(xz / water.uFoamLook.y - water.uFoamDrift.zw * t, water.uFoamLook.y, wide);
   let patchy = 0.45 * large.r + 0.25 * large.g + 0.3 * small.g;
   let amount = clamp(foam * (0.2 + 1.6 * patchy), 0.0, 1.0);
-  let way = surf.uSurfWay.xy;
-  let flow = vec2f(dot(xz, way) * water.uFoamLace.z, dot(xz, vec2f(-way.y, way.x)));
+  let flow = vec2f((dot(xz, way) - along) * water.uFoamLace.z, dot(xz, vec2f(-way.y, way.x)));
   let near = foamTileAt(flow / water.uFoamLace.x - vec2f(water.uFoamLaceDrift.x * t, 0.0), water.uFoamLace.x, wide);
   let wider = foamTileAt(flow / water.uFoamLace.y + vec2f(0.37 - water.uFoamLaceDrift.y * t, 0.61), water.uFoamLace.y, wide);
   // How far into the foam, in holes' radii, and the nearest hole's radius (m): the read

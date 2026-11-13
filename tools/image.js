@@ -103,6 +103,26 @@ export function tile(images, { columns = images.length, gap = 0, background = [2
   return out;
 }
 
+// A time-slice of frames: the pixels along the line from [x0, y0] to [x1, y1] (fractions
+// of the frame from its top left) in each frame, one column per frame, `width` pixels wide,
+// left to right in time, the line's start at the bottom. A thing moving along the line
+// draws its path: how far it gets, how fast it goes and comes back, how often.
+export function timeSlice(frames, [[x0, y0], [x1, y1]], { width = 4 } = {}) {
+  const { width: w, height: h } = frames[0];
+  const length = Math.max(2, Math.round(Math.hypot((x1 - x0) * w, (y1 - y0) * h)));
+  const out = createImage(frames.length * width, length);
+  frames.forEach((frame, k) => {
+    for (let i = 0; i < length; i++) {
+      const t = i / (length - 1);
+      const x = Math.min(Math.max(Math.round((x0 + (x1 - x0) * t) * w - 0.5), 0), w - 1);
+      const y = Math.min(Math.max(Math.round((y0 + (y1 - y0) * t) * h - 0.5), 0), h - 1);
+      const from = (y * w + x) * 4;
+      for (let c = 0; c < width; c++) out.data.set(frame.data.subarray(from, from + 4), ((length - 1 - i) * out.width + k * width + c) * 4);
+    }
+  });
+  return out;
+}
+
 // Contrast-boosted copy: each channel's deviation from its local mean, times
 // `gain`, around mid-grey. Banding shows up as contour lines that follow the
 // gradient; dithering shows up as fine noise; flat areas stay grey. Real edges

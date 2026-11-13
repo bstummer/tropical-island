@@ -609,7 +609,7 @@ test('the map\'s mip levels: each texel the mean of the four under it, but how d
 });
 
 // A made-up map `size` square: every value of(i, j, name), or 1 without `of`.
-const NAMES = ['shore', 'depth', 'swell', 'chop', 'inlandA', 'inlandO', 'breaks', 'reef', 'late', 'wayA', 'wayO', 'speed'];
+const NAMES = ['shore', 'depth', 'swell', 'chop', 'inlandA', 'inlandO', 'breaks', 'reef', 'late', 'wayA', 'wayO', 'speed', 'landsHi', 'landsLo', 'exposure', 'rise'];
 function madeUp(size, of) {
   const values = (name) => (of ? Float32Array.from({ length: size * size }, (_, n) => of(n % size, Math.floor(n / size), name)) : new Float32Array(size * size).fill(1));
   return Object.fromEntries(NAMES.map((name) => [name, values(name)]));
@@ -654,9 +654,10 @@ test('every seed\'s sea map has every mip level a texture its size has', () => {
 });
 
 test('the layers the GPU reads hold each value where water/sea-map.wgsl looks for it', () => {
-  const map = { shore: [1], depth: [2], swell: [3], chop: [4], inlandA: [5], inlandO: [6], breaks: [7], reef: [8], late: [9], wayA: [10], wayO: [11], speed: [12] };
-  const [first, second, third] = seaMapLevels(map, (v) => v, 1)[0];
+  const map = { shore: [1], depth: [2], swell: [3], chop: [4], inlandA: [5], inlandO: [6], breaks: [7], reef: [8], late: [9], wayA: [10], wayO: [11], speed: [12], landsHi: [13], landsLo: [14], exposure: [15], rise: [16] };
+  const [first, second, third, fourth] = seaMapLevels(map, (v) => v, 1)[0];
   assert.deepEqual([...first], [1, 2, 3, 4]);
   assert.deepEqual([...second], [5, 6, 7, 8]);
   assert.deepEqual([...third], [9, 10, 11, 12]);
+  assert.deepEqual([...fourth], [13, 14, 15, 16]);
 });

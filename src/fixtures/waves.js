@@ -11,7 +11,9 @@
 // with nothing left out); its mistakes a time well off, and the waves read half a texel
 // off, where the texels' corners lie; and against the game's own smaller sum, which
 // only has to be near. And the surf, its foam and its height, where it breaks, against
-// water/surf.js; its mistake a time off.
+// water/surf.js; its mistake a time off. And the beach's water where the waves wash,
+// its edge, its depth, its foam and its film, against water/swash.js (ctx.water.swashAt);
+// its mistake a time off.
 // window.__WAVES__ holds the worst differences for tools/screenshot.js. The island
 // and the sea draw as usual meanwhile. Not part of the island.
 import shader from './waves-check.wgsl';
@@ -21,12 +23,14 @@ import { wave } from '../water/spectrum.js';
 import { createSurface } from '../water/surface.js';
 import { createSurf } from '../water/surf.js';
 import { surfUniforms } from '../water/water.js';
+import { swashUniforms, swellWay } from '../water/swash.js';
 
 const TIMES = [0, 7.3, 3 * 3600 + 1.1];
 const POINTS = 48; // texels per cascade per time
 const AT_POINTS = 1024; // over the sea
-const MISTAKE = { time: 0.05, surfaceTime: 2.5, surfTime: 2, texels: 1, layout: 0.5 };
+const MISTAKE = { time: 0.05, surfaceTime: 2.5, surfTime: 2, texels: 1, layout: 0.5, swashTime: 0.5 };
 const SURFACE_TIME = 12.5;
+const SWASH_TIME = 437.3; // s, the waves' time, wrapped
 
 export function create(ctx) {
   const { renderer, gpu, config } = ctx;
@@ -130,7 +134,7 @@ export function create(ctx) {
     const material = new Material({
       name: 'fixture-waves',
       shader,
-      uniforms: { uPoints: { value: input }, ...surfUniforms(ctx.config.water.surf, ctx.water.swellWay), uSeconds: { value: SURFACE_TIME }, uMode: { value: 0 }, uPatches: { value: ctx.water.patches }, uWaveTexels: { value: size }, uWaves: { value: waves.texture } },
+      uniforms: { uPoints: { value: input }, ...swashUniforms(config.water.swash, config.water.surf, swellWay(config), config.water.surf.period, config.water.waves.loop), ...surfUniforms(ctx.config.water.surf, ctx.water.swellWay), uSeconds: { value: SURFACE_TIME }, uMode: { value: 0 }, uPatches: { value: ctx.water.patches }, uWaveTexels: { value: size }, uWaves: { value: waves.texture } },
     });
     const pass = renderer.fullscreen(material);
     // The map's layout is the frame's (chunks/frame.wgsl), shifted for a run and put back.
@@ -211,6 +215,45 @@ export function create(ctx) {
       result.surf.time = Math.max(result.surf.time, Math.abs(surfSeen[4 * n] - later.foam));
     });
     surfInput.destroy();
+
+    // The beach's water, at points where the waves wash, at a time and that time a little later.
+    const washing = [];
+    const ground = (await ctx.terrain.grids).heightAt;
+    for (let tries = 0; tries < 400000 && washing.length < AT_POINTS; tries++) {
+      const a = map.origin[0] + r.range(0.02, 0.98) * span2;
+      const o = map.origin[1] + r.range(0.02, 0.98) * span2;
+      const xz = island.fromCove(a, o);
+      const here = map.at(a, o);
+      const g = ground(xz[0], xz[1]);
+      if (Math.abs(here.shore) < 8 && g > -0.3 && g < 0.8) washing.push({ xz });
+    }
+    const washInput = new Texture(gpu, { name: 'fixture-waves swash points', width: AT_POINTS, height: 1, format: 'rgba32float', data: true, sampler: { mag: 'nearest', min: 'nearest' } });
+    const washData = new Float32Array(4 * AT_POINTS);
+    washing.forEach(({ xz }, n) => washData.set([xz[0], xz[1], 0, 0], 4 * n));
+    washInput.upload(washData);
+    material.uniforms.uPoints.value = washInput;
+    const seconds = ctx.frame.uniforms.uWaveSeconds;
+    const was = seconds.value;
+    seconds.value = SWASH_TIME;
+    const washSeen = await run(5);
+    seconds.value = was;
+    material.uniforms.uPoints.value = input;
+    result.swash = { points: washing.length, level: 0, cover: 0, foam: 0, film: 0, time: 0, moving: 0 };
+    const twin = {};
+    const later = {};
+    washing.forEach(({ xz }, n) => {
+      ctx.water.swashAt(xz[0], xz[1], SWASH_TIME, twin);
+      ctx.water.swashAt(xz[0], xz[1], SWASH_TIME + MISTAKE.swashTime, later);
+      const seen = washSeen.slice(4 * n, 4 * n + 4);
+      result.swash.level = Math.max(result.swash.level, Math.abs(seen[0] - twin.level));
+      result.swash.cover = Math.max(result.swash.cover, Math.abs(seen[1] - twin.cover));
+      result.swash.foam = Math.max(result.swash.foam, Math.abs(seen[2] - (twin.foam + twin.line)));
+      result.swash.film = Math.max(result.swash.film, Math.abs(seen[3] - twin.film));
+      result.swash.time = Math.max(result.swash.time, Math.abs(seen[0] - later.level));
+      // Whether the edge moves at all there then: the check means something only where it does.
+      result.swash.moving = Math.max(result.swash.moving, Math.abs(twin.level - later.level));
+    });
+    washInput.destroy();
 
     window.__WAVES__ = result;
     pass.dispose();

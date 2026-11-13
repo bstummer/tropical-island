@@ -8,6 +8,7 @@
 //   shimmer-move.png     where it shimmers as the camera moves a walking step at a time
 //   motion.png           frames at t, t + step, ... left to right, top to bottom, at half size
 //   motion-map.png       where anything changed over those frames, in magenta
+//   run.png, run-slice.png  with the view's `run` (views.js): its frames, and the pixels along its line in each
 //   overdraw.png         fragments shaded per pixel: black 0, blue 1, teal 2, green 3,
 //                        yellow 4, orange 5, red 6, magenta 7-9, pink 10-15, white 16+
 //
@@ -51,7 +52,7 @@ export function renderFrames(page, list) {
 //   frameMs      the page's time per extra frame, readback included
 //   lastFrame    the last motion frame's data URL, for the seek check
 //   analysis     a promise of { measurements, files, analyseMs } from tools/analyse.js
-export async function measureView(page, { info, crops, first, dir, gpuTime }) {
+export async function measureView(page, { info, crops, run, first, dir, gpuTime }) {
   const { cost, overdraw } = await measureCost(page, { gpuTime });
   const [width, height] = info.drawingBuffer;
   const turns = panTurns(panShift(width, height, info.fov, settings.shimmer.stepPixels));
@@ -60,7 +61,8 @@ export async function measureView(page, { info, crops, first, dir, gpuTime }) {
   const urls = await renderFrames(page, [...turns, ...motionTimes.slice(1).map((t) => ({ t }))]);
   const frameMs = (Date.now() - started) / urls.length;
   const moved = await renderMoves(page);
-  const analysis = analyse('view', { first, pan: urls.slice(0, turns.length), motion: urls.slice(turns.length), moved, overdraw, crops, dir, fov: info.fov });
+  const runFrames = run ? await renderFrames(page, Array.from({ length: Math.floor(run.seconds / run.step) + 1 }, (_, k) => ({ t: info.t + k * run.step }))) : null;
+  const analysis = analyse('view', { first, pan: urls.slice(0, turns.length), motion: urls.slice(turns.length), moved, overdraw, crops, run: run && { frames: runFrames, line: run.line }, dir, fov: info.fov });
   return { cost, motionTimes, frameMs, lastFrame: urls.at(-1), analysis };
 }
 

@@ -4,6 +4,10 @@
 // sky, the sun and the land, and foams on the reef. Through the surface:
 // water-seen.wgsl, water-seabed.wgsl and water-optics.wgsl. The mirror:
 // water-mirror.wgsl, water-land.wgsl. The surf: water-surf.wgsl, water-foam.wgsl.
+// The beach (swash.wgsl): the sheet a wave runs up the sand as, the glassy film it
+// leaves, its foam. Over the beach as high as the waves may wet it the surface lies
+// just over the ground, where it draws what this pixel shows of the ground as it is,
+// and with the film and the foam on it, so they mirror what the sea does.
 //
 // The mesh: water/water-nodes.js, each instance a node, a grid of quads `spacing`
 // apart from its corner, morphed for the camera as the terrain's is.
@@ -19,6 +23,8 @@
 #include "water-surf.wgsl"
 #include "water-foam.wgsl"
 #include "sea-map.wgsl"
+#include "swash.wgsl"
+#include "chunks/rumples.wgsl"
 
 struct Water {
   uPatches: vec3f, // 1 / each cascade's patch, m (water/spectrum.js)
@@ -62,6 +68,15 @@ struct Water {
   uFoamStands: vec4f, // how high whitewater stands off the water (m); how much ground that may hide, at most (m); from what distance it does, and in full (m)
   uFoamFacing: f32, // how much of the sun's light it takes with the sun on the horizon
   uFoamBacklit: vec2f, // how much of the sun's light its thin tops let through, and how much of that goes on onwards (Henyey-Greenstein g)
+  // The beach: m of depth over which its water takes over from the sea's; how far up it the surface lies over the
+  // ground, per a full wave's run-up; how far over it, m, and m more per m from the eye
+  uShore: vec4f,
+  uShoreSpacing: f32, // and m more per m of the mesh's spacing there
+  uShoreRipples: vec2f, // how much of the ripples the sheet has, and the film it leaves
+  uShoreVariance: vec2f, // how much rougher than the sea's their surfaces are, the variance of their slopes per axis
+  uShoreRumples: vec2f, // the sand's rumples, which the film it leaves lies over (chunks/rumples.wgsl): m, slope
+  uShoreMirror: f32, // m: how much higher than the ground under it what the water mirrors must stand
+  uShoreFlow: f32, // how far the foam on the sheet moves with it, per the sheet's edge
 }
 
 @group(1) @binding(0) var<uniform> optics: WaterOptics;
@@ -116,8 +131,18 @@ fn vertexMain(in: VertexIn) -> Varyings {
     moved += reach[c] * textureSampleLevel(uWaves, uWavesSampler, wavesUv(read, patches, water.uWaveTexels), 2 * c, lod).xyz;
   }
 
-  moved.y += surfAt(sea, seaShoreAt(rest), seaWaveAt(rest), 0.0, 0.0, rest, frame.uWaveSeconds).height;
-  moved.y = max(moved.y, troughFloor(terrainHeight(terrainCove(rest), 0)));
+  let shore = seaShoreAt(rest);
+  moved.y += surfAt(sea, shore, seaWaveAt(rest), 0.0, 0.0, rest, frame.uWaveSeconds).height;
+  let ground = terrainHeight(terrainCove(rest), 0);
+  moved.y = max(moved.y, troughFloor(ground));
+  // Near the shore the beach's water: the sheet a wave runs up as, and the sea's edge drawn
+  // down after it; over the beach as high as the waves may wet it, just over the ground.
+  if (ground > -water.uShore.x && ground < water.uShore.y * swashRuns(rest)) {
+    let wash = swashAt(rest, ground, sea.x, shore.xy, 0.0);
+    moved = mix(moved, vec3f(0.0, ground + wash.cover, 0.0), 1.0 - smoothstep(0.5 * water.uShore.x, water.uShore.x, -ground));
+    let lift = water.uShore.z + water.uShore.w * length(rest - frame.cameraPosition.xz) + water.uShoreSpacing * in.aNode.z * (1.0 + k);
+    moved.y = max(moved.y, ground + lift);
+  }
 
   var world = vec3f(rest.x + moved.x, moved.y, rest.y + moved.z);
   world.y -= planetDrop(world.xz);
@@ -252,13 +277,28 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
   }
   let sea = seaAt(in.vRest);
   var reach = cascadeReach(sea);
+  // The beach: what this pixel shows of the ground, as it is, and how far its water goes over
+  // to the beach's, by how deep the sea is here; what the waves do where it shows.
+  let pixel = vec2i(in.position.xy);
+  let seen = opaqueSeen(pixel, size);
+  let seenHeight = seen.y + planetDrop(seen.xz);
+  let seenTall = fwidth(seenHeight);
+  let beach = 1.0 - smoothstep(0.5 * water.uShore.x, water.uShore.x, sea.y);
+  let shore = seaShoreAt(in.vRest);
+  var wash = Swash(0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0);
+  if (beach > 0.0) {
+    wash = swashAt(seen.xz, seenHeight, sea.x, shore.xy, seenTall);
+    // The sheet ripples as it runs; the film it leaves, a little, as the sand under it.
+    reach.z = max(reach.z, beach * mix(water.uShoreRipples.y, water.uShoreRipples.x, smoothstep(0.0, 0.01, wash.cover)));
+  }
+  // How much of this is water: the sea's, the sheet's and the film's, and none of the bare beach.
+  let wet = mix(1.0, wash.film, beach);
   // The gusts fade out far off, where at a grazing angle their patches read as hills of water.
   reach.z *= mix(seaGusts(in.vRest, water.uGustSeconds), 1.0, smoothstep(water.uGustFades.x, water.uGustFades.y, length(in.vRest - frame.cameraPosition.xz)));
   let chopped = vec4f(s1.xy * wanderedStretch(in.vRest, frame.uChopWander), s1.zw);
   let rippled = s2 + water.uFinest.y * vec4f(finest.xy * FINEST_TURN, 0.0, 0.0);
   var slopes = reach.x * s0 + reach.y * chopped + reach.z * vec4f(rippled.xy * rippleStretch, rippled.zw);
   // The swell's long waves and how they break, their slope along the way they run.
-  let shore = seaShoreAt(in.vRest);
   var foam = 0.0;
   if (sea.z > 0.0 && shore.w < surf.uSurfWay.w) {
     // Whitewater stands up off the water: seen low down it hides the ground behind it,
@@ -270,6 +310,14 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
     foam = breaking.foam;
     slopes.x += breaking.slope * (wave.y * frame.uTerrainFrame.x + wave.z * frame.uTerrainFrame.z);
     slopes.y += breaking.slope * (wave.y * frame.uTerrainFrame.y + wave.z * frame.uTerrainFrame.w);
+  }
+  // The film the sheet leaves on the sand lies over its rumples: so does what it mirrors.
+  var rumpled = vec3f(0.0);
+  if (beach > 0.0) {
+    let lies = beach * wash.film * (1.0 - smoothstep(0.0, 0.01, wash.cover));
+    rumpled = lies * rumples(seen.xz, sqrt(longest), water.uShoreRumples.x, water.uShoreRumples.y);
+    slopes.x += rumpled.x;
+    slopes.y += rumpled.y;
   }
   // A crest's sideways moves squeeze it: its slopes steepen as they pile up, along
   // whichever way it runs, so with no way favoured.
@@ -285,7 +333,9 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
     unresolved(1, lods.y),
     unresolved(2, lods.z) + water.uFinest.y * water.uFinest.y * unresolved(2, finestLod) + water.uCapillaries * water.uCapillaries * mix(unresolved(2, 7.0), unresolved(2, max(capillaryWanted, 0.0)), capillarySay * capillarySay),
   );
-  let variance = 0.5 * (lost.x + lost.y + lost.z) + water.uFineSlopes + specularKernel(n);
+  // The beach's water is rougher: the sheet's, and most the film's over the sand's grains.
+  let rougher = beach * mix(water.uShoreVariance.y, water.uShoreVariance.x, smoothstep(0.0, 0.01, wash.cover));
+  let variance = 0.5 * (lost.x + lost.y + lost.z) + water.uFineSlopes + rougher + 0.5 * rumpled.z + specularKernel(n);
 
   let view = normalize(frame.cameraPosition - p);
   let up = vec3f(0.0, 1.0, 0.0);
@@ -299,7 +349,19 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
   // Near a shore the ground as drawn runs on under the waterline, and rocks stand
   // there; out on the reef this draws all of the seabed, the coral up to the crest.
   let ashore = 1.0 - smoothstep(water.uGroundNear.x, water.uGroundNear.y, sea.x);
-  let below = seenBelow(p, bent, size, optics.uSeabedFade.y, sea.y, wide, ashore);
+  var below = seenBelow(p, bent, size, optics.uSeabedFade.y, sea.y, wide, ashore);
+  below.on = vec4f(sceneRadiance(below.on.rgb) / frame.uExposure, below.on.a);
+  // On the beach this pixel's own ground, straight through the few centimetres of water
+  // over it, as the terrain drew it, its haze taken out: this adds the haze for all of it.
+  let air = aerialAt(p);
+  if (beach > 0.0) {
+    let stored = textureLoad(uOpaque, pixel, 0);
+    let hazed = smoothstep(-0.01, 0.01, seenHeight);
+    let drawn = (sceneRadiance(stored.rgb / max(stored.a, 1e-3)) / frame.uExposure - hazed * air.added) / mix(vec3f(1.0), max(air.through, vec3f(1e-3)), hazed);
+    below.on = mix(below.on, vec4f(drawn, stored.a), beach);
+    below.depth = mix(below.depth, wash.cover, beach);
+    below.xz = mix(below.xz, seen.xz, beach);
+  }
   var seabed = vec3f(0.0);
   if (below.on.a < 1.0 && below.depth < optics.uSeabedFade.y) {
     // The ground round it, tens of metres across: what rises from that, and how far the shore is.
@@ -308,8 +370,10 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
     let sharp = wide * exp2(-min(0.5 * stretch, 1.5));
     seabed = seabedRadiance(below.xz, below.depth, dx, dy, sharp, sun, round.y - below.depth, round.x, ashore, optics.uIor);
   }
-  seabed = mix(seabed, sceneRadiance(below.on.rgb) / frame.uExposure, below.on.a);
-  let leaving = waterLeaving(optics, seabed, below.depth, max(facing, 0.02), frame.uSunDirection.y, sun, sky);
+  seabed = mix(seabed, below.on.rgb, below.on.a);
+  // Where the beach is bare, it is as it was drawn; the sheet over it white with bubbles and sand as it runs up.
+  var leaving = mix(seabed, waterLeaving(optics, seabed, below.depth, max(facing, 0.02), frame.uSunDirection.y, sun, sky), wet);
+  leaving = mix(leaving, water.uFoamAlbedo * (sun + sky) / PI, beach * wash.milk);
 
   // The sun's light by height, its way through the air, as sunLight() has it.
   let height = p.y + planetDrop(p.xz);
@@ -321,7 +385,7 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
   // on average it mirrors sky from higher up than a flat sea would, far brighter by
   // the horizon than at the height of its mean; three rays through them where that
   // tells, looking low, and they land more than a few cells apart.
-  let mirrored = seaMirrored(facing, variance);
+  let mirrored = wet * seaMirrored(facing, variance);
   let towards = reflect(-view, n);
   let flat2 = towards.y * towards.y;
   let eyeW = (frame.projectionMatrix * frame.viewMatrix * vec4f(p, 1.0)).w;
@@ -329,13 +393,15 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
   let toLand = landFarther(in.position.xy, toP, eyeW);
   let far = select(max(sea.x, 0.0) + water.uMirrorBeyond, toLand, toLand > 0.0);
   let blur = 8.0 * variance;
+  // On the beach the water lies over the ground: what stands round it no higher isn't mirrored.
+  let mirrorsAbove = seenHeight + water.uShoreMirror;
   let spread = (sqrt(flat2 + water.uMirrorTaps.z * variance) - sqrt(flat2 + water.uMirrorTaps.x * variance)) * frame.projectionMatrix[1][1] * water.uMirrorCells.y * 0.5;
   var skyPart = vec3f(0.0);
   var landPart = vec3f(0.0);
   var landShare = 0.0;
   if (spread < 2.0 || flat2 > water.uMirrorSteep * variance) {
     let dir = normalize(vec3f(towards.x, sqrt(flat2 + water.uMirrorTaps.y * variance), towards.z));
-    let land = landSmooth(landImageUv(p, dir, far), eyeW);
+    let land = landSmooth(landImageUv(p, dir, far), eyeW, mirrorsAbove);
     skyPart = (1.0 - land.a) * (seaSkyRadiance(dir) + beam * sunGlow(dir, water.uAureole, blur));
     landPart = land.a * sceneRadiance(land.rgb);
     landShare = land.a;
@@ -346,9 +412,9 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
       let on = landImageUv(p, dir, far);
       var land: vec4f;
       if (i == 1) {
-        land = landSmooth(on, eyeW);
+        land = landSmooth(on, eyeW, mirrorsAbove);
       } else {
-        land = landNearest(on, eyeW);
+        land = landNearest(on, eyeW, mirrorsAbove);
       }
       skyPart += (1.0 - land.a) * (seaSkyRadiance(dir) + beam * sunGlow(dir, water.uAureole, blur)) / 3.0;
       landPart += land.a * sceneRadiance(land.rgb) / 3.0;
@@ -358,20 +424,25 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
   var radiance = (1.0 - mirrored) * leaving + mirrored * skyPart;
 
   // The sun is mirrored only where the land doesn't stand in front of it, as the sky.
-  radiance += (1.0 - landShare) * seaGlints(water.uGlitter * beam * seaGlitter(nSun, view, frame.uSunDirection, variance), in.vRest, dx, dy, ground, frame.uWaveSeconds);
+  radiance += wet * (1.0 - landShare) * seaGlints(water.uGlitter * beam * seaGlitter(nSun, view, frame.uSunDirection, variance), in.vRest, dx, dy, ground, frame.uWaveSeconds);
 
-  // Foam over all of it, a surface of its own.
+  // Foam over all of it, a surface of its own: the surf's, drifting with the swell, and
+  // the beach's, in the frame of the way inland, the sheet's moving with it and what it
+  // left where it turned lying still.
+  let ashoreFoam = beach * (wash.foam + wash.line);
   var foamCover = 0.0;
-  if (foam > 0.0) {
+  if (foam + ashoreFoam > 0.0) {
+    let onBeach = beach > 0.5;
+    let inland = normalize(terrainWorld(shore.xy) + vec2f(1e-6, 0.0));
+    let moves = water.uShoreFlow * max(wash.level, 0.0) / max(wash.rise, 0.02) * wash.foam / max(wash.foam + wash.line, 1e-4);
     // Sharper than the pixel's longer side, or it smears across the eye's line.
-    let lace = seaFoamCover(foam, in.vRest, frame.uWaveSeconds, wide * exp2(-min(0.5 * stretch, 1.5)), wide);
+    let lace = seaFoamCover(foam + ashoreFoam, in.vRest, select(surf.uSurfWay.xy, inland, onBeach), select(0.0, moves, onBeach), select(frame.uWaveSeconds, 0.0, onBeach), wide * exp2(-min(0.5 * stretch, 1.5)), wide);
     foamCover = lace.x;
     radiance = mix(radiance, lace.y * foamLight(beam, sky, view), foamCover);
   }
 
   // What it mirrors of the land comes through the air on screen as it is: the air
   // between the eye and the land is all in it, this water's stretch of it too.
-  let air = aerialAt(p);
   let landMirrored = (1.0 - foamCover) * mirrored * landShare;
   radiance = radiance * air.through + air.added * (1.0 - landMirrored) + (1.0 - foamCover) * mirrored * landPart / frame.uExposure;
   // The last of the sea goes over into the sky just above it: the eye's line runs
@@ -381,7 +452,8 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
   let above = max(view.y - sin(horizonDip(frame.cameraPosition.y * 0.001)), 0.0);
   let rim = sqrt(2000.0 * frame.uGroundRadius * max(frame.cameraPosition.y, 0.1));
   let intoSky = exp(-above / water.uHorizonFade) * smoothstep(water.uHorizonFrom.x * rim, water.uHorizonFrom.y * rim, length(p.xz - frame.cameraPosition.xz));
-  radiance = mix(radiance, skyRadiance(-view), intoSky);
+  // Not the beach's bare sand, which is land.
+  radiance = mix(radiance, skyRadiance(-view), intoSky * mix(1.0, wet, beach));
 
   return sceneOutput(radiance, 1.0);
 }

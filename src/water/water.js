@@ -6,7 +6,8 @@
 // reaches a point (sea-map.js), and JS knows where it stands (surface.js).
 //
 // Puts ctx.water on the context: { ready, heightAt(x, z, t), over(x, y, z, t),
-// surfAt(x, z, t), map (sea-map.js's, once ready), surface (surface.js's, once ready) }.
+// surfAt(x, z, t), swashAt(x, z, t), map (sea-map.js's, once ready), surface (surface.js's,
+// once ready) }. heightAt and over() take in the beach's water (water/swash.js).
 // heightAt is 0 and surfAt none until ready, and t defaults to the clock's. Needs the
 // terrain's grids, so comes after it in WORLD_SYSTEMS; the terrain reads over() each frame.
 // It fills the frame's sea map and the waves' time (ctx.frame.uniforms, water/sea-map.wgsl),
@@ -19,13 +20,14 @@ import { Mesh } from '../gpu/scene.js';
 import { Texture } from '../gpu/texture.js';
 import { gridGeometry } from '../world/terrain-nodes.js';
 import { lodRanges } from '../world/lod.js';
-import { buildSeaMap, seaMapLevels, waveSpeed } from './sea-map.js';
+import { buildSeaMap, SEA_MAP_LAYERS, seaMapLevels, waveSpeed } from './sea-map.js';
 import { buildSpectrum, unresolvedSlopes } from './spectrum.js';
 import { createSurface } from './surface.js';
 import { createWaves } from './waves.js';
 import { createMirror } from './mirror.js';
 import { createSurf } from './surf.js';
 import { selectSea } from './water-nodes.js';
+import { createSwash, swashUniforms, swellWay as coveSwellWay } from './swash.js';
 import { alongDrifting, twoDrifting } from './drift.js';
 
 const MAX_NODES = 2048;
@@ -153,6 +155,14 @@ export function create(ctx) {
       uFoamStands: { value: new Vector4(...settings.surf.stands) },
       uFoamFacing: { value: settings.surf.facing },
       uFoamBacklit: { value: new Vector2(...settings.surf.backlit) },
+      ...swashUniforms(settings.swash, settings.surf, coveSwellWay(config), settings.surf.period, waveSettings.loop),
+      uShore: { value: new Vector4(settings.swash.band, settings.swash.wets, settings.swash.lift[0], settings.swash.lift[1]) },
+      uShoreSpacing: { value: settings.swash.lift[2] },
+      uShoreRipples: { value: new Vector2(...settings.swash.ripples) },
+      uShoreVariance: { value: new Vector2(...settings.swash.variance) },
+      uShoreMirror: { value: settings.swash.mirrors },
+      uShoreRumples: { value: new Vector2(config.world.terrain.sand.rumples.wavelength, config.world.terrain.sand.rumples.slope) },
+      uShoreFlow: { value: settings.swash.flow },
       uMirror,
       uMirrorCells: { value: uMirrorCells },
       uMirrorBeyond: { value: settings.mirror.beyond },
@@ -198,6 +208,8 @@ export function create(ctx) {
   let map = null;
   let surface = null;
   let surf = null;
+  let swash = null;
+  let groundAt = null;
   let disposed = false;
   let failed = null;
   const ready = Promise.all([seaMapFor(ctx, seed), waves.compiled])
@@ -206,13 +218,16 @@ export function create(ctx) {
       if (disposed) return;
       map = built.map;
       const { samples, texel, origin } = map;
-      seaTexture = new Texture(gpu, { name: 'sea map', width: samples, height: samples, depth: 3, array: true, format: 'rgba16float', mips: true, data: true, mipsUploaded: true, sampler: { mag: 'linear', min: 'linear', mipmap: 'linear' } });
+      seaTexture = new Texture(gpu, { name: 'sea map', width: samples, height: samples, depth: SEA_MAP_LAYERS, array: true, format: 'rgba16float', mips: true, data: true, mipsUploaded: true, sampler: { mag: 'linear', min: 'linear', mipmap: 'linear' } });
       if (built.levels.length !== seaTexture.mipLevelCount) throw new Error(`water: ${built.levels.length} levels of the sea map for a texture of ${seaTexture.mipLevelCount}`);
       built.levels.forEach((layers, level) => layers.forEach((texels, layer) => seaTexture.upload(texels, { layer, layers: 1, level })));
       frame.uniforms.uSeaMap.value = seaTexture;
       frame.uniforms.uSeaLayout.value.set(origin[0] - texel / 2, origin[1] - texel / 2, 1 / (samples * texel), waveSettings.ripplesLeast);
       surf = createSurf(settings.surf, swellWay);
-      surface = createSurface(spectrum, map, island.toCove, waveSettings.inJs, waveSettings.ripplesLeast, waveSettings.ripplesDepth, surf, waveSettings.chopWander, { share: settings.shallowTroughs, groundAt: built.heightmap.heightAt });
+      swash = createSwash(settings.swash, settings.surf, coveSwellWay(config), settings.surf.period, waveSettings.loop);
+      groundAt = built.heightmap.heightAt;
+      const beach = { swash, band: settings.swash.band, wets: settings.swash.wets };
+      surface = createSurface(spectrum, map, island.toCove, waveSettings.inJs, waveSettings.ripplesLeast, waveSettings.ripplesDepth, surf, waveSettings.chopWander, { share: settings.shallowTroughs, groundAt }, beach);
       Object.assign(ctx.water, { map, surface, seaTexture, seaLayout: frame.uniforms.uSeaLayout.value });
       for (const mesh of meshes) mesh.visible = true;
     })
@@ -233,6 +248,13 @@ export function create(ctx) {
     over(x, y, z, t = ctx.clock.elapsed) {
       if (y > meshSettings.tallest) return true;
       return y > (surface ? surface.heightAt(x, z, t) + meshSettings.over : 0);
+    },
+    // The beach's water at world x, z: { level, cover, foam, line, film, soaked, milk, runs }
+    // (water/swash.js), over the ground as drawn there; none until ready.
+    swashAt(x, z, t = ctx.clock.elapsed, out = {}) {
+      if (!swash) return Object.assign(out, { level: 0, cover: 0, foam: 0, line: 0, film: 0, soaked: 0, milk: 0, runs: 0 });
+      const [a, o] = island.toCove(x, z);
+      return swash(map.at(a, o), a, o, groundAt(x, z), t - spectrum.loop * Math.floor(t / spectrum.loop), out);
     },
     // The surf at world x, z: { foam, height, slope } (water/surf.js), for sound.
     surfAt(x, z, t = ctx.clock.elapsed) {

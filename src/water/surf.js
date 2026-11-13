@@ -18,9 +18,10 @@
 // way it runs. The GPU's twin also takes how far whitewater reaches seen from far off, and how wide a pixel is.
 import { waveSpeed } from './sea-map.js';
 
-// A wave's share of a full one, in its set and along its length. All the periods
-// divide the waves' loop (config.water.waves), so the sets go on across it.
-function sizeOf(n, across, { least, sets, beat: by, along: [[rate0, turns0], [rate1, turns1]] }) {
+// A wave's share of a full one, in its set and along its length (m across the way it
+// runs). All the periods divide the waves' loop (config.water.waves), so the sets go on
+// across it. The beach's waves have the same (water/swash.js).
+export function waveSize(n, across, { least, sets, beat: by, along: [[rate0, turns0], [rate1, turns1]] }) {
   const beat = Math.min(Math.max(0.5 + by * Math.sin((2 * Math.PI * n) / sets[0]) + by * Math.sin((2 * Math.PI * n) / sets[1]), 0), 1);
   const along = 0.5 + 0.25 * Math.sin(across * rate0 + (2 * Math.PI * turns0 * n) / sets[0]) + 0.25 * Math.sin(across * rate1 + (2 * Math.PI * turns1 * n) / sets[1]);
   return (least + (1 - least) * beat * beat) * (0.6 + 0.7 * along);
@@ -46,8 +47,8 @@ export function createSurf(settings, [wayX, wayZ]) {
     const n = Math.floor(phase);
     const f = phase - n;
     const across = x * wayZ - z * wayX;
-    const now = sizeOf(n, across, settings);
-    const next = sizeOf(n + 1, across, settings);
+    const now = waveSize(n, across, settings);
+    const next = waveSize(n + 1, across, settings);
 
     // How tall each stands here: taller as it slows, no more than what's left of the swell, or the water lets it.
     const rises = height * (deep / speed) ** shoals;

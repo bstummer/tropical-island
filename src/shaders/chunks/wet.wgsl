@@ -1,11 +1,12 @@
 // How wet the ground is (PLAN.md Stage 4): the one input for every surface
-// the sea wets (sand, rock, the rocks), which Stage 7's waves will drive.
-// Until then it follows the height above the sea (world/albedo.js
-// sandWetness is its twin), and so does `washed`, where the waves reach,
-// which shapes the sand (ripples above it, swash marks in it) however wet the
-// sand is now: sand drying in the sun doesn't grow ripples. Its edges are as
-// soft as a pixel is tall (width: how much the height above the sea changes
-// across it), so far away wet meets dry without stair-steps.
+// the sea wets (sand, rock, the rocks). What the waves' sets did over minutes
+// follows the height above the sea (groundDamp; world/albedo.js sandWetness is
+// its twin), and so does `washed`, where the waves reach, which shapes the sand
+// (ripples above it, swash marks in it) however wet the sand is now: sand drying
+// in the sun doesn't grow ripples. What the last waves did comes on top of it
+// (water/swash.wgsl groundWet). Its edges are as soft as a pixel is tall (width:
+// how much the height above the sea changes across it), so far away wet meets
+// dry without stair-steps.
 
 #include "noise.wgsl"
 
@@ -18,8 +19,8 @@ struct WetUniforms {
 @group(1) @binding(22) var<uniform> wetParams: WetUniforms;
 
 struct Wet {
-  wetness: f32, // 0 dry to 1 soaked, under water or a film of it
-  film: f32, // how much of it a film of water covers: above the sea only
+  wetness: f32, // 0 dry to 1 soaked, under water or just after
+  film: f32, // how much of it the waves' sheet or the glassy film they leave covers, which the water draws
   washed: f32, // how much the waves wash over it, 1 at the sea to 0 above their reach
   reach: f32, // m: how much further up than elsewhere the waves reach here (wetReach), as its edge has it
 }
@@ -43,12 +44,11 @@ fn wetReach(xz: vec2f, width: f32) -> f32 {
   return stretch + lobes + tongues + fray;
 }
 
-// The ground at this wetness, as Stage 7 will set it: under a film of water
-// from 0.75, washed as far as it is wet.
+// The ground at this wetness, washed as far as it is wet.
 fn wetAt(wetness: f32) -> Wet {
   var w: Wet;
   w.wetness = wetness;
-  w.film = smoothstep(0.75, 1.0, wetness);
+  w.film = 0.0;
   w.washed = wetness;
   w.reach = 0.0;
   return w;
@@ -68,10 +68,11 @@ fn wetProfile(h: f32, width: f32) -> f32 {
   return max(1.0 - 0.55 * wetLinear(u.x - width, mid + width, h) - (0.3 - u.w) * smoothstep(mid - width, u.y + width, h) - u.w * smoothstep(u.y - sharp, u.y + sharp, h) - 0.15 * smoothstep(u.y - width, u.z + width, h), 0.0);
 }
 
-// The ground's wetness at xz, aboveSea m above the sea. The waves washed
-// further up than they reach now, at high tide: the beach's face is smooth a
-// little way above the wet sand.
-fn groundWet(xz: vec2f, aboveSea: f32, width: f32) -> Wet {
+// What the waves' sets left of the ground's wetness at xz, aboveSea m above the
+// sea, as they run up the beach at its fullest (config.world.island.zones.wetSand).
+// They washed further up than they reach now, at high tide: the beach's face is
+// smooth a little way above the wet sand.
+fn groundDamp(xz: vec2f, aboveSea: f32, width: f32) -> Wet {
   // Above the waves' furthest reach the ground is dry: no need for its noise.
   if (aboveSea - width > wetParams.uWet.z + WET_REACH) {
     return wetAt(0.0);
@@ -84,7 +85,5 @@ fn groundWet(xz: vec2f, aboveSea: f32, width: f32) -> Wet {
   var w = wetAt(max(wetProfile(h, width), 1.0 - overSea));
   w.reach = reach;
   w.washed = 1.0 - smoothstep(wetParams.uWet.y - 0.03 - width, wetParams.uWet.y + 0.06 + width, h);
-  // Under the sea, the water's surface mirrors the sky, not the sand's.
-  w.film *= overSea;
   return w;
 }

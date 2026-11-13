@@ -2,7 +2,8 @@
 // grid's slopes, filtered over the pixel's footprint, so distant slopes keep
 // their detail without sparkling. Its ground (world/island.js groundOf) is
 // sand (chunks/sand.wgsl) and rock (chunks/rock.wgsl), as wet as the ground
-// is (chunks/wet.wgsl), and green inland (chunks/green.wgsl), mixed as
+// is (chunks/wet.wgsl, by the waves: water/swash.wgsl), and green inland
+// (chunks/green.wgsl), mixed as
 // world/albedo.js mixes them; where sand meets green, the green's patches
 // decide which is where. Pieces with no sand or no rock (world/terrain.js)
 // leave out TERRAIN_SAND or TERRAIN_ROCK and draw what a far, filtered pixel
@@ -19,7 +20,7 @@
 #include "chunks/lighting.wgsl"
 #include "chunks/terrain.wgsl"
 #include "chunks/terrain-mesh.wgsl"
-#include "chunks/wet.wgsl"
+#include "../water/swash-wet.wgsl"
 #include "chunks/sand.wgsl"
 #include "chunks/rock.wgsl"
 #include "chunks/green.wgsl"
@@ -109,7 +110,6 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
   s.albedo = vec3f(0.0);
   s.roughness = 1.0;
   s.f0 = 0.02;
-  s.film = 0.0;
   var r: Rock;
   r.albedo = vec3f(0.0);
   r.roughness = 1.0;
@@ -185,16 +185,18 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
 
   shadeOnce(vWorldPos, n, dx, dy, 0.0); // its shadows, before it lights (chunks/shadows.wgsl)
   var diffuse = cover.y * r.albedo + rest * gr.albedo;
-  diffuse += cover.x * sandDiffuse(s, n, view);
+  diffuse += cover.x * s.albedo;
   var radiance = diffuse / PI * (sunLight(vWorldPos, n) + skyIrradiance(vWorldPos, n));
+  // Under the waves' sheet and the glassy film it leaves, the water mirrors (water/water.wgsl).
+  let shines = overSea * (1.0 - w.film);
   if (TERRAIN_SAND || TERRAIN_WET) {
     if (cover.x > 0.0) {
-      radiance += overSea * cover.x * sandShine(s, vWorldPos, n, view, kernel);
+      radiance += shines * cover.x * sandShine(s, vWorldPos, n, view, kernel);
     }
   }
   if (TERRAIN_ROCK) {
     if (cover.y > 0.0) {
-      radiance += overSea * cover.y * rockShine(r, vWorldPos, n, view, kernel);
+      radiance += shines * cover.y * rockShine(r, vWorldPos, n, view, kernel);
     }
   }
   // In alpha, how much of this the water should take as what it sees under its surface.

@@ -10,6 +10,15 @@ const MIRROR_NEAR_OCTAVES = 17.0;
 const MIRROR_NEAR_LEVELS = 1022.0;
 const MIRROR_NEARER = 0.98; // a level of how near is 1.2%: what stands at the water's foot counts as behind it
 
+// Where the first thing along the view at this pixel of the opaque scene lies, in the world.
+fn opaqueSeen(pixel: vec2i, size: vec2f) -> vec3f {
+  let z = textureLoad(uOpaqueDepth, pixel, 0);
+  let away = frame.projectionMatrix[3][2] / (z + frame.projectionMatrix[2][2]);
+  let ndc = (vec2f(pixel) + 0.5) / size * vec2f(2.0, -2.0) + vec2f(-1.0, 1.0);
+  let inView = vec3f(ndc.x / frame.projectionMatrix[0][0], ndc.y / frame.projectionMatrix[1][1], -1.0) * away;
+  return frame.cameraPosition + (vec4f(inView, 0.0) * frame.viewMatrix).xyz; // the camera's rotation, inverted
+}
+
 // How far along the eye's axis (m) what a key holds lies, as far as its levels tell.
 fn landKeyW(key: u32) -> f32 {
   let near = f32((key >> MIRROR_INDEX_BITS) - 1u) / MIRROR_NEAR_LEVELS;
@@ -19,8 +28,10 @@ fn landKeyW(key: u32) -> f32 {
 // The land's stored colour at a cell of the image, and how much of it there is: its
 // row's share of the frame fades it off the frame's top, whose rows mirror nothing
 // further. Nothing where it stands nearer the eye than this water (eyeW, along the
-// eye's axis): water behind a rock can't mirror it.
-fn landCell(cell: vec2i, eyeW: f32) -> vec4f {
+// eye's axis): water behind a rock can't mirror it; nor where it stands no higher than
+// `above` m over the still sea: the image is the still sea's, and water lying higher,
+// on a beach, mirrors nothing of the beach lower down round it.
+fn landCell(cell: vec2i, eyeW: f32, above: f32) -> vec4f {
   let key = uMirror[u32(cell.x) + u32(cell.y) * u32(water.uMirrorCells.x)];
   if (key == 0u || landKeyW(key) < MIRROR_NEARER * eyeW) {
     return vec4f(0.0);
@@ -29,7 +40,12 @@ fn landCell(cell: vec2i, eyeW: f32) -> vec4f {
   let across = u32(water.uMirrorCells.x);
   let source = vec2u(index % across, index / across);
   let stride = u32(water.uMirrorCells.z);
-  let stored = textureLoad(uOpaque, min(source * stride + stride / 2u, vec2u(textureDimensions(uOpaque)) - 1u), 0);
+  let pixel = min(source * stride + stride / 2u, vec2u(textureDimensions(uOpaque)) - 1u);
+  let standing = opaqueSeen(vec2i(pixel), vec2f(textureDimensions(uOpaqueDepth)));
+  if (standing.y + planetDrop(standing.xz) < above) {
+    return vec4f(0.0);
+  }
+  let stored = textureLoad(uOpaque, pixel, 0);
   // At an edge its samples are weighted by alpha (post/opaque-resolve.wgsl), so what
   // wasn't drawn, or was left to the water, adds nothing: what it covers, and how much.
   return vec4f(stored.rgb / max(stored.a, 1e-3), stored.a * smoothstep(0.0, water.uMirrorCells.w, f32(source.y) / water.uMirrorCells.y));
@@ -63,16 +79,16 @@ fn landOnImage(at: vec3f) -> bool {
 }
 
 // The land along that ray, read at the nearest cell: enough where the waves blur it.
-fn landNearest(at: vec3f, eyeW: f32) -> vec4f {
+fn landNearest(at: vec3f, eyeW: f32, above: f32) -> vec4f {
   if (!landOnImage(at)) {
     return vec4f(0.0);
   }
   let cell = vec2i(at.xy * water.uMirrorCells.xy);
-  return landCell(vec2i(clamp(cell.x, 0, i32(water.uMirrorCells.x) - 1), cell.y), eyeW);
+  return landCell(vec2i(clamp(cell.x, 0, i32(water.uMirrorCells.x) - 1), cell.y), eyeW, above);
 }
 
 // Between the four nearest cells: where the water lies still enough to show the land sharp.
-fn landSmooth(at: vec3f, eyeW: f32) -> vec4f {
+fn landSmooth(at: vec3f, eyeW: f32, above: f32) -> vec4f {
   if (!landOnImage(at)) {
     return vec4f(0.0);
   }
@@ -85,7 +101,7 @@ fn landSmooth(at: vec3f, eyeW: f32) -> vec4f {
   for (var k = 0; k < 4; k++) {
     let corner = vec2f(f32(k & 1), f32(k >> 1u));
     let weight = mix(1.0 - f.x, f.x, corner.x) * mix(1.0 - f.y, f.y, corner.y);
-    let land = landCell(vec2i(clamp(i + corner, vec2f(0.0), top)), eyeW);
+    let land = landCell(vec2i(clamp(i + corner, vec2f(0.0), top)), eyeW, above);
     color += weight * land.a * land.rgb;
     share += weight * land.a;
   }

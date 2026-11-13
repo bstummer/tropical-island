@@ -37,7 +37,7 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
   var radiance: vec3f;
   if (SURFACE_ROCK) {
     let aboveSea = surface.uAboveSea + vWorldPos.y - surface.uGround;
-    let r = rock(vWorldPos, aboveSea, groundWet(vWorldPos.xz, aboveSea, fwidth(aboveSea)), normalize(in.vNormal), view, surface.uRock, dPdx, dPdy);
+    let r = rock(vWorldPos, aboveSea, groundDamp(vWorldPos.xz, aboveSea, fwidth(aboveSea)), normalize(in.vNormal), view, surface.uRock, dPdx, dPdy);
     let kernel = specularKernel(r.normal);
     radiance = r.albedo / PI * (sunLight(vWorldPos, r.normal) + skyIrradiance(vWorldPos, r.normal));
     radiance += rockShine(r, vWorldPos, r.normal, view, kernel);
@@ -48,7 +48,7 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
     let aboveSea = surface.uAboveSea + 0.1 * dot(vWorldPos.xz, surface.uAcross);
     let s = sand(vWorldPos, aboveSea, normalize(in.vNormal), wetAt(surface.uWetness), surface.uDrySand, surface.uWetSand, dPdx.xz, dPdy.xz);
     let kernel = specularKernel(s.normal);
-    radiance = sandDiffuse(s, s.normal, view) / PI * (sunLight(vWorldPos, s.normal) + skyIrradiance(vWorldPos, s.normal));
+    radiance = s.albedo / PI * (sunLight(vWorldPos, s.normal) + skyIrradiance(vWorldPos, s.normal));
     radiance += sandShine(s, vWorldPos, s.normal, view, kernel);
   }
   return sceneOutput(aerialPerspective(radiance, vWorldPos), 1.0);

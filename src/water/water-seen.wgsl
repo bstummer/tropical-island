@@ -15,13 +15,10 @@
 // the same as finely as it is known (m).
 
 // How deep under the sea the first thing along the view at this pixel of the
-// opaque scene lies, as before the planet's bend: below 0 above it.
+// opaque scene lies, as before the planet's bend: below 0 above it (opaqueSeen:
+// water-land.wgsl, which the includer includes too).
 fn opaqueDepthBelow(pixel: vec2i, size: vec2f) -> f32 {
-  let z = textureLoad(uOpaqueDepth, pixel, 0);
-  let away = frame.projectionMatrix[3][2] / (z + frame.projectionMatrix[2][2]);
-  let ndc = (vec2f(pixel) + 0.5) / size * vec2f(2.0, -2.0) + vec2f(-1.0, 1.0);
-  let inView = vec3f(ndc.x / frame.projectionMatrix[0][0], ndc.y / frame.projectionMatrix[1][1], -1.0) * away;
-  let p = frame.cameraPosition + (vec4f(inView, 0.0) * frame.viewMatrix).xyz; // the camera's rotation, inverted
+  let p = opaqueSeen(pixel, size);
   return -(p.y + planetDrop(p.xz));
 }
 

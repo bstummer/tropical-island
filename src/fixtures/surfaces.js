@@ -1,7 +1,7 @@
 // Fixture (?fixture=surfaces): the ground's surfaces without the island, to
 // judge them on their own (PLAN.md Stage 4). From the camera's feet out to
-// the haze: strips of sand side by side, from dry through damp and wet to a
-// film of water, and a strip of rock, with strips of the green to their left
+// the haze: strips of sand side by side, from dry through damp and wet to
+// soaked, and a strip of rock, with strips of the green to their left
 // as the scrub behind a beach, the open palm belt and the lush jungle have
 // it, on dry sand that reaches the horizon; to the right, ramps of dry sand at
 // 15, 30 and 45 degrees; further left, walls of rock at 45, 70 and 90 degrees,
@@ -28,7 +28,7 @@ import { sandUniforms } from '../textures/sand.js';
 import { rockUniforms } from '../textures/rock.js';
 import { greenUniforms } from '../textures/green.js';
 
-const STRIPS = [0, 0.35, 0.6, 1]; // wetness: dry, damp, wet, a film
+const STRIPS = [0, 0.35, 0.6, 1]; // wetness: dry, damp, wet, soaked
 const GREENS = [[0.3, 0.1, 0.8], [1.5, 0.3, 0.2], [3, 0.9, 0]]; // band, lush, sandy: the scrub behind a beach, the open palm belt, the lush jungle
 const STRIP = { width: 1.4, from: 0.3, to: 300 }; // metres
 const RAMPS = { degrees: [15, 30, 45], width: 2.5, length: 5, ahead: 7, aside: 4 };
@@ -47,7 +47,7 @@ export function create(ctx) {
   const ranged = (surface) => ({ ...surface, range: surface.range * quality.groundDetail });
   // The tiles' averages are read back from the GPU: zeros until then.
   const surfaceUniforms = ({ sand, rock, green }) => ({
-    ...sandUniforms(sand, ranged(terrain.sand), config.world.island.zones.wetSand, config.sky.sun.sunsetYaw, config.water.glitter),
+    ...sandUniforms(sand, ranged(terrain.sand), config.world.island.zones.wetSand, config.sky.sun.sunsetYaw),
     ...rockUniforms(rock, ranged(terrain.rock)),
     ...greenUniforms(green, terrain.albedo, ranged(terrain.green), [1, 2]),
   });

@@ -19,6 +19,7 @@ import {
   shimmer,
   shrink,
   tile,
+  timeSlice,
   zoom,
 } from '../tools/image.js';
 import { createRandom } from '../src/core/random.js';
@@ -108,6 +109,21 @@ test('tile lays images out in rows with gaps', () => {
   assert.deepEqual(at(sheet, 0, 4), [150, 150, 150]);
   assert.deepEqual(at(sheet, 4, 0), [7, 7, 7]); // gap
   assert.deepEqual(at(sheet, 5, 4), [7, 7, 7]); // empty cell
+});
+
+test('timeSlice draws a thing moving along its line as a sloped path, and a still frame as flat', () => {
+  // A white edge rising up a dark column frame by frame: in frame k it reaches row 9 - 2k from the top.
+  const frames = [0, 1, 2, 3].map((k) => greyImage(5, 10, (x, y) => (y >= 9 - 2 * k ? 255 : 0)));
+  const slice = timeSlice(frames, [[0.5, 1], [0.5, 0]], { width: 2 });
+  assert.deepEqual([slice.width, slice.height], [8, 10]);
+  // The line's start (the frame's bottom) is the slice's bottom: in frame k the white reaches
+  // from the slice's bottom row up to row 9 - 2k, and no further.
+  const white = (k) => [...Array(10).keys()].filter((row) => at(slice, 2 * k, row)[0] === 255);
+  assert.deepEqual([0, 1, 2, 3].map(white), [0, 1, 2, 3].map((k) => [...Array(2 * k + 1).keys()].map((i) => 9 - 2 * k + i)));
+  assert.deepEqual(at(slice, 1, 9), at(slice, 0, 9)); // each frame its own columns
+  // Nothing moving: every column the same.
+  const still = timeSlice([frames[2], frames[2], frames[2]], [[0.5, 1], [0.5, 0]]);
+  for (let x = 1; x < still.width; x++) for (let y = 0; y < still.height; y++) assert.deepEqual(at(still, x, y), at(still, 0, y));
 });
 
 test('tile leaves gaps between rows too, and puts smaller images at the top left of cells the size of the largest', () => {

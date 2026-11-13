@@ -64,8 +64,8 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
     let toLand = landFarther(in.position.xy, length(frame.cameraPosition - in.vWorld), eyeW);
     let flat = reflect(-view, vec3f(0.0, 1.0, 0.0));
     let far = select(8.0, toLand, toLand > 0.0);
-    let tilted = landSmooth(landImageUv(in.vWorld, normalize(flat + vec3f(0.0, 0.3, 0.0)), far), eyeW);
-    return vec4f(tilted.a, 0.0, 0.0, landSmooth(landImageUv(in.vWorld, flat, far), eyeW).a);
+    let tilted = landSmooth(landImageUv(in.vWorld, normalize(flat + vec3f(0.0, 0.3, 0.0)), far), eyeW, -1e9);
+    return vec4f(tilted.a, 0.0, 0.0, landSmooth(landImageUv(in.vWorld, flat, far), eyeW, -1e9).a);
   }
   let size = vec2f(textureDimensions(uOpaqueDepth));
   let bent = refract(-view, vec3f(0.0, 1.0, 0.0), 1.0 / optics.uIor);

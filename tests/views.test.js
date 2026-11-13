@@ -33,7 +33,14 @@ for (const view of views) {
       assert.match(name, /^[a-z0-9]+(-[a-z0-9]+)*$/, `crop name "${name}"`);
       assert.ok(centre.length === 2 && centre.every((c) => c >= 0 && c <= 1), `crop "${name}" centre must be [x, y] in 0–1`);
     }
-    const extra = Object.keys(view).filter((k) => !['name', 'position', 'yaw', 'pitch', 'fov', 'timeOfDay', 'brief', 'crops'].includes(k));
+    if (view.run) {
+      // A whole wave of the beach's in frames close enough together to follow its edge.
+      const { seconds, step, line } = view.run;
+      assert.ok(seconds >= config.water.surf.period, `run: ${seconds} s, under a wave's ${config.water.surf.period}`);
+      assert.ok(step > 0 && step <= 1, `run: frames ${step} s apart`);
+      assert.ok(line.length === 2 && line.flat().every((c) => c >= 0 && c <= 1), 'run: its line is [[x, y], [x, y]] in 0–1');
+    }
+    const extra = Object.keys(view).filter((k) => !['name', 'position', 'yaw', 'pitch', 'fov', 'timeOfDay', 'brief', 'crops', 'run'].includes(k));
     assert.deepEqual(extra, []);
   });
 }

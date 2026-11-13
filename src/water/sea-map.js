@@ -18,6 +18,10 @@
 //   late   s a wave of the swell gets here later than one over deep water would
 //   wayA, wayO  the way it runs here, a unit vector (a, o)
 //   speed  m/s it runs at here
+//   lands  s a wave of the swell gets to the waterline nearest here, past its timing at
+//          the open sea's start (the surf's: water/surf.js), as landsHi + landsLo
+//   exposure  how hard the surf breaks at that waterline (breaks there)
+//   rise   how steeply the ground rises there, per metre inland
 //
 // A swell runs in from the open sea, spread over a fan of directions, and can't
 // stand taller than the water under it allows: what the crest of the reef
@@ -39,6 +43,7 @@
 // the horizon in a straight lane (water/sea-map.wgsl seaKept is the twin).
 
 import { smoothstep } from '../world/island.js';
+import { fromHalfFloat, toHalfFloatNearest } from '../maths/index.js';
 
 const G = 9.81;
 const SHALLOWEST = 0.1; // m: what a wave runs over on land and at the waterline, so it gets round them
@@ -188,7 +193,45 @@ export function buildSeaMap(heightmap, settings, side, blend = 0) {
   const speed = new Float32Array(count);
   for (let n = 0; n < count; n++) speed[n] = waveSpeed(depths[n], settings.swell.period);
   const running = outward(from, side).map((v) => -v);
-  const { late, wayA, wayO } = arrivals(speed, samples, texel, running, waveSpeed(Infinity, settings.swell.period));
+  const inDeep = waveSpeed(Infinity, settings.swell.period);
+  const { late, wayA, wayO } = arrivals(speed, samples, texel, running, inDeep);
+
+  // What the waterline nearest each sample has, `shore` m along the way inland (water/swash.js):
+  // when a wave gets there, its timing as the surf's (water/surf.js), as two halves that half
+  // floats each hold and whose sum is exact; how hard the surf breaks there; how steeply the
+  // ground rises there, per metre inland, over a texel either side. When they land is softened
+  // over `lands` m: across the shore, where the waves slow, it changes by a second a metre,
+  // so where the nearest waterline is found a little off it would jump.
+  const lands = new Float32Array(count);
+  const landsHi = new Float32Array(count);
+  const landsLo = new Float32Array(count);
+  const exposure = new Float32Array(count);
+  const rise = new Float32Array(count);
+  const bilinear = (field, a, o) => {
+    const last = samples - 1;
+    const fx = Math.min(Math.max((a - origin[0]) / texel, 0), last);
+    const fy = Math.min(Math.max((o - origin[1]) / texel, 0), last);
+    const i = Math.min(Math.floor(fx), last - 1);
+    const j = Math.min(Math.floor(fy), last - 1);
+    const n = j * samples + i;
+    const bottom = field[n] + (field[n + 1] - field[n]) * (fx - i);
+    const top = field[n + samples] + (field[n + samples + 1] - field[n + samples]) * (fx - i);
+    return bottom + (top - bottom) * (fy - j);
+  };
+  for (let j = 0, n = 0; j < samples; j++) {
+    for (let i = 0; i < samples; i++, n++) {
+      const a = origin[0] + i * texel + inlandA[n] * shore[n];
+      const o = origin[1] + j * texel + inlandO[n] * shore[n];
+      lands[n] = bilinear(late, a, o) + (a * running[0] + o * running[1]) / inDeep;
+      exposure[n] = bilinear(breaking, a, o);
+      rise[n] = (bilinear(heights, a + inlandA[n] * texel, o + inlandO[n] * texel) - bilinear(heights, a - inlandA[n] * texel, o - inlandO[n] * texel)) / (2 * texel);
+    }
+  }
+  const softLands = roundAbout(lands, samples, Math.max(Math.round(settings.lands / texel / 2), 1));
+  for (let n = 0; n < count; n++) {
+    landsHi[n] = fromHalfFloat(toHalfFloatNearest(softLands[n]));
+    landsLo[n] = softLands[n] - landsHi[n];
+  }
 
   return {
     origin,
@@ -208,6 +251,10 @@ export function buildSeaMap(heightmap, settings, side, blend = 0) {
     wayA,
     wayO,
     speed,
+    landsHi,
+    landsLo,
+    exposure,
+    rise,
     // The map at a, o in the cove's frame, into `out`, bilinear as the GPU filters it.
     at(a, o, out = {}) {
       const last = samples - 1;
@@ -239,6 +286,9 @@ export function buildSeaMap(heightmap, settings, side, blend = 0) {
       out.wayA = mix(wayA);
       out.wayO = mix(wayO);
       out.speed = mix(speed);
+      out.lands = mix(landsHi) + mix(landsLo);
+      out.exposure = mix(exposure);
+      out.rise = mix(rise);
       // Past the edge, the open sea.
       const kept = 1 - smoothstep(0, settings.open.over, texel * Math.hypot(ua - fx, uo - fy));
       if (kept < 1) {
@@ -254,14 +304,17 @@ export function buildSeaMap(heightmap, settings, side, blend = 0) {
   };
 }
 
-// The three layers of half floats the GPU reads (water/sea-map.wgsl): shore, depth,
+// The layers of half floats the GPU reads (water/sea-map.wgsl): shore, depth,
 // swell, chop, which every pixel of water needs; the way inland, breaks, reef; the
-// swell's waves. `late` stays small where they break, so half floats hold it finely.
+// swell's waves; the waterline nearest. `late` stays small where they break, so half
+// floats hold it finely.
 const LAYERS = [
   ['shore', 'depth', 'swell', 'chop'],
   ['inlandA', 'inlandO', 'breaks', 'reef'],
   ['late', 'wayA', 'wayO', 'speed'],
+  ['landsHi', 'landsLo', 'exposure', 'rise'],
 ];
+export const SEA_MAP_LAYERS = LAYERS.length;
 
 // The same at each of `levels` mip levels, [level][layer], each texel the mean of
 // those under it, but for how deep the water is: the mean over the water under it

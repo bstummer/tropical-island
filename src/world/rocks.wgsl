@@ -13,7 +13,7 @@
 #include "chunks/scene-output.wgsl"
 #include "chunks/lighting.wgsl"
 #include "chunks/terrain.wgsl"
-#include "chunks/wet.wgsl"
+#include "../water/swash-wet.wgsl"
 #include "chunks/sand.wgsl"
 #include "chunks/rock.wgsl"
 #include "chunks/green.wgsl"

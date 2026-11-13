@@ -44,6 +44,7 @@ import { sandUniforms } from '../textures/sand.js';
 import { rockUniforms } from '../textures/rock.js';
 import { greenUniforms } from '../textures/green.js';
 import { FOAM_LEVELS, foamLevelsUniform } from '../textures/foam-levels.js';
+import { swashUniforms, swellWay } from '../water/swash.js';
 import { createLod, createMeshHeight, lodRanges } from './lod.js';
 import { DETAIL, GREEN, gridGeometry, INLAND, leftToWater, nodeBounds, ROCK, SAND, WET } from './terrain-nodes.js';
 
@@ -115,7 +116,7 @@ export function create(ctx) {
   const surfaceUniforms = ({ sand, rock, green, glints, foam }) => ({
     uGlintMean: { value: glints },
     uFoamLevels: { value: foamLevelsUniform(foam) },
-    ...sandUniforms(sand, sandSettings, looks.wetHeight, config.sky.sun.sunsetYaw, config.water.glitter),
+    ...sandUniforms(sand, sandSettings, looks.wetHeight, config.sky.sun.sunsetYaw),
     ...rockUniforms(rock, rockSettings),
     ...greenUniforms(green, albedo, greenSettings, patchSeeds),
   });
@@ -128,6 +129,8 @@ export function create(ctx) {
     uSeabedTurns: { value: new Vector2(...config.water.seabedTurns) },
     uSeabedDeepest: { value: config.water.seabedFade[1] },
     uUnderSea: { value: new Vector4(...config.water.groundFade, config.water.troughs, 0) },
+    // How wet the waves leave the beach (water/swash.wgsl).
+    ...swashUniforms(config.water.swash, config.water.surf, swellWay(config), config.water.surf.period, config.water.waves.loop),
     ...tilesUniforms(tiles),
     ...surfaceUniforms({ sand: { grainMean: new Vector3() }, rock: { mean: new Vector4() }, green: { grassMean: new Vector3(), grassCover: 0, litterCover: 0 }, glints: 1, foam: Array.from({ length: FOAM_LEVELS }, (_, j) => 2 - (2 * j) / (FOAM_LEVELS - 1)) }),
   };

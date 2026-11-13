@@ -221,7 +221,7 @@ async function captureView(context, fileUrl, query, view, outDir, { measure, con
       }
       let last = null; // the last motion frame: { t, frame }
       if (measure) {
-        const measured = await measureView(page, { info, crops: view.crops, first, dir: join(outDir, view.name), gpuTime });
+        const measured = await measureView(page, { info, crops: view.crops, run: view.run, first, dir: join(outDir, view.name), gpuTime });
         result.measurements = { ...measured.cost, motionTimes: measured.motionTimes };
         result.timing.frameMs = measured.frameMs;
         analysis = measured.analysis;
@@ -1144,7 +1144,7 @@ export function seaHoles(distances, width, height, from, far) {
 // The waves fixture's results (src/fixtures/waves.js): the GPU's fields, a mip
 // and a loop later; what the sea knows; the surface: each within its limit and
 // each mistake beyond it.
-export function wavesProblems(w, { fields, mips, looped, map, surface, inJs, least, surf }) {
+export function wavesProblems(w, { fields, mips, looped, map, surface, inJs, least, surf, swash }) {
   const problems = [];
   if (!(w?.fields?.gpu <= fields)) problems.push(`the GPU's fields are off the waves' sum in JS by ${w?.fields?.gpu} (limit ${fields})`);
   if (!(w?.fields?.time > fields)) problems.push(`the fields at a time off are only ${w?.fields?.time} off: the check misses it`);
@@ -1165,6 +1165,11 @@ export function wavesProblems(w, { fields, mips, looped, map, surface, inJs, lea
   if (!(w?.surf?.slope <= surf.slope)) problems.push(`the surf's slope is off its JS twin by ${w?.surf?.slope} (limit ${surf.slope})`);
   if (!(w?.surf?.seam <= surf.seam)) problems.push(`the surf's foam seen from far off jumps by ${w?.surf?.seam} across the crest (limit ${surf.seam})`);
   if (!(w?.surf?.time >= surf.time)) problems.push(`the surf's foam at a time off is only ${w?.surf?.time} off: the check misses it`);
+  if (!(w?.swash?.points >= least)) problems.push(`only ${w?.swash?.points} points of the beach judged (at least ${least})`);
+  for (const key of ['level', 'cover', 'foam', 'film']) {
+    if (!(w?.swash?.[key] <= swash[key])) problems.push(`the beach's water's ${key} is off its JS twin by ${w?.swash?.[key]} (limit ${swash[key]})`);
+  }
+  if (!(w?.swash?.time > swash.level)) problems.push(`the beach's water's edge at a time off is only ${w?.swash?.time} m off: the check misses it`);
   return problems;
 }
 

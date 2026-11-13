@@ -41,19 +41,16 @@ export function makeSandTiles({ renderer, target, layers, size, shift, pixels },
 
 // The uniforms chunks/sand.wgsl reads: the tiles' (makeSandTiles), and
 // config.world.terrain.sand with the wet sand's zone (wetHeight; chunks/wet.wgsl's)
-// and the view yaw out to sea (seaYaw, degrees), which the wind is turned from;
-// glitter: how much of the sun's mirror a film of water shows, as the sea does
-// (config.water.glitter).
-export function sandUniforms(tiles, sand, wetHeight, seaYaw, glitter) {
+// and the view yaw out to sea (seaYaw, degrees), which the wind is turned from.
+export function sandUniforms(tiles, sand, wetHeight, seaYaw) {
   const yaw = ((seaYaw - sand.wind) * Math.PI) / 180; // degrees to the right turn the yaw down
   return {
     uSandGrainMean: { value: tiles.grainMean },
     uSandTiles: { value: new Vector3(sand.grain.tile, sand.ripples.tile, sand.ripples.strength) },
     uSandWind: { value: new Vector2(-Math.sin(yaw), -Math.cos(yaw)) },
     uWet: { value: new Vector4(sand.wetness.film, wetHeight, sand.wetness.dry, sand.wetness.step) },
-    uSandRoughness: { value: new Vector4(sand.roughness.dry, sand.roughness.wet, sand.roughness.soaked, sand.roughness.film) },
+    uSandRoughness: { value: new Vector3(sand.roughness.dry, sand.roughness.wet, sand.roughness.soaked) },
     uSandRange: { value: sand.range },
     uSandRumples: { value: new Vector2(sand.rumples.wavelength, sand.rumples.slope) },
-    uSandFilmSun: { value: glitter },
   };
 }

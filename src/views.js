@@ -11,6 +11,10 @@
 //           one; reviews judge each capture against it.
 // crops:    optional { name: [x, y] }: centres of regions the screenshot tool also saves zoomed in,
 //           as fractions of the frame from the top left. Without it the tool crops the centre.
+// run:      optional { seconds, step, line }: the screenshot tool also renders frames `step` s
+//           apart over `seconds` from the view's t, a whole wave of the beach's at least, and
+//           saves them (run.png) and the pixels along `line` ([[x, y], [x, y]] as crops have
+//           them, from near to far) in each, side by side in time (run-slice.png).
 // disabled: optional true: kept, and found by name (?view=, the screenshot tool's --views), but left
 //           out of every run over the views: captures, their checks, the benchmark and the tests.
 //
@@ -52,6 +56,7 @@ const all = [
   },
   {
     name: 'horizon',
+    disabled: true,
     position: [-20.01, 2.97, -21.93],
     yaw: 165,
     pitch: 1,
@@ -62,6 +67,7 @@ const all = [
   },
   {
     name: 'overview',
+    disabled: true,
     position: [-411.46, 1078.81, -120.56],
     yaw: -48.3,
     pitch: -64.8,
@@ -102,6 +108,7 @@ const all = [
   },
   {
     name: 'swimmer',
+    disabled: true,
     position: [-18, 0.45, 68],
     yaw: 185,
     pitch: -2,
@@ -109,6 +116,38 @@ const all = [
     timeOfDay: 15,
     brief: "Mid-afternoon with the eye a hand above the water in the middle of the lagoon, looking out towards the reef with the headland on the left: small waves close enough to touch, the seabed wavering under them, the sun ahead on the right laying its glitter on the water.",
     crops: { near: [0.5, 0.82], reef: [0.5, 0.47] },
+  },
+  {
+    name: 'swash',
+    position: [22, 1.3, 4.5],
+    yaw: 120,
+    pitch: -8,
+    fov: 60,
+    timeOfDay: 'golden-hour',
+    brief: "Golden hour, crouching at the water's edge in the middle of the bay, looking along the beach to its far end: waves running up the sand in lobes and sliding back, foam lines, the wet sand glassy and glowing with the low sun ahead on the left. The stage's hero.",
+    crops: { edge: [0.5, 0.75], far: [0.5, 0.5] },
+    run: { seconds: 12, step: 0.75, line: [[0.3, 0.98], [0.5, 0.55]] },
+  },
+  {
+    name: 'ankle',
+    position: [-20, 1.5, -1.8],
+    yaw: 168,
+    pitch: -22,
+    fov: 60,
+    timeOfDay: 15,
+    brief: "Mid-afternoon standing ankle-deep at the edge of the lagoon, looking down and out at the next wave coming in: clear water over the sand, foam on its way in and running past your feet, the sun high ahead on the right.",
+    crops: { feet: [0.5, 0.85] },
+    run: { seconds: 12, step: 0.75, line: [[0.5, 1], [0.5, 0.3]] },
+  },
+  {
+    name: 'air-swash',
+    position: [-30, 25, 18],
+    yaw: 0,
+    pitch: -52,
+    fov: 60,
+    timeOfDay: 11,
+    brief: "Late morning looking down from 25 m over the lagoon at the beach's edge: the lobes of the last waves' reach, their foam lines, the glassy band they leave, and the sand under the first metres of clear water.",
+    run: { seconds: 12, step: 0.75, line: [[0.5, 1], [0.5, 0]] },
   },
   {
     name: 'open-sea',

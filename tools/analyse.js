@@ -8,7 +8,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { config } from '../src/config.js';
 import { decodeDataUrl, encodePng } from './png.js';
-import { bandedShare, bandingView, crop, heatImage, motion, moveShift, overdrawImage, panShift, shimmer, shrink, tile, zoom } from './image.js';
+import { bandedShare, bandingView, crop, heatImage, motion, moveShift, overdrawImage, panShift, shimmer, shrink, tile, timeSlice, zoom } from './image.js';
 
 const settings = config.capture;
 
@@ -16,7 +16,7 @@ const settings = config.capture;
 // panned by 1, 2, ... shimmer steps, and the frames at t + step, t + 2 step, ...
 // `moved` the frames with the camera moved (measure.js renderMoves).
 // `overdraw` is { width, height, counts }. Returns { measurements, files, analyseMs }.
-export function analyseView({ first, pan, motion: later, moved, overdraw, crops, dir, fov }) {
+export function analyseView({ first, pan, motion: later, moved, overdraw, crops, run, dir, fov }) {
   const started = Date.now();
   mkdirSync(dir, { recursive: true });
   const files = {};
@@ -42,6 +42,11 @@ export function analyseView({ first, pan, motion: later, moved, overdraw, crops,
   save('motion.png', tile(frames.map((f) => shrink(f, 2)), { columns: 3, gap: 8 }));
   const moving = motion(frames, settings.motion);
   save('motion-map.png', heatImage(start, moving.heat, settings.motion.threshold));
+  if (run) {
+    const runFrames = run.frames.map(decodeDataUrl);
+    save('run.png', tile(runFrames.map((f) => shrink(f, 3)), { columns: 5, gap: 6 }));
+    save('run-slice.png', timeSlice(runFrames, run.line, { width: 6 }));
+  }
 
   return {
     measurements: { shimmerPercent: panned.percent, moveShimmerPercent: walked.percent, motionPercent: moving.percent, bandingPercent: bandedShare(start) },

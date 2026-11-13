@@ -671,9 +671,11 @@ export const water = {
   // the larger of it and the wind's own, squared.
   // Past the map's square the open sea goes on: what the island held back gives way to it
   // over `open.over` m, and the reef's crest is taken to lie `open.reef` m off, past any surf's fade.
+  // When the waves land at the waterline nearest each place is softened over `lands` m (water/swash.js).
   map: {
     texel: 4,
     open: { over: 2000, reef: 2000 },
+    lands: 8,
     swell: { from: swellFrom, spread: [[-40, 0.1], [-20, 0.2], [0, 0.4], [20, 0.2], [40, 0.1]], breaks: 1.6, spreading: 0.08, surf: 6, round: 20, full: 0.08, period: surfPeriod },
     wind: { blows: world.terrain.sand.wind, gusts: [[-15, 0.25], [0, 0.5], [15, 0.25]], fetch: 400, depth: 1, grows: 30 },
     chop: { breaks: 1, dies: 80, deep: 10, spreading: 0.3, round: 8 },
@@ -807,6 +809,61 @@ export const water = {
     beat: 0.35,
     along: [[0.031, 3], [0.0127, 2]],
     wander: [[3, 0.021, 0.013], [2, -0.017, 0.037], [0.5, 0.21, 0.13], [0.4, 0.71, 0.43], [0.2, -0.93, 1.37]],
+  },
+  // How the lagoon's waves end on the beach (water/swash.js, which says what they are).
+  // A full wave runs `height` m up the beach above the still sea where the surf breaks as
+  // hard as `full` (the sea map's exposure), and `least` of that where none does; by
+  // its size in its set (water/surf.js) to the power `sizes`, and along the beach by
+  // `lobes`, each wave its own: [share, m along the beach]. Its uprush takes `pace`
+  // times as long as a stone thrown up the slope at its speed, its backwash `back`
+  // times as long as that, and it draws the water at the edge down by `draws` of how
+  // high a full wave runs there. Its sheet stands `sheet` of that thick behind its edge, thinning to the edge over
+  // `edge` of it (in height). The edge frays by `fray` m in height, at `frayAcross` m.
+  // The glassy `film` it leaves lasts s, longest at the bottom, a share
+  // `filmPatches` more or less in patches `filmAcross` m across; what it soaks
+  // dries over `dries` s, and nothing a wave did lasts past two waves: the ground's own
+  // wetness (chunks/wet.wgsl) holds what the sets did over minutes. Its uprush is `milk`
+  // white with bubbles and sand, clearing as it drains. Foam: `front`, how much the
+  // sheet carries at its edge, `frontWidth` m in height; what it leaves where it turned
+  // lingers `lingers` s, `lineWidth` m in height, gathering in places `linePatches` m
+  // along the beach; the backwash drags `dragged` of it back down.
+  swash: {
+    height: 0.38,
+    full: 0.45,
+    least: 0.25,
+    sizes: 0.8,
+    lobes: [[0.22, 23], [0.1, 7.3]],
+    pace: 1,
+    back: 1.5,
+    draws: 0.12,
+    sheet: 0.12,
+    edge: 0.05,
+    fray: 0.008,
+    frayAcross: 0.9,
+    film: 4,
+    filmPatches: 0.6,
+    filmAcross: 3.7,
+    dries: 30,
+    milk: 0.35,
+    front: 1,
+    frontWidth: 0.015,
+    lingers: 9,
+    lineWidth: 0.008,
+    linePatches: 2.3,
+    dragged: 0.3,
+    // The water's surface (water/water.wgsl): the beach's water takes over from the sea's
+    // over `band` m of depth; over the beach, up to `wets` times a full wave's run-up, it
+    // lies just over the ground as drawn, by `lift`: m, m more per m from the eye, and per m
+    // of its mesh's spacing there. The sheet has `ripples` of the sea's ripples, and the film
+    // it leaves less; their surfaces are rougher than the sea's by `variance` (of their slopes, per
+    // axis), the film's over the sand's grains most; the sheet's foam moves `flow` as far as its edge does.
+    band: 0.4,
+    wets: 2.2,
+    lift: [0.003, 0.0008, 0.02],
+    ripples: [0.5, 0.15],
+    variance: [0.003, 0.012],
+    flow: 0.6,
+    mirrors: 0.15, // m: how much higher than the ground under it what it mirrors must stand
   },
   // Degrees above the rim of the sea by which it has gone 63% of the way over into the sky just above it.
   horizonFade: 0.5,
@@ -1002,8 +1059,9 @@ export const capture = {
   // and in shares; how far the surface may land from the whole sum of its waves
   // in JS (m: 0.031 on SwiftShader, the texels' bilinear read; 0.137 half a texel
   // off), and from the game's smaller sum, which leaves out the small waves (`inJs`:
-  // 0.157, 2% of the swell's power). Each one's mistake must land further.
-  waves: { fields: 0.01, mips: 0.002, looped: 0.002, map: 0.02, surface: 0.06, inJs: 0.25, least: 100, surf: { foam: 0.05, height: 0.05, slope: 0.05, seam: 0.02, time: 0.2 } },
+  // 0.157, 2% of the swell's power); the beach's water from its twin (`swash`: its
+  // edge and depth, m; its foam and film, shares). Each one's mistake must land further.
+  waves: { fields: 0.01, mips: 0.002, looped: 0.002, map: 0.02, surface: 0.06, inJs: 0.25, least: 100, surf: { foam: 0.05, height: 0.05, slope: 0.05, seam: 0.02, time: 0.2 }, swash: { level: 0.005, cover: 0.005, foam: 0.05, film: 0.02 } },
   // The sea's surface must have no holes: at these times, in `view`'s frame from `below`
   // rows under the rim of the sea down, the far sea's levels of detail too, nothing lies on the far plane.
   seaHoles: { view: 'air-pass', times: [15.5, 120.25], below: 2 },

@@ -2,13 +2,15 @@
 // texel: uMode 0, what the sea knows there (water/sea-map.wgsl); 1, the water's
 // displacement there as its vertex shader adds it up, at the finest mips; 2, the surf there;
 // 3, how far the foam seen from far off jumps across the reef's crest; 4, as 1 but
-// read where the texel's corner is, half a texel off (a mistake).
+// read where the texel's corner is, half a texel off (a mistake); 5, the beach's water
+// (water/swash.wgsl) over the ground as drawn there, at the frame's waves' time.
 
 #include "/chunks/fullscreen.wgsl"
 #include "/chunks/frame.wgsl"
 #include "/chunks/terrain.wgsl"
 #include "../water/sea-map.wgsl"
 #include "../water/water-surf.wgsl"
+#include "../water/swash.wgsl"
 
 struct Check {
   uMode: i32,
@@ -28,6 +30,10 @@ fn fragmentMain(in: Fullscreen) -> @location(0) vec4f {
   let sea = seaAt(xz);
   if (check.uMode == 0) {
     return sea;
+  }
+  if (check.uMode == 5) {
+    let wash = swashAt(xz, terrainHeight(terrainCove(xz), 0), sea.x, seaShoreAt(xz).xy, 0.0);
+    return vec4f(wash.level, wash.cover, wash.foam + wash.line, wash.film);
   }
   if (check.uMode == 2) {
     let breaking = surfAt(sea, seaShoreAt(xz), seaWaveAt(xz), 0.0, 0.0, xz, check.uSeconds);

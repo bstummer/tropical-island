@@ -61,7 +61,7 @@ export function create(ctx) {
         shader,
         uniforms: {
           ...tilesUniforms(tiles),
-          ...sandUniforms(averages.sand, terrain.sand, config.world.island.zones.wetSand, config.sky.sun.sunsetYaw, config.water.glitter),
+          ...sandUniforms(averages.sand, terrain.sand, config.world.island.zones.wetSand, config.sky.sun.sunsetYaw),
           ...greenUniforms(averages.green, terrain.albedo, terrain.green, [1, 2]),
           uMode: { value: 0 },
           uFootprint: { value: 0 },

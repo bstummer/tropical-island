@@ -55,6 +55,20 @@ fn seededGradient(cell: vec2i, seed: u32) -> vec2f {
   return vec2f(f32(h & 65535u), f32(h >> 16u)) / 32767.5 - 1.0;
 }
 
+// Gradient noise from seededGradient's lattice, its value alone: world/noise.js
+// seededNoise's twin. seed: a whole number.
+fn seededNoise(p: vec2f, seed: u32) -> f32 {
+  let i = floor(p);
+  let f = p - i;
+  let c = vec2i(i);
+  let u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+  let a = dot(seededGradient(c, seed), f);
+  let b = dot(seededGradient(c + vec2i(1, 0), seed), f - vec2f(1.0, 0.0));
+  let cc = dot(seededGradient(c + vec2i(0, 1), seed), f - vec2f(0.0, 1.0));
+  let d = dot(seededGradient(c + vec2i(1, 1), seed), f - vec2f(1.0, 1.0));
+  return 1.4 * (a + u.x * (b - a) + u.y * (cc - a) + u.x * u.y * (a - b - cc + d));
+}
+
 // Gradient noise with its slope, as gradientNoiseD, from seededGradient's
 // lattice: for what JS has to know too (world/noise.js seededNoise is its
 // value's twin). seed: a whole number.
