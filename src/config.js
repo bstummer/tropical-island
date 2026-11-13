@@ -828,11 +828,11 @@ export const water = {
   // lingers `lingers` s, `lineWidth` m in height, gathering in places `linePatches` m
   // along the beach; the backwash drags `dragged` of it back down.
   swash: {
-    height: 0.45,
+    height: 0.32,
     full: 0.45,
     least: 0.25,
     sizes: 0.8,
-    lobes: [[0.25, 23], [0.2, 7.3]],
+    lobes: [[0.2, 23], [0.12, 7.3]],
     pace: 0.8,
     back: 1.4,
     draws: 0.12,
