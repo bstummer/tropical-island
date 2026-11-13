@@ -871,13 +871,14 @@ export const water = {
     reach: 25, // m from a waterline within which the water's surface draws the beach's water
     // How the waves come in over the last of the shallows and break (water/swash.js bore):
     // a wave stands `height` m in a metre of water per m it will run up the beach, rising out of
-    // the lagoon's own waves between `from` m of depth and the second; it breaks once it stands
+    // the lagoon's own waves between `from` m of depth and the second, and `within` m of the
+    // waterline nearest (from and to), not over a reef's flat far from any beach; it breaks once it stands
     // `breaks` times as tall as the water is deep, and has broken in full `spread` of that depth
     // further in. Its face takes `faces` of its period, before it breaks and once it has; it
     // falls behind its crest over `back` of it. Its break leaves `foam`, trailing behind it over
     // `trail` of its period and running `toe` of it ahead on its face, drifting inland at `flow`
     // times its speed, and the water it broke in is `milk` white with sand and bubbles.
-    bore: { height: 0.6, breaks: 0.8, from: [1.2, 0.8], faces: [0.035, 0.012], back: 0.12, spread: 0.3, foam: 1.6, trail: 0.25, toe: 0.02, flow: 0.5, milk: 0.4 },
+    bore: { height: 0.6, breaks: 0.8, from: [1.2, 0.8], within: [12, 20], faces: [0.035, 0.012], back: 0.12, spread: 0.3, foam: 1.6, trail: 0.25, toe: 0.02, flow: 0.5, milk: 0.4 },
   },
   // Light on the floor under shallow water (water/caustics.js, which says what it is): the
   // ripples that gather it, [wavelength m, steepness, degrees off the wind], each turning a whole

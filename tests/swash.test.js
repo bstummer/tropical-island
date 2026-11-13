@@ -366,3 +366,28 @@ test('the waves coming in raise the sea no higher on average, change smoothly, a
   }
   assert.ok(moved > 0.02, `the waves coming in move the surface only ${moved} m`);
 });
+
+test('no wave comes in to break over shallows far from any beach, as over a reef\'s flat', () => {
+  const beach = gameBeach();
+  const { map, island } = beach;
+  const { from, within } = config.water.swash.bore;
+  const r = createRandom(config.defaults.seed)('test/bore');
+  const span = (map.samples - 1) * map.texel;
+  const out = {};
+  let far = 0;
+  let near = 0;
+  for (let tries = 0; tries < 400000 && far < 300; tries++) {
+    const a = map.origin[0] + r.range(0.02, 0.98) * span;
+    const o = map.origin[1] + r.range(0.02, 0.98) * span;
+    const here = map.at(a, o);
+    if (!(here.depth > 0 && here.depth < from[0])) continue;
+    const [x, z] = island.fromCove(a, o);
+    let most = 0;
+    for (let t = 0; t < period; t += 0.5) most = Math.max(most, Math.abs(boreAt(beach, x, z, t, out).height), out.foam);
+    if (here.shore >= within[1]) {
+      assert.equal(most, 0, `${here.shore.toFixed(1)} m from the waterline, ${here.depth.toFixed(2)} m deep: a wave ${most}`);
+      far++;
+    } else if (here.shore < within[0] && most > 0.01) near++;
+  }
+  assert.ok(far >= 100 && near >= 20, `${far} points far from a beach, ${near} near one with waves coming in`);
+});

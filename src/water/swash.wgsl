@@ -23,6 +23,7 @@ struct SwashSettings {
   uSwashBore: vec4f,
   uSwashBoreFace: vec4f, // the share of its period its face takes, before it breaks and once broken; that it falls over behind its crest; how much further in, per the depth it breaks at, it has broken in full
   uSwashBoreFoam: vec4f, // how much foam its break leaves; the shares of its period it trails over and runs ahead on its face; how fast it drifts inland, per its speed
+  uSwashBoreWithin: vec2f, // m from the waterline nearest over which it fades out, from and to
 }
 
 @group(1) @binding(23) var<uniform> swash: SwashSettings;
@@ -274,7 +275,7 @@ fn swashBore(place: SwashPlace, shore: f32, depth: f32) -> SwashBore {
   let bore = swash.uSwashBore;
   let face = swash.uSwashBoreFace;
   let foam = swash.uSwashBoreFoam;
-  if (depth <= 0.0 || depth >= bore.z) {
+  if (depth <= 0.0 || depth >= bore.z || shore >= swash.uSwashBoreWithin.y) {
     return out;
   }
   let period = swash.uSwashTime.w;
@@ -284,7 +285,8 @@ fn swashBore(place: SwashPlace, shore: f32, depth: f32) -> SwashBore {
   let phase = (frame.uWaveSeconds - place.lands + 2.0 * max(shore, 0.0) / (c + c0)) / period;
   let k = floor(phase);
   let f = phase - k;
-  let appear = 1.0 - smoothstep(bore.w, bore.z, depth);
+  // Out of the lagoon's own waves, by the last of the shallows: not over a reef's flat, far from any beach.
+  let appear = (1.0 - smoothstep(bore.w, bore.z, depth)) * (1.0 - smoothstep(swash.uSwashBoreWithin.x, swash.uSwashBoreWithin.y, shore));
   var tall = vec2f(0.0);
   var broke = vec2f(0.0);
   var share = vec2f(0.0);

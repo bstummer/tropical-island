@@ -38,7 +38,7 @@
 //   top     m: as high as the waves wet the ground now, their sheet or what they left
 import { waveSize } from './surf.js';
 import { seededNoise } from '../world/noise.js';
-import { Vector4 } from '../maths/index.js';
+import { Vector2, Vector4 } from '../maths/index.js';
 
 const G = 9.81;
 // The noises' seeds: a wave's lobes take LOBE_SEED + LOBES x its number in the loop + octave.
@@ -91,6 +91,7 @@ export function swashUniforms(settings, surf, way, period, loop) {
     uSwashBore: { value: new Vector4(settings.bore.height, settings.bore.breaks, ...settings.bore.from) },
     uSwashBoreFace: { value: new Vector4(...settings.bore.faces, settings.bore.back, settings.bore.spread) },
     uSwashBoreFoam: { value: new Vector4(settings.bore.foam, settings.bore.trail, settings.bore.toe, settings.bore.flow) },
+    uSwashBoreWithin: { value: new Vector2(...settings.bore.within) },
   };
 }
 
@@ -193,9 +194,9 @@ export function createSwash(settings, surf, way, period, loop) {
   // as tall as the water lets it. Its foam trails behind its front, and runs ahead on its face.
   function bore(here, a, o, t, out = {}) {
     const { lands, shore, depth, inlandA, inlandO } = here;
-    const { height: tall, breaks, from, faces, back: falls, spread, foam: foamy, trail, toe, flow, milk: milky } = settings.bore;
+    const { height: tall, breaks, from, within, faces, back: falls, spread, foam: foamy, trail, toe, flow, milk: milky } = settings.bore;
     out.height = out.slope = out.foam = out.milk = out.along = 0;
-    if (depth <= 0 || depth >= from[0]) return out;
+    if (depth <= 0 || depth >= from[0] || shore >= within[1]) return out;
     const runs = runsAt(here);
     const fa = a + inlandA * shore;
     const fo = o + inlandO * shore;
@@ -207,7 +208,8 @@ export function createSwash(settings, surf, way, period, loop) {
     const phase = (t - lands + (2 * Math.max(shore, 0)) / (c + c0)) / period;
     const k = Math.floor(phase);
     const f = phase - k;
-    const appear = 1 - smoothstep(from[1], from[0], depth);
+    // Out of the lagoon's own waves, by the last of the shallows: not over a reef's flat, far from any beach.
+    const appear = (1 - smoothstep(from[1], from[0], depth)) * (1 - smoothstep(within[0], within[1], shore));
     const one = (j) => {
       const comes = tall * runUp(j, runs, fa, fo); // how tall it stands in a metre of water
       const breaksAt = (comes / breaks) ** 0.8;
