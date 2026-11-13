@@ -304,6 +304,19 @@ export function buildSeaMap(heightmap, settings, side, blend = 0) {
   };
 }
 
+// The map's samples on the reef's crest, under water, where the surf breaks at least
+// `breaks` hard: [a, o] in the cove's frame (water/spray.js throws spray off them).
+export function crestSpots(map, breaks) {
+  const spots = [];
+  const { samples, texel, origin } = map;
+  for (let j = 0, n = 0; j < samples; j++) {
+    for (let i = 0; i < samples; i++, n++) {
+      if (Math.abs(map.reef[n]) < 0.75 * texel && map.breaks[n] >= breaks && map.depth[n] > 0) spots.push([origin[0] + i * texel, origin[1] + j * texel]);
+    }
+  }
+  return spots;
+}
+
 // The layers of half floats the GPU reads (water/sea-map.wgsl): shore, depth,
 // swell, chop, which every pixel of water needs; the way inland, breaks, reef; the
 // swell's waves; the waterline nearest. `late` stays small where they break, so half

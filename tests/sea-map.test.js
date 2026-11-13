@@ -9,7 +9,7 @@ import { createRandom } from '../src/core/random.js';
 import { createIsland } from '../src/world/island.js';
 import { buildHeightmap, layoutLevel } from '../src/world/heightmap.js';
 import { fromHalfFloat, toHalfFloatNearest } from '../src/maths/index.js';
-import { buildSeaMap, seaMapLevels, waveSpeed } from '../src/water/sea-map.js';
+import { buildSeaMap, crestSpots, seaMapLevels, waveSpeed } from '../src/water/sea-map.js';
 import { createSurface } from '../src/water/surface.js';
 import { createSurf } from '../src/water/surf.js';
 
@@ -686,3 +686,13 @@ test('what breaks stands up off the water as whitewater, as tall as `stands` at 
   }
   assert.ok(tallest > 0.4 * settings.stands, `whitewater stands ${tallest} m at most`);
 });
+
+test('spray is thrown off spots on the reef\'s crest, under water, where the surf breaks hard: on every reef, and nowhere else', () => eachSea(({ name, map }) => {
+  const { breaks } = config.water.spray;
+  const spots = crestSpots(map, breaks);
+  assert.ok(spots.length > 20, `${name}: ${spots.length} spots of spray`);
+  for (const [a, o] of spots) {
+    const here = map.at(a, o);
+    assert.ok(Math.abs(here.reef) <= map.texel && here.breaks >= breaks - 1e-6 && here.depth > 0, `${name}: spray at ${a}, ${o}: ${JSON.stringify(here)}`);
+  }
+}));

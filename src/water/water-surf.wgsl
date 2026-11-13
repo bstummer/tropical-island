@@ -41,6 +41,24 @@ struct Surf {
   slope: f32, // along the way it runs
 }
 
+// When the wave that broke here last came by, and how hard it broke: s since its crest
+// passed xz; how much of it the water took, as its foam has it; its number. For the spray
+// (water/spray.wgsl). sea, shore, wave, t: as surfAt's.
+fn surfBreak(sea: vec4f, shore: vec4f, wave: vec4f, xz: vec2f, t: f32) -> vec3f {
+  var wander = 0.0;
+  for (var k = 0; k < 5; k++) {
+    let term = surf.uSurfWander[k];
+    wander += term.x * sin(dot(xz, term.yz));
+  }
+  let period = surf.uSurfTiming.x;
+  let phase = (t - dot(xz, surf.uSurfWay.xy) / surf.uSurfTiming.y - wave.x - wander / wave.w) / period;
+  let n = floor(phase);
+  let across = xz.x * surf.uSurfWay.y - xz.y * surf.uSurfWay.x;
+  let reef = shore.w;
+  let breaking = shore.z * (1.0 - smoothstep(0.0, surf.uSurfFoam.y, reef)) * smoothstep(0.0, 0.05, sea.z) * exp(min(reef, 0.0) / surf.uSurfFoam.z);
+  return vec3f((phase - n) * period, breaking * max(surfSize(n, across) - sea.z, 0.0) * surfLumps(n, xz), n);
+}
+
 // sea, shore, wave: seaAt(), seaShoreAt(), seaWaveAt() at xz; wide: how wide a pixel is
 // along the water (m), 0 for the surface's shape; t: wrapped as the waves' time is.
 fn surfAt(sea: vec4f, shore: vec4f, wave: vec4f, wide: f32, xz: vec2f, t: f32) -> Surf {

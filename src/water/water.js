@@ -30,6 +30,7 @@ import { selectSea } from './water-nodes.js';
 import { createSwash, swashUniforms, swellWay as coveSwellWay } from './swash.js';
 import { alongDrifting, twoDrifting } from './drift.js';
 import { causticUniforms, createCaustics } from './caustics.js';
+import { createSpray } from './spray.js';
 
 const MAX_NODES = 2048;
 const LOD_MAX = 16; // water.wgsl's arrays hold this many levels
@@ -224,6 +225,7 @@ export function create(ctx) {
   let surface = null;
   let surf = null;
   let swash = null;
+  let spray = null;
   let groundAt = null;
   let disposed = false;
   let failed = null;
@@ -241,6 +243,7 @@ export function create(ctx) {
       surf = createSurf(settings.surf, swellWay);
       swash = createSwash(settings.swash, settings.surf, coveSwellWay(config), settings.surf.period, waveSettings.loop);
       groundAt = built.heightmap.heightAt;
+      spray = createSpray(ctx, map, settings.spray, surfUniforms(settings.surf, swellWay));
       const beach = { swash, band: settings.swash.band, wets: settings.swash.wets };
       surface = createSurface(spectrum, map, island.toCove, waveSettings.inJs, waveSettings.ripplesLeast, waveSettings.ripplesDepth, surf, waveSettings.chopWander, { share: settings.shallowTroughs, groundAt }, beach);
       Object.assign(ctx.water, { map, surface, seaTexture, seaLayout: frame.uniforms.uSeaLayout.value });
@@ -316,6 +319,7 @@ export function create(ctx) {
       frame.uniforms.uWaveSeconds.value = wrapped(spectrum.loop);
       if (!map) return;
       waves.compute(ctx.clock.elapsed);
+      spray.update(camera);
       material.uniforms.uGustSeconds.value = wrapped(waveSettings.gusts.loop);
       viewProjection.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
       frustum.setFromProjectionMatrix(viewProjection);
@@ -387,6 +391,7 @@ export function create(ctx) {
       }
       material.dispose();
       shoreMaterial.dispose();
+      spray?.dispose();
       waves.dispose();
       seaTexture?.destroy();
       frame.uniforms.uSeaMap.value = null;

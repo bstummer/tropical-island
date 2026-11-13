@@ -903,6 +903,32 @@ export const water = {
     spread: 0.4,
     reach: 40,
   },
+  // Spray thrown off the reef's crest where the surf breaks hardest (water/spray.js): from spots
+  // where it breaks at least `breaks` hard, `puffs` puffs each, going up `apart` s apart as a wave
+  // breaks there, each lasting `lasts` s: thrown `up` and `forward` (m/s, at least and at most)
+  // from `from` m above the still sea, falling back at `falls` m/s2 as the air holds it; `size` m
+  // across as it starts and m more each second, `wide` times as wide as tall, spread `spread` m along the crest; none where the
+  // water takes less than `takes` of a wave; linear `albedo`, as `dense` as it gets; its light
+  // as the foam's (`facing`, `backlit`); drawn within `reach` m of the eye.
+  spray: {
+    breaks: 0.5,
+    puffs: 10,
+    apart: 0.1,
+    lasts: 2.2,
+    up: [1.2, 3],
+    forward: [2.5, 4.5],
+    falls: 4,
+    from: 0.4,
+    size: [1.2, 1.6],
+    wide: 1.6,
+    spread: 6,
+    takes: 0.15,
+    albedo: [0.88, 0.92, 0.92],
+    dense: 0.22,
+    facing: 0.4,
+    backlit: [0.6, 0.7],
+    reach: 1200,
+  },
   // Degrees above the rim of the sea by which it has gone 63% of the way over into the sky just above it.
   horizonFade: 0.5,
   // From what share of the way to the rim it does so, and by what share in full: waves near the eye stand at the same angle.
