@@ -3,11 +3,13 @@
 // opaque scene, whose shaders leave the haze under the sea to this one), mirrors the
 // sky, the sun and the land, and foams on the reef. Through the surface:
 // water-seen.wgsl, water-seabed.wgsl and water-optics.wgsl. The mirror:
-// water-mirror.wgsl, water-land.wgsl. The surf: water-surf.wgsl, water-foam.wgsl.
-// The beach (swash.wgsl): the sheet a wave runs up the sand as, the glassy film it
-// leaves, its foam. Over the beach as high as the waves wet it now the surface lies
-// just over the ground, where it draws what this pixel shows of the ground as it is,
-// and with the film and the foam on it, so they mirror what the sea does.
+// water-mirror.wgsl, water-land.wgsl. The surf: water-surf.wgsl, water-foam.wgsl;
+// its whitewater stands up off the water. The light the ripples gather on the floor:
+// water-caustics.wgsl. The beach (swash.wgsl): the waves coming in over the shallows
+// and breaking, the sheet a wave runs up the sand as, the glassy film it leaves, its
+// foam. Over the beach as high as the waves wet it now the surface lies just over the
+// ground, where it draws what this pixel shows of the ground as it is, and with the
+// film and the foam on it, so they mirror what the sea does.
 //
 // The mesh: water/water-nodes.js, each instance a node, a grid of quads `spacing`
 // apart from its corner, morphed for the camera as the terrain's is.
@@ -27,9 +29,11 @@
 #include "water-caustics.wgsl"
 #include "chunks/rumples.wgsl"
 
-// Whether this piece of the sea lies within reach of a waterline, and draws the beach's water, or
-// within reach of the eye, and draws the light the ripples gather on the floor (water.js).
+// Whether this piece of the sea lies within reach of a waterline, and draws the beach's water;
+// whether it lies within reach of the eye, and draws the light the ripples gather on the floor
+// and the floor's detail (water.js).
 override WATER_SHORE: bool = true;
+override WATER_NEAR: bool = true;
 // Luminance of linear Rec. 709.
 const WATER_LUMINANCE = vec3f(0.2126, 0.7152, 0.0722);
 
@@ -428,7 +432,7 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
   }
   // The light the ripples gather on the floor and on what stands under the water: the sun's share of it.
   var light = 1.0;
-  if (WATER_SHORE) {
+  if (WATER_NEAR) {
     let sunBelow = -refract(-frame.uSunDirection, vec3f(0.0, 1.0, 0.0), 1.0 / optics.uIor);
     // Through the waves too small for the pixel the floor it sees spreads wider, the deeper the more.
     light = causticLight(below.xz, below.depth, wide + water.uCausticSpread * below.depth * sqrt(variance), sunBelow);
@@ -441,7 +445,7 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
     let round = seaAtLevel(below.xz, max(seaLevel(wide), water.uRisesLevel));
     // Its mottling sharper than the longer side where the pixel stretches, or the near sea's floor blurs.
     let sharp = wide * exp2(-min(0.5 * stretch, 1.5));
-    seabed = seabedRadiance(below.xz, below.depth, dx, dy, sharp, sun * light, round.y - below.depth, round.x, ashore, inland, optics.uIor);
+    seabed = seabedRadiance(below.xz, below.depth, dx, dy, sharp, sun * light, round.y - below.depth, round.x, ashore, inland, WATER_NEAR, optics.uIor);
   }
   seabed = mix(seabed, below.on.rgb, below.on.a);
   // Where the beach is bare, it is as it was drawn; the sheet over it white with bubbles and sand as it runs up.

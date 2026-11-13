@@ -42,9 +42,9 @@ fn seabedTileAt(uv: vec2f, size: f32, footprint: f32) -> vec4f {
 // under the sun that reaches the surface above it, with how much it stands above
 // the ground round it, how far the shore is (m), and how much the land's own ground
 // runs on under the water here (`ashore`, 0 to 1); `inland`: the way inland (world,
-// unit). Its light is worked out by the sun as it bends into the water, so a low sun
-// doesn't rake it.
-fn seabedRadiance(xz: vec2f, depth: f32, dx: vec2f, dy: vec2f, sharp: f32, sun: vec3f, rises: f32, shore: f32, ashore: f32, inland: vec2f, ior: f32) -> vec3f {
+// unit); `close`: whether it is near enough the eye for its sand's ripples and grain. Its
+// light is worked out by the sun as it bends into the water, so a low sun doesn't rake it.
+fn seabedRadiance(xz: vec2f, depth: f32, dx: vec2f, dy: vec2f, sharp: f32, sun: vec3f, rises: f32, shore: f32, ashore: f32, inland: vec2f, close: bool, ior: f32) -> vec3f {
   let ao = terrainCove(xz);
   var info: vec4f;
   var cover: vec4f;
@@ -75,9 +75,11 @@ fn seabedRadiance(xz: vec2f, depth: f32, dx: vec2f, dy: vec2f, sharp: f32, sun: 
   // The sand's ripples (chunks/sea-ripples.wgsl), as the terrain draws them just under the
   // waterline, and its grain up close, as the beach's (chunks/sand.wgsl): not on coral or weed.
   let sandy = (1.0 - coral) * (1.0 - weeds);
-  slope += sandy * seaRipples(xz, inland, depth, sharp);
+  if (close) {
+    slope += sandy * seaRipples(xz, inland, depth, sharp);
+  }
   let grained = sandy * (1.0 - smoothstep(0.006, 0.02, sharp));
-  if (grained > 0.0) {
+  if (close && grained > 0.0) {
     let grainTile = seabedLook.uSandTiles.x;
     let grain = textureSampleLevel(uSurfaceTiles, uSurfaceTilesSampler, xz / grainTile, i32(TILE_GRAIN), log2(max(sharp * seabedLook.uSeabedTile.z / grainTile, 1e-3))).rgb;
     sand *= mix(vec3f(1.0), 2.0 * grain / max(seabedLook.uSandGrainMean, vec3f(1e-3)), grained);

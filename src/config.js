@@ -901,7 +901,7 @@ export const water = {
     peak: 5,
     fade: 0.15,
     spread: 0.4,
-    reach: 40,
+    reach: 25,
   },
   // Spray thrown off the reef's crest where the surf breaks hardest (water/spray.js): from spots
   // where it breaks at least `breaks` hard, `puffs` puffs each, going up `apart` s apart as a wave

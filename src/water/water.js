@@ -201,14 +201,18 @@ export function create(ctx) {
       uWaves: { value: waves.texture },
     },
     // The island's shade alone: the water reads no shadow maps, so the rocks' shadows fall on neither it nor the seabed it draws.
-    overrides: { SHADE_ONCE: true, SHADOW_MAP: false, WATER_SHORE: false },
+    overrides: { SHADE_ONCE: true, SHADOW_MAP: false, WATER_SHORE: false, WATER_NEAR: false },
   });
-  // The pieces within reach of a waterline draw the beach's water too (water.wgsl WATER_SHORE):
-  // the rest of the sea leaves out its code, which SwiftShader would run at every pixel.
-  const shoreMaterial = new Material({ name: 'water-shore', shader, uniforms: material.uniforms, overrides: { ...material.overrides, WATER_SHORE: true } });
+  // The pieces within reach of a waterline draw the beach's water too (water.wgsl WATER_SHORE),
+  // and those within reach of the eye the light the ripples gather on the floor and its detail
+  // (WATER_NEAR): the rest of the sea leaves out their code, which SwiftShader would run at
+  // every pixel, and a GPU pays for in every pixel of a larger shader.
+  const variant = (name, overrides) => new Material({ name, shader, uniforms: material.uniforms, overrides: { ...material.overrides, ...overrides } });
+  // By [shore, near]: [sea, near the eye, shore, shore near the eye].
+  const materials = [material, variant('water-near', { WATER_NEAR: true }), variant('water-shore', { WATER_SHORE: true }), variant('water-shore-near', { WATER_SHORE: true, WATER_NEAR: true })];
   const nodes = new Attribute(new Float32Array(4 * MAX_NODES), 4, { instance: true });
-  // [sea's whole nodes, its quarters, the shore's whole nodes, its quarters]
-  const meshes = [material, shoreMaterial].flatMap((drawn) =>
+  // Each variant's whole nodes, then its quarters.
+  const meshes = materials.flatMap((drawn) =>
     [quality.waterGrid, quality.waterGrid / 2].map((quads) => {
       const mesh = new Mesh(gridGeometry(quads, nodes, false), drawn);
       mesh.name = drawn.name;
@@ -346,14 +350,15 @@ export function create(ctx) {
         const [x, z] = [node.x + size / 2, node.z + size / 2];
         const [a, o] = island.toCove(x, z);
         const reach = size * Math.SQRT1_2;
-        node.shore = Math.abs(map.at(a, o, here).shore) < reach + map.texel + settings.swash.reach || Math.hypot(x - cam[0], z - cam[2]) < reach + settings.caustics.reach;
+        node.shore = Math.abs(map.at(a, o, here).shore) < reach + map.texel + settings.swash.reach;
+        node.near = Math.hypot(x - cam[0], z - cam[2]) < reach + settings.caustics.reach;
       }
       let count = 0;
       meshes.forEach(({ geometry }, k) => {
-        const [shore, quarter] = [k >= 2, k % 2 === 1];
+        const [shore, near, quarter] = [k >= 4, Math.floor(k / 2) % 2 === 1, k % 2 === 1];
         geometry.firstInstance = count;
         for (const node of selected) {
-          if (node.quarter !== quarter || node.shore !== shore) continue;
+          if (node.quarter !== quarter || node.shore !== shore || node.near !== near) continue;
           if (count >= MAX_NODES) throw new Error(`water: more than ${MAX_NODES} nodes`);
           nodes.array.set([node.x, node.z, node.spacing, node.level], 4 * count++);
         }
@@ -389,8 +394,7 @@ export function create(ctx) {
         scene.remove(mesh);
         mesh.geometry.dispose();
       }
-      material.dispose();
-      shoreMaterial.dispose();
+      for (const each of materials) each.dispose();
       spray?.dispose();
       waves.dispose();
       seaTexture?.destroy();

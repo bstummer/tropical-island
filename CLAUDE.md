@@ -126,7 +126,7 @@ src/
   sky/                the sky and its tables, the light state, the sun's path and the time of day, the sun's shadows
   post/               the frame: HDR target, its passes, the output pass
   world/              the island's shape (island.js), its heightmap, the terrain, rocks, the island's own shade
-  water/              the sea: how it looks by its depth, what it knows of the island, its waves and surface, the beach's waves
+  water/              the sea: how it looks by its depth, what it knows of the island, its waves and surface, the beach's waves, the light on its floor, its spray
   textures/           procedural textures made on the GPU at boot: the ground's tiles
   shaders/chunks/     shared WGSL: the frame (group 0), lighting, shadows, terrain, the ground's surfaces, noise, planet
   fixtures/           test scenes (?fixture=) for the screenshot tool's checks; not part of the island
@@ -154,7 +154,7 @@ heights, the mesh as drawn and its JS twin, the ground's surfaces), `rocks` (pla
 clearance for later placement), `sky` (the light state; `follow(fn)` for what must land with a time change),
 `shadows` (what casts registers with `cast(fn)` and `from(spheres)`), `water` (where the sea stands, `heightAt(x, z, t)`,
 whether a point is surely over it, `over(x, y, z, t)`, the surf, `surfAt(x, z, t)`, the beach's water, `swashAt(x, z, t)`,
-and what it knows of the island) and `frame` (`post/frame.js`: the drawing
+the waves coming in over the shallows, `boreAt(x, z, t)`, and what it knows of the island) and `frame` (`post/frame.js`: the drawing
 buffer's size, the uniforms every scene material binds at group 0, the sea map among them, `beforeScene()` and `afterOpaque()` for
 passes of a system's own, the passes, `translucent()`, `opaque`, `addPost()`). A system that reads one of them in `create()` comes
 after its owner in `WORLD_SYSTEMS`.
