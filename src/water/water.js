@@ -29,6 +29,7 @@ import { createSurf } from './surf.js';
 import { selectSea } from './water-nodes.js';
 import { createSwash, swashUniforms, swellWay as coveSwellWay } from './swash.js';
 import { alongDrifting, twoDrifting } from './drift.js';
+import { causticUniforms, createCaustics } from './caustics.js';
 
 const MAX_NODES = 2048;
 const LOD_MAX = 16; // water.wgsl's arrays hold this many levels
@@ -118,6 +119,8 @@ export function create(ctx) {
   const rootSize = meshSettings.leaf * 2 ** (levels - 1);
   const tree = { origin: [-rootSize / 2, -rootSize / 2], levels, leaf: meshSettings.leaf, grid: quality.waterGrid };
 
+  // The light the ripples gather on the floor, its ripples running with the wind.
+  const caustics = createCaustics(settings.caustics, direction(waveSettings.chop.blows), waveSettings.loop, settings.ior);
   const uMorph = Array.from({ length: LOD_MAX }, (_, i) => new Vector4(morphs[Math.min(i, levels - 1)][0], morphs[Math.min(i, levels - 1)][1], 0, 0));
   const { albedo: groundAlbedo, rock: rockSettings } = config.world.terrain;
   const linear = (rgb) => new Vector3(...rgb);
@@ -155,6 +158,8 @@ export function create(ctx) {
       uFoamFacing: { value: settings.surf.facing },
       uFoamBacklit: { value: new Vector2(...settings.surf.backlit) },
       ...swashUniforms(settings.swash, settings.surf, coveSwellWay(config), settings.surf.period, waveSettings.loop),
+      ...causticUniforms(settings.caustics, caustics, settings.ior),
+      uCausticSpread: { value: settings.caustics.spread },
       uShore: { value: new Vector4(settings.swash.band, settings.swash.wets, settings.swash.lift[0], settings.swash.lift[1]) },
       uShoreSpacing: { value: settings.swash.lift[2] },
       uShoreRipples: { value: new Vector2(...settings.swash.ripples) },
@@ -286,6 +291,7 @@ export function create(ctx) {
     },
     // For the fixtures: the waves', which holds the GPU's side to JS's, and sea-light's.
     waves,
+    caustics,
     spectrum,
     material,
     swellWay,
@@ -325,11 +331,13 @@ export function create(ctx) {
         },
         selected,
       );
-      // Which pieces reach the beach's water: within reach of a waterline.
+      // Which pieces draw the beach's water and the light on the floor: within reach of a waterline, or of the eye.
       for (const node of selected) {
         const size = node.spacing * (node.quarter ? quality.waterGrid / 2 : quality.waterGrid);
-        const [a, o] = island.toCove(node.x + size / 2, node.z + size / 2);
-        node.shore = Math.abs(map.at(a, o, here).shore) < size * Math.SQRT1_2 + map.texel + settings.swash.reach;
+        const [x, z] = [node.x + size / 2, node.z + size / 2];
+        const [a, o] = island.toCove(x, z);
+        const reach = size * Math.SQRT1_2;
+        node.shore = Math.abs(map.at(a, o, here).shore) < reach + map.texel + settings.swash.reach || Math.hypot(x - cam[0], z - cam[2]) < reach + settings.caustics.reach;
       }
       let count = 0;
       meshes.forEach(({ geometry }, k) => {

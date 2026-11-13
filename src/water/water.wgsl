@@ -24,10 +24,14 @@
 #include "water-foam.wgsl"
 #include "sea-map.wgsl"
 #include "swash.wgsl"
+#include "water-caustics.wgsl"
 #include "chunks/rumples.wgsl"
 
-// Whether this piece of the sea lies within reach of a waterline, and draws the beach's water (water.js).
+// Whether this piece of the sea lies within reach of a waterline, and draws the beach's water, or
+// within reach of the eye, and draws the light the ripples gather on the floor (water.js).
 override WATER_SHORE: bool = true;
+// Luminance of linear Rec. 709.
+const WATER_LUMINANCE = vec3f(0.2126, 0.7152, 0.0722);
 
 struct Water {
   uPatches: vec3f, // 1 / each cascade's patch, m (water/spectrum.js)
@@ -79,6 +83,7 @@ struct Water {
   uShoreRumples: vec2f, // the sand's rumples, which the film it leaves lies over (chunks/rumples.wgsl): m, slope
   uShoreMirror: f32, // m: how much higher than the ground under it what the water mirrors must stand
   uShoreFlow: f32, // how far the foam on the sheet moves with it, per the sheet's edge
+  uCausticSpread: f32, // how far (m per m of depth) the floor a pixel sees through the waves too small for it spreads, per the root of their slopes' variance
 }
 
 @group(1) @binding(0) var<uniform> optics: WaterOptics;
@@ -419,13 +424,22 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
     below.depth = mix(below.depth, wash.cover, beach);
     below.xz = mix(below.xz, seen.xz, beach);
   }
+  // The light the ripples gather on the floor and on what stands under the water: the sun's share of it.
+  var light = 1.0;
+  if (WATER_SHORE) {
+    let sunBelow = -refract(-frame.uSunDirection, vec3f(0.0, 1.0, 0.0), 1.0 / optics.uIor);
+    // Through the waves too small for the pixel the floor it sees spreads wider, the deeper the more.
+    light = causticLight(below.xz, below.depth, wide + water.uCausticSpread * below.depth * sqrt(variance), sunBelow);
+    let lit = dot(sun, WATER_LUMINANCE) * max(sunBelow.y, 0.0);
+    below.on = vec4f(below.on.rgb * mix(1.0, light, lit / max(lit + dot(sky, WATER_LUMINANCE), 1e-6)), below.on.a);
+  }
   var seabed = vec3f(0.0);
   if (below.on.a < 1.0 && below.depth < optics.uSeabedFade.y) {
     // The ground round it, tens of metres across: what rises from that, and how far the shore is.
     let round = seaAtLevel(below.xz, max(seaLevel(wide), water.uRisesLevel));
     // Its mottling sharper than the longer side where the pixel stretches, or the near sea's floor blurs.
     let sharp = wide * exp2(-min(0.5 * stretch, 1.5));
-    seabed = seabedRadiance(below.xz, below.depth, dx, dy, sharp, sun, round.y - below.depth, round.x, ashore, optics.uIor);
+    seabed = seabedRadiance(below.xz, below.depth, dx, dy, sharp, sun * light, round.y - below.depth, round.x, ashore, optics.uIor);
   }
   seabed = mix(seabed, below.on.rgb, below.on.a);
   // Where the beach is bare, it is as it was drawn; the sheet over it white with bubbles and sand as it runs up.

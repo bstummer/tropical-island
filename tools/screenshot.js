@@ -735,7 +735,8 @@ function toolCheckTasks(context, fileUrl, query, outDir) {
         `the surface off the whole sum of its waves by ${w.surface.gpu.toFixed(3)} m, ${w.surface.time.toFixed(2)} m at a time off, ${w.surface.texel.toFixed(3)} m half a texel off; off the game's sum by ${w.surface.inJs.toFixed(3)} m; ` +
         `the surf at ${w.surf.points} points off its twin by ${w.surf.foam.toFixed(4)} in foam, ${w.surf.height.toFixed(4)} m high, ${w.surf.slope.toFixed(4)} in slope, ${w.surf.time.toFixed(2)} at a time off; ` +
         `the beach's water at ${w.swash.points} points off its twin by ${w.swash.level.toFixed(4)} m at its edge, ${w.swash.cover.toFixed(4)} m deep, ${w.swash.foam.toFixed(4)} in foam, ${w.swash.film.toFixed(4)} in film; ` +
-        `the waves coming in at ${w.bore.points} points off their twin by ${w.bore.height.toFixed(4)} m high, ${w.bore.slope.toFixed(4)} in slope, ${w.bore.foam.toFixed(4)} in foam`
+        `the waves coming in at ${w.bore.points} points off their twin by ${w.bore.height.toFixed(4)} m high, ${w.bore.slope.toFixed(4)} in slope, ${w.bore.foam.toFixed(4)} in foam; ` +
+        `the floor's light at ${w.caustics.points} points off its twin by ${w.caustics.off.toFixed(4)} at most, ${w.caustics.time.toFixed(2)} at a time off`
       );
     }),
     // The ground's tiles repeat (src/fixtures/surfaces.js), and the check would see if they didn't.
@@ -1146,7 +1147,7 @@ export function seaHoles(distances, width, height, from, far) {
 // The waves fixture's results (src/fixtures/waves.js): the GPU's fields, a mip
 // and a loop later; what the sea knows; the surface: each within its limit and
 // each mistake beyond it.
-export function wavesProblems(w, { fields, mips, looped, map, surface, inJs, least, surf, swash, bore }) {
+export function wavesProblems(w, { fields, mips, looped, map, surface, inJs, least, surf, swash, bore, caustics }) {
   const problems = [];
   if (!(w?.fields?.gpu <= fields)) problems.push(`the GPU's fields are off the waves' sum in JS by ${w?.fields?.gpu} (limit ${fields})`);
   if (!(w?.fields?.time > fields)) problems.push(`the fields at a time off are only ${w?.fields?.time} off: the check misses it`);
@@ -1176,6 +1177,9 @@ export function wavesProblems(w, { fields, mips, looped, map, surface, inJs, lea
     if (!(w?.bore?.[key] <= bore[key])) problems.push(`the waves coming in: their ${key} is off its JS twin by ${w?.bore?.[key]} (limit ${bore[key]})`);
   }
   if (!(w?.bore?.time > bore.height)) problems.push(`the waves coming in at a time off are only ${w?.bore?.time} m off: the check misses it`);
+  if (!(w?.caustics?.points >= least)) problems.push(`only ${w?.caustics?.points} points of the floor's light judged (at least ${least})`);
+  if (!(w?.caustics?.off <= caustics)) problems.push(`the light on the floor is off its JS twin by ${w?.caustics?.off} at most points (limit ${caustics})`);
+  if (!(w?.caustics?.time > caustics)) problems.push(`the light on the floor at a time off is only ${w?.caustics?.time} off: the check misses it`);
   return problems;
 }
 

@@ -4,7 +4,9 @@
 // 4, as 1 but
 // read where the texel's corner is, half a texel off (a mistake); 5, the beach's water
 // (water/swash.wgsl) over the ground as drawn there, at the frame's waves' time; 6, the
-// waves coming in over the last of the shallows there (swashBore), at that time.
+// waves coming in over the last of the shallows there (swashBore), at that time; 7, the light
+// the ripples gather on the floor (water-caustics.wgsl causticAt) at each point's x, z, depth and
+// ripples dropped (uPoints' four channels), at uSeconds.
 
 #include "/chunks/fullscreen.wgsl"
 #include "/chunks/frame.wgsl"
@@ -12,6 +14,7 @@
 #include "../water/sea-map.wgsl"
 #include "../water/water-surf.wgsl"
 #include "../water/swash.wgsl"
+#include "../water/water-caustics.wgsl"
 
 struct Check {
   uMode: i32,
@@ -27,7 +30,11 @@ struct Check {
 
 @fragment
 fn fragmentMain(in: Fullscreen) -> @location(0) vec4f {
-  let xz = textureLoad(uPoints, vec2i(in.position.xy), 0).xy;
+  let point = textureLoad(uPoints, vec2i(in.position.xy), 0);
+  if (check.uMode == 7) {
+    return vec4f(causticAt(point.xy, point.z, check.uSeconds, point.w), 0.0, 0.0, 1.0);
+  }
+  let xz = point.xy;
   let sea = seaAt(xz);
   if (check.uMode == 0) {
     return sea;

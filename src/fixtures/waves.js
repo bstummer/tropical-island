@@ -14,7 +14,9 @@
 // water/surf.js; its mistake a time off. And the beach's water where the waves wash,
 // its edge, its depth, its foam and its film, against water/swash.js (ctx.water.swashAt);
 // its mistake a time off. And the waves coming in over the last of the shallows, their height,
-// their slope and their foam (ctx.water.boreAt); its mistake a time off.
+// their slope and their foam (ctx.water.boreAt); its mistake a time off. And the light the
+// ripples gather on the floor (water/caustics.js), at points of any depth and pixel width; its
+// mistake a time off.
 // window.__WAVES__ holds the worst differences for tools/screenshot.js. The island
 // and the sea draw as usual meanwhile. Not part of the island.
 import shader from './waves-check.wgsl';
@@ -25,6 +27,7 @@ import { createSurface } from '../water/surface.js';
 import { createSurf } from '../water/surf.js';
 import { surfUniforms } from '../water/water.js';
 import { swashUniforms, swellWay } from '../water/swash.js';
+import { causticUniforms } from '../water/caustics.js';
 
 const TIMES = [0, 7.3, 3 * 3600 + 1.1];
 const POINTS = 48; // texels per cascade per time
@@ -135,7 +138,7 @@ export function create(ctx) {
     const material = new Material({
       name: 'fixture-waves',
       shader,
-      uniforms: { uPoints: { value: input }, ...swashUniforms(config.water.swash, config.water.surf, swellWay(config), config.water.surf.period, config.water.waves.loop), ...surfUniforms(ctx.config.water.surf, ctx.water.swellWay), uSeconds: { value: SURFACE_TIME }, uMode: { value: 0 }, uPatches: { value: ctx.water.patches }, uWaveTexels: { value: size }, uWaves: { value: waves.texture } },
+      uniforms: { uPoints: { value: input }, ...swashUniforms(config.water.swash, config.water.surf, swellWay(config), config.water.surf.period, config.water.waves.loop), ...causticUniforms(config.water.caustics, ctx.water.caustics, config.water.ior), ...surfUniforms(ctx.config.water.surf, ctx.water.swellWay), uSeconds: { value: SURFACE_TIME }, uMode: { value: 0 }, uPatches: { value: ctx.water.patches }, uWaveTexels: { value: size }, uWaves: { value: waves.texture } },
     });
     const pass = renderer.fullscreen(material);
     // The map's layout is the frame's (chunks/frame.wgsl), shifted for a run and put back.
@@ -287,6 +290,23 @@ export function create(ctx) {
       result.bore.time = Math.max(result.bore.time, Math.abs(seen[0] - boreLater.height));
     });
     boreInput.destroy();
+
+    // The light the ripples gather on the floor, at points near the island, of every depth and pixel width.
+    const lit = [];
+    for (let n = 0; n < AT_POINTS; n++) lit.push([r.range(-200, 200), r.range(-200, 200), r.range(0, config.water.caustics.deepest), r.range(0, config.water.caustics.ripples.length)]);
+    const litInput = new Texture(gpu, { name: 'fixture-waves caustic points', width: AT_POINTS, height: 1, format: 'rgba32float', data: true, sampler: { mag: 'nearest', min: 'nearest' } });
+    litInput.upload(new Float32Array(lit.flat()));
+    material.uniforms.uPoints.value = litInput;
+    material.uniforms.uSeconds.value = SWASH_TIME;
+    const litSeen = await run(7);
+    material.uniforms.uSeconds.value = SURFACE_TIME;
+    material.uniforms.uPoints.value = input;
+    // Most points: on a line of its net the light turns over in a hair, which the last bits of a float's phase move.
+    const share = (offs) => offs.sort((p, q) => p - q)[Math.floor(0.98 * offs.length)];
+    const offs = lit.map(([x, z, depth, dropped], n) => Math.abs(litSeen[4 * n] - ctx.water.caustics.at(x, z, depth, SWASH_TIME, dropped)));
+    const litLater = lit.map(([x, z, depth, dropped], n) => Math.abs(litSeen[4 * n] - ctx.water.caustics.at(x, z, depth, SWASH_TIME + MISTAKE.swashTime, dropped)));
+    result.caustics = { points: lit.length, off: share(offs), time: share(litLater) };
+    litInput.destroy();
 
     window.__WAVES__ = result;
     pass.dispose();

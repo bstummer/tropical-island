@@ -870,6 +870,30 @@ export const water = {
     // times its speed, and the water it broke in is `milk` white with sand and bubbles.
     bore: { height: 0.6, breaks: 0.8, from: [1.2, 0.8], faces: [0.035, 0.012], back: 0.12, spread: 0.3, foam: 1.6, trail: 0.25, toe: 0.02, flow: 0.5, milk: 0.4 },
   },
+  // Light on the floor under shallow water (water/caustics.js, which says what it is): the
+  // ripples that gather it, [wavelength m, steepness, degrees off the wind], each turning a whole
+  // number of times in the waves' loop; how soft its net is, and how much softer per m of depth
+  // (the sun's size); how many times as deep as a ripple gathers the light it blurs out (`beyond`);
+  // how far the longer waves carry the ripples to and fro, m, over how far (`wander`); the ripples go
+  // from the shortest up, their lengths evenly in ratio, as a pixel wider than `fade` of a
+  // ripple's length drops it, and with it its share of the net; its brightest lines are held to about
+  // `peak` times as bright as even light; its mean at `depths` depths to `deepest` m, past which the light is even;
+  // how much of it shows (`strength`); how far (m per m of depth) the floor a pixel sees spreads
+  // through the waves too small for it, per the root of their slopes' variance (`spread`), which it
+  // drops ripples for too; m from the eye within which the water draws it (`reach`).
+  caustics: {
+    ripples: [[0.04, 0.07, -40], [0.055, 0.066, 25], [0.075, 0.062, -15], [0.1, 0.058, 50], [0.14, 0.054, -65], [0.19, 0.05, 10], [0.26, 0.046, 35], [0.36, 0.042, -25]],
+    blur: [0.12, 0.08],
+    beyond: 2.5,
+    wander: [0.06, 1.1],
+    depths: 16,
+    deepest: 4,
+    strength: 0.6,
+    peak: 5,
+    fade: 0.15,
+    spread: 0.4,
+    reach: 40,
+  },
   // Degrees above the rim of the sea by which it has gone 63% of the way over into the sky just above it.
   horizonFade: 0.5,
   // From what share of the way to the rim it does so, and by what share in full: waves near the eye stand at the same angle.
@@ -1068,8 +1092,9 @@ export const capture = {
   // 0.157, 2% of the swell's power); the beach's water from its twin (`swash`: its
   // edge and depth, m; its foam and film, shares); the waves coming in (`bore`: m, per m, a
   // share: the foam on a wave's face changes by 8 a second, and the GPU reads the sea map's
-  // distances and depths as half floats, which moves it a few ms). Each one's mistake must land further.
-  waves: { fields: 0.01, mips: 0.002, looped: 0.002, map: 0.02, surface: 0.06, inJs: 0.25, least: 100, surf: { foam: 0.05, height: 0.05, slope: 0.05, time: 0.2 }, swash: { level: 0.005, cover: 0.005, foam: 0.02, film: 0.02 }, bore: { height: 0.005, slope: 0.02, foam: 0.1 } },
+  // distances and depths as half floats, which moves it a few ms); the light the ripples gather on
+  // the floor (`caustics`, at 98% of the points). Each one's mistake must land further.
+  waves: { fields: 0.01, mips: 0.002, looped: 0.002, map: 0.02, surface: 0.06, inJs: 0.25, least: 100, surf: { foam: 0.05, height: 0.05, slope: 0.05, time: 0.2 }, swash: { level: 0.005, cover: 0.005, foam: 0.02, film: 0.02 }, bore: { height: 0.005, slope: 0.02, foam: 0.1 }, caustics: 0.02 },
   // The sea's surface must have no holes: at these times, in `view`'s frame from `below`
   // rows under the rim of the sea down, the far sea's levels of detail too, nothing lies on the far plane.
   seaHoles: { view: 'air-pass', times: [15.5, 120.25], below: 2 },
