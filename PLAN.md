@@ -388,12 +388,12 @@ a grey-tan band from standing height (`beach`); the wet band is one fixed outlin
   it turns: it lingers, the backwash stretches and tears it into lace, and bits stay behind and fade; an
   older line shows under a newer one. One surface with the surf's foam (6.6). From the far end of the bay
   and from the air the beach is edged in white scallops that hold steady.
-- [ ] **7.5 The shore break, and whitewater that stands up.** In its last metres a wave stands up, breaks
+- [x] **7.5 The shore break, and whitewater that stands up.** In its last metres a wave stands up, breaks
   and runs on as a low bore into the run-up, a big one sooner and harder, a small one barely. Whitewater
   has height and hides what lies behind it itself, on the reef as at the beach, so the band painted from
   60 m off and its straight line go; close to, it has relief, sheen and a glow against a low sun, and
   spray where it breaks hardest. `ctx.water.surfAt` tells sound of the beach's waves too.
-- [ ] **7.6 Light under the water.** Caustics on the shallow floor, moving with the waves that make them:
+- [x] **7.6 Light under the water.** Caustics on the shallow floor, moving with the waves that make them:
   a fine bright net in ankle-deep water, wider and softer with depth, none in shade, melting into even
   light where a pixel can't hold them (no sparkle far off or from the air). The beach's ripples run on
   under the water, and the floor has detail down to centimetres under a swimmer's eye. On the rocks under
@@ -431,9 +431,80 @@ Leg 1 (7.1 to 7.4), handed to the user 2026-11-13:
   high as this beach's highest wave. `into-the-sun`'s foreshore glows again, as the sun's path runs on from
   the lagoon onto the wet sand.
 
-Open after leg 1 (with an outside review's findings):
-- No bore comes in over the shallows: a wave appears at the waterline and runs up (7.5); from the air the
-  uprush slides along the beach as a milky slab. A full wave runs 0.32 m up, the largest about 0.52 m.
+Leg 2 (7.5 and 7.6), handed to the user 2026-11-13:
+- Cost first, measured by the game's own benchmark run headless on the dev machine's GPU at the user's
+  2562×1237, which gave their numbers to 0.3 ms: the water lies over the beach only as high as the waves wet
+  it now, and gives bare ground back as the terrain drew it; the terrain shades no ground the water takes
+  none of; the swash's noises are worked out per vertex (swash.wgsl `SwashPlace`: six waves in slots by
+  number, so a piece's corners agree on each). `sand` 19.2 to 12.4 ms, `swash` 15.1 to 9.4, `beach` 15.3 to
+  10.9, `air-swash` 16.6 to 10.0, `into-the-sun` 19.0 to 15.9. Tried and dropped: skipping the swell's and
+  chop's reads and the walk for what stands under the water on the beach (slower: the branches cost more
+  than they saved).
+- The shore break (`water/swash.js` bore, its twin): each wave comes in over the last metres of the
+  shallows as fast as the water lets it, timed to reach the waterline as its run-up starts, rises as it
+  shoals and breaks where it stands 0.8 as tall as the water is deep: a big one 4 to 6 m out, a small one in
+  the last 2 m or not at all. Its face steepens into a bore with foam on it and lace trailing, drifting in;
+  the water it broke in turns milky. JS knows it (`ctx.water.boreAt`, `heightAt`, and `surfAt` tells sound
+  of the beach's waves), the waves fixture holds the GPU to it, tests/swash.test.js its timing, its speed,
+  where each wave breaks and its mean.
+- Whitewater on the reef lifts the surface, up to 0.5 m where it breaks hardest, in lumps along the crest,
+  each wave its own (`water/surf.js`, its twin): it hides what lies behind it itself, and the band painted
+  from 60 m off is gone. Close to, its heaps are lit on the side facing the sun and its bubbles keep a little
+  of the water's mirror. So that the line still reads from the beach, the reef's white lasts most of a period
+  and runs 30 m in over the flat (`trail` 1.5, `run` 30), and fades to none by the next crest (it used to
+  stop in a step, in foam and height). Spray (`water/spray.js`): puffs thrown up and forward off the crest
+  where it breaks hardest, from the sea map's crest spots, in the translucent pass while the eye is within
+  1.2 km of the reef.
+- Caustics (`water/caustics.js`, `water-caustics.wgsl`): eight ripples of 4 to 36 cm running with the wind
+  bend the sun's light in, and the floor is lit by the area's ratio (Wallace 2011): a fine net ankle-deep,
+  wider and softer deeper as each ripple blurs out past its focus, its brightest lines held to five times
+  even light. A pixel drops the shortest ripples first, the floor it sees through the waves too small for
+  it counted in, so the net coarsens and melts into even light further off; a table of means over depth and
+  ripples dropped (170 ms at load) keeps the floor as bright on average. The sun's share of the light only,
+  on the floor the water draws and on what stands under the water near shore. Drawn by a variant of the
+  water's own (`WATER_NEAR`) within 25 m of the eye: in the beach's variant they cost every piece near the
+  eye 1 to 2.5 ms in a larger shader. Tests: its mean, its net's spacing by depth, its fading, its loop; the
+  fixture holds the GPU to JS.
+- The floor: wave ripples in the sand under the sea, their crests along the shore 9 cm apart in the
+  shallows and 15 deeper (`chunks/sea-ripples.wgsl`), drawn by the terrain just under the waterline and by
+  the water beyond, the same at the same place; the beach's grain on the water's floor under a swimmer's eye.
+- Views: `ankle` (reframed, ankle-deep facing the waves coming in), `knee` (new: down through knee-deep
+  water) and `surf` in; `shoreline` and `rocks` aside for leg 3. A view can open at a moment of its own
+  (views.js `t`): `ankle` as a wave breaks in front, `swash` as the shore break runs along the bay, `surf`
+  as the reef's wave breaks in sections. Found on the way: the bore shaped the water over the reef's flat
+  too, far from any beach, in the shore's pieces alone, so their edges parted (the sea surface check saw
+  the sky through them); it fades out 12 to 20 m from the waterline now.
+
+Open after leg 2 (an outside review's findings, less what was fixed after it):
+- The reef from 30 m: where a wave breaks along the whole crest at once its whitewater is a ribbon of even
+  thickness, matte white with grey patches; it breaks in sections only as much as a set's wave varies along
+  it (`surf` opens at such a moment). From the beach through a telephoto (`reef`) the white stood in flat
+  wedges between its lumps before they came, unchecked since. From the beach the reef's white line pulses
+  with the sets and goes dark in a lull, where Stage 6's band held it steady (the user's pick then): a pick
+  for 7.8, with how much foam.
+- Spray reads as soft puffs over the crest, which can look like steam; fewer and fainter since the review.
+- The shore break: the hump coming in reads only as a dark band (the hero) or a squeezed glitter (`ankle`)
+  before it breaks; its foam as it breaks is an even white band with spiky lace (`ankle`), patchier since.
+- `knee`: the floor under knee-deep water reads mint, like a pool: the water's colour (Stage 6's optics)
+  and a net as crisp from edge to edge (one depth throughout).
+- The camera-move shimmer can't follow refraction: it reads the floor's net, which moves with its apparent
+  depth through the water, as shimmer (`knee` 37%, `swimmer` 10%); as the camera turns, 0.02%.
+- Cost. GPU at the median, the game's benchmark headless on the dev machine at 2562×1237 (the user's
+  leg-1 run in brackets): `into-the-sun` 19.2 ms (18.7), `ankle` 18.6, `sand` 15.6 (18.7), `air-swash`
+  13.4 (16.5), `beach` 12.8 (15.4), `swash` 11.8 (15.0), `surf` 9.7, `knee` 9.0: under 60 fps there in
+  `into-the-sun` and `ankle`. Of what leg 2 adds over the cost cut in `into-the-sun` (+3.5 ms): the bore
+  0.6, the caustics' code 0.6 to 0.9, the floor's ripples and grain 0.5 to 1.5 (most in `ankle`), spray
+  0.1 to 0.4, the rest spread through a larger shader. SwiftShader frames in the Linux container, all
+  within the 10 s budget: `into-the-sun` 9.4 s, `ankle` 9.2, `beach` 8.5, `swash` 8.4, `surf` 7.7, `sand`
+  5.5, `air-swash` 5.0, `knee` 3.3. 12 passes (the translucent pass and its composite, for the spray),
+  52 pipelines (the water's four variants).
+- From leg 1 still (the review saw them again): straight wet edges, the stepped waterline and wet margin,
+  the headland's image cut off by a vertical edge with stepped teeth, the far water's stepped blocks at the
+  bay's end, the seams in `sand`, the milky band from the air.
+
+Open after leg 1 (with an outside review's findings; what leg 2 fixed is gone):
+- From the air the uprush slides along the beach as a milky slab. A full wave runs 0.32 m up, the largest
+  about 0.52 m.
 - The sheet mirrors the sky over it as the sea does, so where it faces the dark sky away from a low sun it
   reads as a dark band darker than the sand (`swash`), and from standing height at midday as a grey-taupe
   stripe (`beach`). The glassy film after the drain, gold with the sun in its rumples, is the best of it.
