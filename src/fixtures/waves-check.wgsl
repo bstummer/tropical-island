@@ -1,7 +1,7 @@
 // Tool fixture (waves.js): at each point of uPoints (world x, z), one per output
 // texel: uMode 0, what the sea knows there (water/sea-map.wgsl); 1, the water's
 // displacement there as its vertex shader adds it up, at the finest mips; 2, the surf there;
-// 3, how far the foam seen from far off jumps across the reef's crest; 4, as 1 but
+// 4, as 1 but
 // read where the texel's corner is, half a texel off (a mistake); 5, the beach's water
 // (water/swash.wgsl) over the ground as drawn there, at the frame's waves' time; 6, the
 // waves coming in over the last of the shallows there (swashBore), at that time.
@@ -41,14 +41,8 @@ fn fragmentMain(in: Fullscreen) -> @location(0) vec4f {
     return vec4f(bore.height, bore.slope, bore.foam, bore.along);
   }
   if (check.uMode == 2) {
-    let breaking = surfAt(sea, seaShoreAt(xz), seaWaveAt(xz), 0.0, 0.0, xz, check.uSeconds);
+    let breaking = surfAt(sea, seaShoreAt(xz), seaWaveAt(xz), 0.0, xz, check.uSeconds);
     return vec4f(breaking.foam, breaking.height, breaking.slope, 1.0);
-  }
-  if (check.uMode == 3) {
-    let at = seaShoreAt(xz);
-    let inside = surfAt(sea, vec4f(at.xyz, -0.05), seaWaveAt(xz), 20.0, 0.0, xz, check.uSeconds).foam;
-    let outside = surfAt(sea, vec4f(at.xyz, 0.05), seaWaveAt(xz), 20.0, 0.0, xz, check.uSeconds).foam;
-    return vec4f(abs(inside - outside), 0.0, 0.0, 1.0);
   }
   let reach = cascadeReach(sea);
   var moved = vec3f(0.0);
@@ -57,7 +51,7 @@ fn fragmentMain(in: Fullscreen) -> @location(0) vec4f {
     let uv = select(wavesUv(read, check.uPatches[c], check.uWaveTexels), read * check.uPatches[c], check.uMode == 4);
     moved += reach[c] * textureSampleLevel(uWaves, uWavesSampler, uv, 2 * c, 0.0).xyz;
   }
-  moved.y += surfAt(sea, seaShoreAt(xz), seaWaveAt(xz), 0.0, 0.0, xz, check.uSeconds).height;
+  moved.y += surfAt(sea, seaShoreAt(xz), seaWaveAt(xz), 0.0, xz, check.uSeconds).height;
   moved.y = max(moved.y, troughFloor(terrainHeight(terrainCove(xz), 0)));
   return vec4f(moved, 1.0);
 }

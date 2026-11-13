@@ -733,7 +733,9 @@ function toolCheckTasks(context, fileUrl, query, outDir) {
         `a mip off its texels by ${w.mips.toExponential(1)}, a loop later by ${w.looped.toExponential(1)}; ` +
         `the sea's map at ${w.map.points} points off its twin by ${w.map.gpu.toExponential(1)}, ${w.map.off.toFixed(2)} half a texel off; ` +
         `the surface off the whole sum of its waves by ${w.surface.gpu.toFixed(3)} m, ${w.surface.time.toFixed(2)} m at a time off, ${w.surface.texel.toFixed(3)} m half a texel off; off the game's sum by ${w.surface.inJs.toFixed(3)} m; ` +
-        `the surf at ${w.surf.points} points off its twin by ${w.surf.foam.toFixed(4)} in foam, ${w.surf.height.toFixed(4)} m high, ${w.surf.slope.toFixed(4)} in slope, ${w.surf.time.toFixed(2)} at a time off, its foam from far off jumping ${w.surf.seam.toFixed(4)} across the crest`
+        `the surf at ${w.surf.points} points off its twin by ${w.surf.foam.toFixed(4)} in foam, ${w.surf.height.toFixed(4)} m high, ${w.surf.slope.toFixed(4)} in slope, ${w.surf.time.toFixed(2)} at a time off; ` +
+        `the beach's water at ${w.swash.points} points off its twin by ${w.swash.level.toFixed(4)} m at its edge, ${w.swash.cover.toFixed(4)} m deep, ${w.swash.foam.toFixed(4)} in foam, ${w.swash.film.toFixed(4)} in film; ` +
+        `the waves coming in at ${w.bore.points} points off their twin by ${w.bore.height.toFixed(4)} m high, ${w.bore.slope.toFixed(4)} in slope, ${w.bore.foam.toFixed(4)} in foam`
       );
     }),
     // The ground's tiles repeat (src/fixtures/surfaces.js), and the check would see if they didn't.
@@ -1163,7 +1165,6 @@ export function wavesProblems(w, { fields, mips, looped, map, surface, inJs, lea
   if (!(w?.surf?.foam <= surf.foam)) problems.push(`the surf's foam is off its JS twin by ${w?.surf?.foam} (limit ${surf.foam})`);
   if (!(w?.surf?.height <= surf.height)) problems.push(`the surf's height is off its JS twin by ${w?.surf?.height} m (limit ${surf.height})`);
   if (!(w?.surf?.slope <= surf.slope)) problems.push(`the surf's slope is off its JS twin by ${w?.surf?.slope} (limit ${surf.slope})`);
-  if (!(w?.surf?.seam <= surf.seam)) problems.push(`the surf's foam seen from far off jumps by ${w?.surf?.seam} across the crest (limit ${surf.seam})`);
   if (!(w?.surf?.time >= surf.time)) problems.push(`the surf's foam at a time off is only ${w?.surf?.time} off: the check misses it`);
   if (!(w?.swash?.points >= least)) problems.push(`only ${w?.swash?.points} points of the beach judged (at least ${least})`);
   for (const key of ['level', 'cover', 'foam', 'film']) {

@@ -68,7 +68,6 @@ struct Water {
   uFoamCovers: vec2f, // how much foam covers none of the water, and all of it
   uFoamLaceDrift: vec2f, // how each read of it drifts along the swell's way, tiles/s
   uFoamLevels: array<vec4f, 5>, // the levels of its tile that leave each sixteenth of the foam (textures/foam.js)
-  uFoamStands: vec4f, // how high whitewater stands off the water (m); how much ground that may hide, at most (m); from what distance it does, and in full (m)
   uFoamFacing: f32, // how much of the sun's light it takes with the sun on the horizon
   uFoamBacklit: vec2f, // how much of the sun's light its thin tops let through, and how much of that goes on onwards (Henyey-Greenstein g)
   // The beach: m of depth over which its water takes over from the sea's; how far up it the surface lies over the
@@ -149,7 +148,7 @@ fn vertexMain(in: VertexIn) -> Varyings {
   }
 
   let shore = seaShoreAt(rest);
-  moved.y += surfAt(sea, shore, seaWaveAt(rest), 0.0, 0.0, rest, frame.uWaveSeconds).height;
+  moved.y += surfAt(sea, shore, seaWaveAt(rest), 0.0, rest, frame.uWaveSeconds).height;
   let ground = terrainHeight(terrainCove(rest), 0);
   var out: Varyings;
   out.vPlace0 = vec4f(0.0);
@@ -354,12 +353,8 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
   // The swell's long waves and how they break, their slope along the way they run.
   var foam = 0.0;
   if (sea.z > 0.0 && shore.w < surf.uSurfWay.w) {
-    // Whitewater stands up off the water: seen low down it hides the ground behind it,
-    // so it holds as a white line far off, where its ground is under a pixel tall.
-    let eye = frame.cameraPosition - in.vWorldPos;
-    let hides = min(water.uFoamStands.x / max(normalize(eye).y, 1e-3), water.uFoamStands.y) * smoothstep(water.uFoamStands.z, water.uFoamStands.w, length(eye));
     let wave = seaWaveAt(in.vRest);
-    let breaking = surfAt(sea, shore, wave, hides, sqrt(longest), in.vRest, frame.uWaveSeconds);
+    let breaking = surfAt(sea, shore, wave, sqrt(longest), in.vRest, frame.uWaveSeconds);
     foam = breaking.foam;
     slopes.x += breaking.slope * (wave.y * frame.uTerrainFrame.x + wave.z * frame.uTerrainFrame.z);
     slopes.y += breaking.slope * (wave.y * frame.uTerrainFrame.y + wave.z * frame.uTerrainFrame.w);

@@ -46,7 +46,7 @@ export function opticsUniforms({ dimming, body, through, ior, seabedFade }) {
 }
 
 // The uniforms of water-surf.wgsl, from config.water.surf and the way the swell runs.
-export function surfUniforms({ period, height, shoals, fades, limit, dips, least, back, front, fall, ahead, run, always, wave, trail, toe, sets, beat, along, wander, standsBy }, way) {
+export function surfUniforms({ period, height, shoals, fades, limit, dips, least, back, front, fall, ahead, run, always, wave, trail, toe, sets, beat, along, wander, stands }, way) {
   if (wander.length !== SURF_WANDERS) throw new Error(`config.water.surf: ${wander.length} terms of the front's wander; water-surf.wgsl holds ${SURF_WANDERS}`);
   return {
     uSurfSets: { value: new Vector4(sets[0], sets[1], beat, 0) },
@@ -57,7 +57,7 @@ export function surfUniforms({ period, height, shoals, fades, limit, dips, least
     uSurfWave: { value: new Vector4(limit, least, back, front) },
     uSurfFoam: { value: new Vector4(fall, ahead, run, always) },
     uSurfBreak: { value: new Vector4(wave, trail, toe, dips) },
-    uSurfStands: { value: new Vector2(...standsBy) },
+    uSurfStands: { value: stands },
   };
 }
 
@@ -152,7 +152,6 @@ export function create(ctx) {
       uFoamCovers: { value: new Vector2(...settings.surf.lace.covers) },
       uFoamLaceDrift: { value: new Vector2(...alongDrifting(settings.surf.drift, settings.surf.lace.tiles, settings.surf.lace.stretch, waveSettings.loop)) },
       uFoamLevels: ctx.terrain.surfaces.uFoamLevels,
-      uFoamStands: { value: new Vector4(...settings.surf.stands) },
       uFoamFacing: { value: settings.surf.facing },
       uFoamBacklit: { value: new Vector2(...settings.surf.backlit) },
       ...swashUniforms(settings.swash, settings.surf, coveSwellWay(config), settings.surf.period, waveSettings.loop),

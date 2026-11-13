@@ -293,9 +293,9 @@ test('a wave of the surf runs in: its foam\'s front lies further inside the cres
   // A set of waves later it all stands as it did.
   const [now, set] = [surf(here(-4), 0, 0, t), surf(here(-4), 0, 0, t + SET * settings.period)];
   assert.ok(Math.abs(now.foam - set.foam) < 1e-6 && Math.abs(now.height - set.height) < 1e-6, `a set later: ${JSON.stringify([now, set])}`);
-  // Far inside the crest there is no foam; seaward of it, it thins out to none
-  // `ahead` m out, with no edge where it stops.
-  assert.ok(surf(here(-80), 0, 0, t).foam < 0.01);
+  // Far inside the crest, five times as far as it runs in, there is no foam; seaward of it,
+  // it thins out to none `ahead` m out, with no edge where it stops.
+  assert.ok(surf(here(-5 * settings.run), 0, 0, t).foam < 0.01);
   for (const when of [t, t + 3, t + 7]) {
     let last = surf(here(1), 0, 0, when).foam;
     let most = last;
@@ -660,4 +660,29 @@ test('the layers the GPU reads hold each value where water/sea-map.wgsl looks fo
   assert.deepEqual([...second], [5, 6, 7, 8]);
   assert.deepEqual([...third], [9, 10, 11, 12]);
   assert.deepEqual([...fourth], [13, 14, 15, 16]);
+});
+
+test('what breaks stands up off the water as whitewater, as tall as `stands` at most and only where it breaks, and the surf\'s slope is its height\'s', () => {
+  const settings = config.water.surf;
+  // Its front's wander left out: its slope is what the waves' timing alone makes it.
+  const still = { ...settings, wander: settings.wander.map(([, kx, kz]) => [0, kx, kz]) };
+  const surf = createSurf(still, gameWay);
+  const flat = createSurf({ ...still, stands: 0 }, gameWay);
+  const speed = 4;
+  const deep = waveSpeed(Infinity, settings.period);
+  // r m along the way the swell runs, on its crest: it gets there r / speed s later.
+  const here = (r, breaks = 1) => ({ swell: 0.4, depth: 2, breaks, reef: 0, late: r / speed - r / deep, speed });
+  const at = (r, t, breaks, which = surf) => which(here(r, breaks), r * gameWay[0], r * gameWay[1], t);
+  let tallest = 0;
+  for (let t = 0; t < 3 * settings.period; t += 0.05) {
+    const stands = at(0, t, 1).height - at(0, t, 1, flat).height;
+    assert.ok(stands >= -1e-12 && stands <= settings.stands + 1e-9, `at ${t} s it stands ${stands} m off the water`);
+    tallest = Math.max(tallest, stands);
+    assert.ok(Math.abs(at(0, t, 0).height - at(0, t, 0, flat).height) < 1e-12, `at ${t} s whitewater stands where nothing breaks`);
+    // Its slope along the way it runs, against its height a little either way.
+    const step = 0.01;
+    const slope = (at(step, t, 1).height - at(-step, t, 1).height) / (2 * step);
+    assert.ok(Math.abs(slope - at(0, t, 1).slope) < 0.02 + 0.02 * Math.abs(slope), `at ${t} s: slope ${at(0, t, 1).slope}, its height's ${slope}`);
+  }
+  assert.ok(tallest > 0.4 * settings.stands, `whitewater stands ${tallest} m at most`);
 });

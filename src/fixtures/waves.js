@@ -203,9 +203,8 @@ export function create(ctx) {
     surfInput.upload(surfData);
     material.uniforms.uPoints.value = surfInput;
     const surfSeen = await run(2);
-    const seams = await run(3);
     material.uniforms.uPoints.value = input;
-    result.surf = { points: breaking.length, foam: 0, height: 0, slope: 0, seam: 0, time: 0 };
+    result.surf = { points: breaking.length, foam: 0, height: 0, slope: 0, time: 0 };
     // The reef's surf alone: ctx.water.surfAt tells sound of the beach's waves too.
     const reef = createSurf(config.water.surf, ctx.water.swellWay);
     const surfAt = (x, z, t) => reef(map.at(...island.toCove(x, z)), x, z, t - loop * Math.floor(t / loop));
@@ -215,7 +214,6 @@ export function create(ctx) {
       result.surf.foam = Math.max(result.surf.foam, Math.abs(surfSeen[4 * n] - twin.foam));
       result.surf.height = Math.max(result.surf.height, Math.abs(surfSeen[4 * n + 1] - twin.height));
       result.surf.slope = Math.max(result.surf.slope, Math.abs(surfSeen[4 * n + 2] - twin.slope));
-      result.surf.seam = Math.max(result.surf.seam, seams[4 * n]);
       result.surf.time = Math.max(result.surf.time, Math.abs(surfSeen[4 * n] - later.foam));
     });
     surfInput.destroy();

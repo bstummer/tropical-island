@@ -7,7 +7,8 @@
 // up over the shallows. It stands taller as it slows, and steeper, as far as the water
 // lets it: what the swell's own reach (`swell`) leaves of it. What that takes from it
 // breaks. So a big wave of a set breaks seaward of the crest and whitens it through; a
-// small one breaks only on the crest, in lace, and the smallest not at all. Behind it
+// small one breaks only on the crest, in lace, and the smallest not at all. What breaks
+// stands up off the water as whitewater, as tall as `stands` where it breaks hardest. Behind it
 // foam runs in over the flat and fades, as far as the sea map says the surf breaks
 // round here (`breaks`). A wave differs along its length, each its own way.
 //
@@ -15,7 +16,7 @@
 // way: the world direction the swell runs ([x, z], unit); here: the sea map at x, z.
 // Into out, { foam, height, slope }: how much foam covers the water, 0 to 1 and more
 // where it lies thick; how high the wave stands (m); how steeply it rises along the
-// way it runs. The GPU's twin also takes how far whitewater reaches seen from far off, and how wide a pixel is.
+// way it runs. The GPU's twin also takes how wide a pixel is.
 import { waveSpeed } from './sea-map.js';
 
 // A wave's share of a full one, in its set and along its length (m across the way it
@@ -33,7 +34,7 @@ const edge = (from, to, x) => {
 };
 
 export function createSurf(settings, [wayX, wayZ]) {
-  const { period, height, shoals, limit, dips, fades, back, front, fall, ahead, run, always, wave, trail, toe } = settings;
+  const { period, height, shoals, limit, dips, fades, back, front, fall, ahead, run, always, wave, trail, toe, stands } = settings;
   const deep = waveSpeed(Infinity, period);
   return function at({ swell, depth, breaks, reef, late, speed }, x, z, t, out = {}) {
     out.foam = 0;
@@ -56,25 +57,32 @@ export function createSurf(settings, [wayX, wayZ]) {
     const most = limit * Math.max(depth, 0);
     const nowTall = Math.min(rises * Math.min(now, held), most);
     const nextTall = Math.min(rises * Math.min(next, held), most);
-    const stands = nowTall + (nextTall - nowTall) * f;
+    const mean = nowTall + (nextTall - nowTall) * f;
     const dies = Math.exp(Math.min(reef, 0) / fall) * (1 - edge(fades[0], fades[1], reef));
     // A long round wave at sea; by the reef a peak with a steep face, and flat water ahead of it; round again as it dies on the flat.
     const peak = edge(0.15, 0.6, 1 - speed / deep) * Math.exp(Math.min(reef, 0) / fall);
     const behind = Math.exp(-((f / back) ** 2));
     const before = Math.exp(-(((1 - f) / front) ** 2));
-    const round = 0.5 * stands * Math.cos(2 * Math.PI * f);
-    const peaked = nowTall * behind + nextTall * before - 0.886 * (back + front) * stands;
-    // It draws down no more than the shallows spare: the reef's crest stays under.
-    out.height = Math.max(dies * (round + (peaked - round) * peak), -dips * Math.max(depth, 0));
-    const roundly = -Math.PI * stands * Math.sin(2 * Math.PI * f);
+    const round = 0.5 * mean * Math.cos(2 * Math.PI * f);
+    const peaked = nowTall * behind + nextTall * before - 0.886 * (back + front) * mean;
+    const roundly = -Math.PI * mean * Math.sin(2 * Math.PI * f);
     const peakedly = (-2 * f * nowTall * behind) / (back * back) + (2 * (1 - f) * nextTall * before) / (front * front);
-    out.slope = (-dies * (roundly + (peakedly - roundly) * peak)) / (speed * period);
 
-    // What the water took from it breaks, and whitens it as long as it does, less and less running in.
-    const fading = Math.exp(-f * trail);
+    // What the water took from it breaks, and whitens it as long as it does, less and less running
+    // in, and none of it is left when the next one comes.
+    const last = Math.exp(-trail);
+    const fading = (Math.exp(-f * trail) - last) / (1 - last);
     const coming = Math.exp(-(((1 - f) / toe) ** 2));
-    const lost = Math.max(now - swell, 0) * fading + Math.max(next - swell, 0) * coming;
-    out.foam = breaks * edge(ahead, 0, reef) * edge(0, 0.05, swell) * Math.exp(Math.min(reef, 0) / run) * (always + wave * lost);
+    const [behindLost, aheadLost] = [Math.max(now - swell, 0), Math.max(next - swell, 0)];
+    const lost = behindLost * fading + aheadLost * coming;
+    const breaking = breaks * edge(ahead, 0, reef) * edge(0, 0.05, swell) * Math.exp(Math.min(reef, 0) / run);
+    out.foam = breaking * (always + wave * lost);
+    // What breaks stands up off the water, as tall as `stands` where it breaks hardest.
+    const standing = stands * breaking * Math.exp(-wave * lost);
+    const losing = (-trail * behindLost * Math.exp(-f * trail)) / (1 - last) + ((2 * (1 - f)) / (toe * toe)) * aheadLost * coming;
+    // It draws down no more than the shallows spare: the reef's crest stays under.
+    out.height = Math.max(dies * (round + (peaked - round) * peak), -dips * Math.max(depth, 0)) + stands * breaking * (1 - Math.exp(-wave * lost));
+    out.slope = -(dies * (roundly + (peakedly - roundly) * peak) + standing * wave * losing) / (speed * period);
     return out;
   };
 }

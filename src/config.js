@@ -769,11 +769,7 @@ export const water = {
   // covering none of the water under the first of `covers` of foam and all over the
   // second (the cover the surf was tuned with, PLAN.md 6.6); how wide a pixel has it
   // as an even veil through and through (`softOver`, m); `stands`: how high
-  // whitewater stands off the water (m), how much ground that may hide at most (m), and
-  // from what distance it does, to what in full (m), as nearer it's seen as it is; `standsBy`:
-  // how much of the swell a crest may let through for its whitewater to stand there in full,
-  // and at all (past a reef's end the crest's line runs on through water too deep to break);
-  // `facing`: how much of the sun's light it takes with the sun on the horizon; `backlit`:
+  // whitewater stands off the water where it breaks hardest (m); `facing`: how much of the sun's light it takes with the sun on the horizon; `backlit`:
   // how much of it its thin tops and spray let through, and how much of that onwards
   // (Henyey-Greenstein g), so against a low sun it glows. A set's
   // rhythm: a wave's size beats over `sets` waves (whole sets in the loop), each beat
@@ -791,18 +787,17 @@ export const water = {
     front: 0.05,
     fall: 25,
     ahead: 8,
-    run: 14,
+    run: 30,
     always: 0.26,
     wave: 0.8,
-    trail: 4,
+    trail: 1.5,
     toe: 0.05,
     albedo: [0.88, 0.92, 0.92],
     drift: 0.4,
     patches: [24, 5.3],
     lace: { tiles: [3.1, 7.3], stretch: 0.7, covers: [0.32, 0.68] },
     softOver: 0.4,
-    stands: [0.5, 40, 60, 200],
-    standsBy: [0.5, 0.9],
+    stands: 0.5,
     facing: 0.4,
     backlit: [0.25, 0.6],
     sets: [8, 5],
@@ -1074,7 +1069,7 @@ export const capture = {
   // edge and depth, m; its foam and film, shares); the waves coming in (`bore`: m, per m, a
   // share: the foam on a wave's face changes by 8 a second, and the GPU reads the sea map's
   // distances and depths as half floats, which moves it a few ms). Each one's mistake must land further.
-  waves: { fields: 0.01, mips: 0.002, looped: 0.002, map: 0.02, surface: 0.06, inJs: 0.25, least: 100, surf: { foam: 0.05, height: 0.05, slope: 0.05, seam: 0.02, time: 0.2 }, swash: { level: 0.005, cover: 0.005, foam: 0.02, film: 0.02 }, bore: { height: 0.002, slope: 0.02, foam: 0.1 } },
+  waves: { fields: 0.01, mips: 0.002, looped: 0.002, map: 0.02, surface: 0.06, inJs: 0.25, least: 100, surf: { foam: 0.05, height: 0.05, slope: 0.05, time: 0.2 }, swash: { level: 0.005, cover: 0.005, foam: 0.02, film: 0.02 }, bore: { height: 0.005, slope: 0.02, foam: 0.1 } },
   // The sea's surface must have no holes: at these times, in `view`'s frame from `below`
   // rows under the rim of the sea down, the far sea's levels of detail too, nothing lies on the far plane.
   seaHoles: { view: 'air-pass', times: [15.5, 120.25], below: 2 },
