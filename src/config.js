@@ -1063,7 +1063,7 @@ export const capture = {
   // off), and from the game's smaller sum, which leaves out the small waves (`inJs`:
   // 0.157, 2% of the swell's power); the beach's water from its twin (`swash`: its
   // edge and depth, m; its foam and film, shares). Each one's mistake must land further.
-  waves: { fields: 0.01, mips: 0.002, looped: 0.002, map: 0.02, surface: 0.06, inJs: 0.25, least: 100, surf: { foam: 0.05, height: 0.05, slope: 0.05, seam: 0.02, time: 0.2 }, swash: { level: 0.005, cover: 0.005, foam: 0.05, film: 0.05 } },
+  waves: { fields: 0.01, mips: 0.002, looped: 0.002, map: 0.02, surface: 0.06, inJs: 0.25, least: 100, surf: { foam: 0.05, height: 0.05, slope: 0.05, seam: 0.02, time: 0.2 }, swash: { level: 0.005, cover: 0.005, foam: 0.02, film: 0.02 } },
   // The sea's surface must have no holes: at these times, in `view`'s frame from `below`
   // rows under the rim of the sea down, the far sea's levels of detail too, nothing lies on the far plane.
   seaHoles: { view: 'air-pass', times: [15.5, 120.25], below: 2 },

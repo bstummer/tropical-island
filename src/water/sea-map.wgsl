@@ -54,13 +54,17 @@ fn seaWaveAt(xz: vec2f) -> vec4f {
 // there, s past its timing at the open sea's start (as the surf's); how hard the surf breaks
 // there; how steeply the ground rises there, per metre inland.
 // When is tens to hundreds of seconds, which filtering would round as half floats: its two
-// halves' texels are read as they are and mixed here (as chunks/terrain.wgsl's heights).
+// halves' texels are read as they are and mixed here (as chunks/terrain.wgsl's heights),
+// gathered at the corner they share, or by a hair off it the GPU would gather the next ones.
 fn seaBeachAt(xz: vec2f) -> vec3f {
   let uv = seaUv(xz);
-  let st = uv * vec2f(textureDimensions(uSeaMap).xy) - 0.5;
-  let t = st - floor(st);
-  let hi = textureGather(0, uSeaMap, uSeaMapSampler, uv, 3);
-  let lo = textureGather(1, uSeaMap, uSeaMapSampler, uv, 3);
+  let size = vec2f(textureDimensions(uSeaMap).xy);
+  let st = uv * size - 0.5;
+  let i = floor(st);
+  let t = st - i;
+  let corner = (i + 1.0) / size;
+  let hi = textureGather(0, uSeaMap, uSeaMapSampler, corner, 3);
+  let lo = textureGather(1, uSeaMap, uSeaMapSampler, corner, 3);
   let at = hi + lo;
   let lands = mix(mix(at.w, at.z, t.x), mix(at.x, at.y, t.x), t.y);
   return vec3f(lands, textureSampleLevel(uSeaMap, uSeaMapSampler, uv, 3, 0.0).zw);
