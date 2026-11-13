@@ -94,8 +94,9 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
 
   let aboveSea = vWorldPos.y + planetDrop(vWorldPos.xz);
   let tall = fwidth(vCentre.y + planetDrop(vCentre.xz)); // how much aboveSea changes across the pixel
-  // Ground the water covers whatever its waves do, across the pixel, needn't be shaded.
-  let hidden = aboveSea + 2.0 * tall < -terrain.uUnderSea.z && terrain.uUnderSea.w > 0.5;
+  // Seen from over the water, ground the water takes none of as what it sees under its
+  // surface (`own` below), across the pixel, needn't be shaded: the water draws the seabed there.
+  let hidden = aboveSea + tall < -terrain.uUnderSea.y && terrain.uUnderSea.w > 0.5;
   // How much of the pixel lies above the sea: below it the water's surface
   // mirrors, and it adds the haze. As soft as the pixel is tall, so the sand's
   // sheen ends where the water begins without stair-steps.

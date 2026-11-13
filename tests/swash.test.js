@@ -134,6 +134,30 @@ test('where the edge stands over the ground there is water over it and the groun
   }
 });
 
+test('above as high as the waves wet the ground now, the beach is bare: no water, film or foam (water/water.wgsl lies under the ground there)', () => {
+  const beach = gameBeach();
+  const out = {};
+  let bare = 0;
+  let filmed = 0;
+  for (const [x, z0] of alongCove(beach)) {
+    for (let inland = 0; inland < 8; inland += 0.5) {
+      const z = z0 - inland;
+      const ground = beach.heightmap.heightAt(x, z);
+      for (let t = 400; t < 400 + 2 * period; t += 0.25) {
+        beach.at(x, z, t, out);
+        if (ground > out.top + 4 * config.water.swash.lineWidth) {
+          assert.ok(out.cover === 0 && out.film === 0 && out.foam + out.line < 1e-3, `above the waves' top ${out.top.toFixed(3)} at ${x}, ${z} (ground ${ground.toFixed(3)}), t ${t}: ${JSON.stringify(out)}`);
+          bare++;
+        } else if (out.film > 0) {
+          filmed++;
+        }
+      }
+    }
+  }
+  // Both happen: the test sees bare beach above the waves, and film under their top.
+  assert.ok(bare > 1000 && filmed > 1000, `${bare} bare, ${filmed} filmed`);
+});
+
 test('the beach\'s water changes smoothly in time, across the waves\' loop too, and along the beach', () => {
   const beach = gameBeach();
   const [a, b] = [{}, {}];

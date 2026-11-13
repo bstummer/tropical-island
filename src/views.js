@@ -143,6 +143,17 @@ const all = [
     run: { seconds: 12, step: 0.75, line: [[0.5, 1], [0.5, 0.3]] },
   },
   {
+    name: 'knee',
+    disabled: true,
+    position: [-20, 1.1, 6.5],
+    yaw: 160,
+    pitch: -55,
+    fov: 60,
+    timeOfDay: 13,
+    brief: "Early afternoon standing knee-deep in the lagoon, looking down through the clear water at the sand round your feet: a net of sunlight moving over the rippled floor, fine at your feet and wider and softer further out, the ripples' glints over it, the sun high on the right.",
+    crops: { feet: [0.5, 0.8], out: [0.5, 0.25] },
+  },
+  {
     name: 'air-swash',
     position: [-30, 25, 18],
     yaw: 0,

@@ -5,7 +5,7 @@
 // water-seen.wgsl, water-seabed.wgsl and water-optics.wgsl. The mirror:
 // water-mirror.wgsl, water-land.wgsl. The surf: water-surf.wgsl, water-foam.wgsl.
 // The beach (swash.wgsl): the sheet a wave runs up the sand as, the glassy film it
-// leaves, its foam. Over the beach as high as the waves may wet it the surface lies
+// leaves, its foam. Over the beach as high as the waves wet it now the surface lies
 // just over the ground, where it draws what this pixel shows of the ground as it is,
 // and with the film and the foam on it, so they mirror what the sea does.
 //
@@ -95,6 +95,11 @@ const FINEST_TURN = mat2x2f(0.8, 0.6, -0.6, 0.8);
 // How many mip levels under what a pixel asks for a cascade's texels start being
 // read smoothly, by the time they are twice as wide as that.
 const WAVES_SMOOTH = 1.0;
+// Over the beach, how many steps of the mesh past where the waves wet it now the surface
+// still lies over the ground, so its edge, where it dips under, lies where the ground is bare.
+const SHORE_STEPS = 2.0;
+// How little of the beach's foam is none: where there is no more, nor film, the ground is bare.
+const SHORE_FOAM_GONE = 1e-3;
 
 struct VertexIn {
   @location(0) position: vec3f,
@@ -108,6 +113,15 @@ struct Varyings {
   // nonsense (a dark line along the horizon).
   @location(0) @interpolate(perspective, centroid) vWorldPos: vec3f,
   @location(1) vRest: vec2f, // where the water here rests: where the waves' texture is read
+  // The beach's water's place (swash.wgsl SwashPlace), in the shore's pieces: lands, rise,
+  // runs, fray; patches, gathers, the run-up in slot 4, none; the run-ups in slots 0 to 3.
+  @location(2) vPlace0: vec4f,
+  @location(3) vPlace1: vec4f,
+  @location(4) vPlace2: vec4f,
+}
+
+fn placeOf(in: Varyings) -> SwashPlace {
+  return SwashPlace(in.vPlace0.x, in.vPlace0.y, in.vPlace0.z, in.vPlace0.w, in.vPlace1.x, in.vPlace1.y, in.vPlace2, in.vPlace1.z);
 }
 
 @vertex
@@ -138,18 +152,32 @@ fn vertexMain(in: VertexIn) -> Varyings {
   moved.y += surfAt(sea, shore, seaWaveAt(rest), 0.0, 0.0, rest, frame.uWaveSeconds).height;
   let ground = terrainHeight(terrainCove(rest), 0);
   moved.y = max(moved.y, troughFloor(ground));
-  // Near the shore the beach's water: the sheet a wave runs up as, and the sea's edge drawn
-  // down after it; over the beach as high as the waves may wet it, just over the ground.
-  if (WATER_SHORE && ground > -water.uShore.x && ground < water.uShore.y * swashRuns(rest)) {
-    let wash = swashAt(rest, ground, sea.x, shore.xy, 0.0);
-    moved = mix(moved, vec3f(0.0, ground + wash.cover, 0.0), 1.0 - smoothstep(0.5 * water.uShore.x, water.uShore.x, -ground));
-    let lift = water.uShore.z + water.uShore.w * length(rest - frame.cameraPosition.xz) + water.uShoreSpacing * in.aNode.z * (1.0 + k);
-    moved.y = max(moved.y, ground + lift);
+  var out: Varyings;
+  out.vPlace0 = vec4f(0.0);
+  out.vPlace1 = vec4f(0.0);
+  out.vPlace2 = vec4f(0.0);
+  if (WATER_SHORE) {
+    // The beach's water's place, for this vertex and the pixels round it.
+    let place = swashPlace(rest, sea.x, shore.xy);
+    out.vPlace0 = vec4f(place.lands, place.rise, place.runs, place.fray);
+    out.vPlace1 = vec4f(place.patches, place.gathers, place.runUp4, 0.0);
+    out.vPlace2 = place.runUps;
+    // Near the shore the beach's water: the sheet a wave runs up as, and the sea's edge drawn
+    // down after it; over the beach as high as the waves wet it now, just over the ground,
+    // and a few steps of the mesh more, where it gives back the bare ground as the terrain drew
+    // it. Higher it lies under the ground, which the terrain alone draws.
+    if (ground > -water.uShore.x && ground < water.uShore.y * place.runs) {
+      let wash = swashFrom(place, ground, 0.0);
+      let spacing = in.aNode.z * (1.0 + k);
+      moved = mix(moved, vec3f(0.0, ground + wash.cover, 0.0), 1.0 - smoothstep(0.5 * water.uShore.x, water.uShore.x, -ground));
+      let lift = water.uShore.z + water.uShore.w * length(rest - frame.cameraPosition.xz) + water.uShoreSpacing * spacing;
+      let wets = ground < wash.top + SHORE_STEPS * spacing * max(wash.rise, SWASH_LEAST) + lift;
+      moved.y = select(min(moved.y, ground - lift), max(moved.y, ground + lift), wets);
+    }
   }
 
   var world = vec3f(rest.x + moved.x, moved.y, rest.y + moved.z);
   world.y -= planetDrop(world.xz);
-  var out: Varyings;
   out.vWorldPos = world;
   out.vRest = rest;
   out.position = frame.projectionMatrix * frame.viewMatrix * vec4f(world, 1.0);
@@ -294,9 +322,9 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
     beach = 1.0 - smoothstep(0.5 * water.uShore.x, water.uShore.x, sea.y);
   }
   let shore = seaShoreAt(in.vRest);
-  var wash = Swash(0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0);
+  var wash = Swash(0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0);
   if (WATER_SHORE && beach > 0.0) {
-    wash = swashAt(seen.xz, seenHeight, sea.x, shore.xy, seenTall);
+    wash = swashFrom(placeOf(in), seenHeight, seenTall);
     // The sheet ripples as it runs; the film it leaves, a little, as the sand under it.
     reach.z = max(reach.z, beach * mix(water.uShoreRipples.y, water.uShoreRipples.x, smoothstep(0.0, 0.01, wash.cover)));
   }
@@ -345,6 +373,15 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
   // The beach's water is rougher: the sheet's, and most the film's over the sand's grains.
   let rougher = beach * mix(water.uShoreVariance.y, water.uShoreVariance.x, smoothstep(0.0, 0.01, wash.cover));
   let variance = 0.5 * (lost.x + lost.y + lost.z) + water.uFineSlopes + rougher + 0.5 * rumpled.z + specularKernel(n);
+
+  // Where the beach lies bare above the sea, the ground as the terrain drew it, which is all
+  // that follows would give back: no water, film or foam on it, nor haze to take out.
+  if (WATER_SHORE && beach >= 1.0 && seenHeight > 0.01 && wash.film <= 0.0 && wash.foam + wash.line + foam < SHORE_FOAM_GONE) {
+    let bare = textureLoad(uOpaque, pixel, 0);
+    if (bare.a >= 1.0) {
+      return sceneOutput(sceneRadiance(bare.rgb) / frame.uExposure, 1.0);
+    }
+  }
 
   let view = normalize(frame.cameraPosition - p);
   let up = vec3f(0.0, 1.0, 0.0);

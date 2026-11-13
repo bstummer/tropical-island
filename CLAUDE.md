@@ -210,7 +210,7 @@ it. A new system's async work goes behind `ready`, or behind `settled()` when it
   take it as seen under the surface (the ground's fades to 0 just under the sea), and `frame.opaque.color` holds the
   samples weighted by it, so what has none adds nothing to the edges of what has (colour / alpha). What lies under the sea leaves
   the haze to the water, which adds it for all of it, and has no sheen: the water's surface mirrors. Over the beach,
-  as high as the waves may wet it, the water's surface lies just over the ground and draws what each pixel shows
+  as high as the waves wet it now, the water's surface lies just over the ground and draws what each pixel shows
   of it as it is, with the waves' sheet, the glassy film they leave and their foam over it (`water/swash.wgsl`),
   so those mirror what the sea does; where they lie, the ground shows no sheen of its own.
 - **Compute** goes through `gpu/compute.js`, in a system's own `frame.beforeScene()` pass, or `frame.afterOpaque()`

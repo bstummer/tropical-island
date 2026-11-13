@@ -32,6 +32,7 @@
 //   soaked  0 to 1: how wet the waves have left the ground, 1 under them and just after
 //   milk    0 to 1: how white with bubbles and sand the sheet over the ground is
 //   runs    m: how high a full wave runs up this beach
+//   top     m: as high as the waves wet the ground now, their sheet or what they left
 import { waveSize } from './surf.js';
 import { seededNoise } from '../world/noise.js';
 import { Vector4 } from '../maths/index.js';
@@ -47,6 +48,9 @@ const LINE_SEED = 7883;
 const FADES = [1.6, 2];
 const STEEPEST = 1; // the slope its timing is worked out for at most, and LEAST at least
 const LEAST = 0.02;
+// How much film is the last of it: the ground beside it is bare, as it was drawn, and the
+// water's surface over it may give the terrain back as it is (water/water.wgsl).
+const FILM_GONE = 0.01;
 
 const smoothstep = (a, b, x) => {
   const t = Math.min(Math.max((x - a) / (b - a), 0), 1);
@@ -109,6 +113,7 @@ export function createSwash(settings, surf, way, period, loop) {
     const down = back * up;
     const fades = 1 - smoothstep(FADES[0] * period, FADES[1] * period, tau);
     let tip = -D;
+    let top = fades > 0 ? R : -D;
     let thick = 0;
     let foam = 0;
     let line = 0;
@@ -119,6 +124,7 @@ export function createSwash(settings, surf, way, period, loop) {
       // Running up: fast at first, slowing to a stop at R.
       const s = tau / up;
       tip = -D + (R + D) * (1 - (1 - s) * (1 - s));
+      top = tip;
       const behind = tip - g;
       const under = smoothstep(-soft, soft, behind);
       const b = Math.max(behind, 0);
@@ -159,6 +165,7 @@ export function createSwash(settings, surf, way, period, loop) {
       foam = lingering * drag;
     }
     wave.tip = tip;
+    wave.top = top;
     wave.thick = thick * fades;
     wave.foam = foam * fades;
     wave.line = line * fades;
@@ -181,6 +188,7 @@ export function createSwash(settings, surf, way, period, loop) {
     const n = Math.floor((t - lands) / period);
     let level = -Infinity;
     let thick = 0;
+    out.top = -Infinity;
     out.foam = 0;
     out.line = 0;
     out.film = 0;
@@ -189,6 +197,7 @@ export function createSwash(settings, surf, way, period, loop) {
     for (const k of [n, n - 1]) {
       const w = oneWave(t - lands - k * period, runUp(k, runs, fa, fo), draws * runs, rise, g, patches, width);
       level = Math.max(level, w.tip);
+      out.top = Math.max(out.top, w.top);
       thick = Math.max(thick, w.thick);
       out.foam += w.foam;
       out.line += w.line;
@@ -196,6 +205,7 @@ export function createSwash(settings, surf, way, period, loop) {
       out.soaked = Math.max(out.soaked, w.soaked);
       out.milk = Math.max(out.milk, w.milk);
     }
+    out.film = Math.max(out.film - FILM_GONE, 0) / (1 - FILM_GONE);
     // What they strand gathers in places along the beach.
     out.line *= Math.max(0.35 + 0.9 * seededNoise(a / linePatches, o / linePatches, LINE_SEED), 0);
     // The sea at the edge drawn down with it, less and less deeper out.

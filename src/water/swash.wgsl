@@ -31,6 +31,7 @@ const SWASH_FADES = vec2f(1.6, 2.0);
 const SWASH_STEEPEST: f32 = 1.0;
 const SWASH_LEAST: f32 = 0.02;
 const SWASH_SEA_DRAWN: f32 = 0.15;
+const SWASH_FILM_GONE: f32 = 0.01;
 
 struct Swash {
   level: f32,
@@ -42,6 +43,7 @@ struct Swash {
   milk: f32, // how white with bubbles and sand the sheet over the ground is
   runs: f32, // m: how high a full wave runs up this beach
   rise: f32, // how steeply the beach rises at its waterline, per metre inland
+  top: f32, // m: as high as the waves wet the ground now, their sheet or what they left
 }
 
 // A wave's share of a full one, in its set and along its length (water/surf.js waveSize).
@@ -72,6 +74,7 @@ struct SwashWave {
   film: f32,
   soaked: f32,
   milk: f32,
+  top: f32, // as high as it wets the ground: its edge running up, then its run-up, while it lasts
 }
 
 // Wave k, landed tau s ago, run up r m from d m below the still sea, where every wave of
@@ -85,11 +88,12 @@ fn swashWave(tau: f32, r: f32, d: f32, rise: f32, g: f32, patches: f32, width: f
   let up = time.x * sqrt(2.0 * r / SWASH_G) / clamp(rise, SWASH_LEAST, SWASH_STEEPEST);
   let down = time.y * up;
   let fades = 1.0 - smoothstep(SWASH_FADES.x * time.w, SWASH_FADES.y * time.w, tau);
-  var w = SwashWave(-d, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
+  var w = SwashWave(-d, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, select(-d, r, fades > 0.0));
   if (tau < up) {
     // Running up: fast at first, slowing to a stop at r.
     let s = tau / up;
     w.tip = -d + (r + d) * (1.0 - (1.0 - s) * (1.0 - s));
+    w.top = w.tip;
     let behind = w.tip - g;
     let under = smoothstep(-soft, soft, behind);
     let b = max(behind, 0.0);
@@ -143,31 +147,93 @@ fn swashWave(tau: f32, r: f32, d: f32, rise: f32, g: f32, patches: f32, width: f
 
 // How high a full wave runs up the beach whose waterline is nearest world xz (m).
 fn swashRuns(xz: vec2f) -> f32 {
+  return swashRunsBy(seaBeachAt(xz).y);
+}
+
+// The same, how hard the surf breaks at that waterline.
+fn swashRunsBy(exposure: f32) -> f32 {
   let run = swash.uSwashRun;
-  return run.x * (run.z + (1.0 - run.z) * smoothstep(0.0, run.y, seaBeachAt(xz).y));
+  return run.x * (run.z + (1.0 - run.z) * smoothstep(0.0, run.y, exposure));
+}
+
+// What the beach's water takes from where it is, all of which changes only over metres:
+// the water's mesh works it out at its vertices and its pixels share it (water.wgsl), so
+// they need none of its noises. When the waves land at the waterline nearest, its slope, how
+// high a full wave runs up there; the edge's fray, -1 to 1, as much as a pixel holds of it;
+// how long the film lasts here, per its usual; how much of what the waves strand gathers here;
+// how high each of the five waves round the one landing now runs up, wave k in slot k mod 5,
+// so the corners of a piece of the mesh agree on each wave, though a wave may land between them.
+struct SwashPlace {
+  lands: f32,
+  rise: f32,
+  runs: f32,
+  fray: f32,
+  patches: f32,
+  gathers: f32,
+  runUps: vec4f, // slots 0 to 3
+  runUp4: f32, // slot 4
+}
+
+const SWASH_SLOTS: i32 = 5;
+
+fn swashSlot(k: f32) -> i32 {
+  return (i32(k) % SWASH_SLOTS + SWASH_SLOTS) % SWASH_SLOTS;
+}
+
+// How high wave k runs up at a place whose slots hold it.
+fn swashPlaceRunUp(place: SwashPlace, k: f32) -> f32 {
+  let i = swashSlot(k);
+  return select(select(select(select(place.runUp4, place.runUps.w, i == 3), place.runUps.z, i == 2), place.runUps.y, i == 1), place.runUps.x, i == 0);
+}
+
+// The place at world xz; shore: m to the nearest waterline (seaAt().x), inland: the way
+// inland (seaShoreAt().xy).
+fn swashPlace(xz: vec2f, shore: f32, inland: vec2f) -> SwashPlace {
+  let beach = seaBeachAt(xz);
+  let ao = terrainCove(xz);
+  let foot = ao + inland * shore;
+  var place: SwashPlace;
+  place.lands = beach.x;
+  place.rise = beach.z;
+  place.runs = swashRunsBy(beach.y);
+  place.fray = seededNoise(ao / swash.uSwashSheet.w, SWASH_FRAY_SEED);
+  place.patches = 1.0 + swash.uSwashFilm.y * seededNoise(ao / swash.uSwashFilm.z, SWASH_FILM_SEED);
+  place.gathers = max(0.35 + 0.9 * seededNoise(ao / swash.uSwashLook.y, SWASH_LINE_SEED), 0.0);
+  let n = floor((frame.uWaveSeconds - beach.x) / swash.uSwashTime.w);
+  var slots: array<f32, SWASH_SLOTS>;
+  for (var i = -2; i <= 2; i++) {
+    let k = n + f32(i);
+    slots[swashSlot(k)] = swashRunUp(k, place.runs, foot);
+  }
+  place.runUps = vec4f(slots[0], slots[1], slots[2], slots[3]);
+  place.runUp4 = slots[4];
+  return place;
 }
 
 // The beach at world xz, its ground `ground` m above the still sea, its edges as soft as
 // `width` m in height; shore: m to the nearest waterline (seaAt().x), inland: the way
 // inland (seaShoreAt().xy).
 fn swashAt(xz: vec2f, ground: f32, shore: f32, inland: vec2f, width: f32) -> Swash {
-  let beach = seaBeachAt(xz);
-  let runs = swashRuns(xz);
-  let ao = terrainCove(xz);
-  let foot = ao + inland * shore;
+  return swashFrom(swashPlace(xz, shore, inland), ground, width);
+}
+
+// The beach at a place, its ground `ground` m above the still sea, its edges as soft as
+// `width` m in height.
+fn swashFrom(place: SwashPlace, ground: f32, width: f32) -> Swash {
   let sheet = swash.uSwashSheet;
+  let runs = place.runs;
   // The edge's fray, until a pixel is too tall to hold it.
   let fray = sheet.z * (1.0 - smoothstep(0.5, 1.5, width / max(sheet.z, 1e-6)));
-  let g = ground + fray * seededNoise(ao / sheet.w, SWASH_FRAY_SEED);
-  let patches = 1.0 + swash.uSwashFilm.y * seededNoise(ao / swash.uSwashFilm.z, SWASH_FILM_SEED);
+  let g = ground + fray * place.fray;
   let period = swash.uSwashTime.w;
-  let n = floor((frame.uWaveSeconds - beach.x) / period);
-  var out = Swash(-1e9, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, runs, beach.z);
+  let n = floor((frame.uWaveSeconds - place.lands) / period);
+  var out = Swash(-1e9, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, runs, place.rise, -1e9);
   var thick = 0.0;
   for (var j = 0; j < 2; j++) {
     let k = n - f32(j);
-    let w = swashWave(frame.uWaveSeconds - beach.x - k * period, swashRunUp(k, runs, foot), swash.uSwashTime.z * runs, beach.z, g, patches, width);
+    let w = swashWave(frame.uWaveSeconds - place.lands - k * period, swashPlaceRunUp(place, k), swash.uSwashTime.z * runs, place.rise, g, place.patches, width);
     out.level = max(out.level, w.tip);
+    out.top = max(out.top, w.top);
     thick = max(thick, w.thick);
     out.foam += w.foam;
     out.line += w.line;
@@ -175,8 +241,10 @@ fn swashAt(xz: vec2f, ground: f32, shore: f32, inland: vec2f, width: f32) -> Swa
     out.soaked = max(out.soaked, w.soaked);
     out.milk = max(out.milk, w.milk);
   }
+  // The last of the film is gone, so the ground beside it is bare, as it was drawn.
+  out.film = max(out.film - SWASH_FILM_GONE, 0.0) / (1.0 - SWASH_FILM_GONE);
   // What they strand gathers in places along the beach.
-  out.line *= max(0.35 + 0.9 * seededNoise(ao / swash.uSwashLook.y, SWASH_LINE_SEED), 0.0);
+  out.line *= place.gathers;
   // The sea at the edge drawn down with it, less and less deeper out.
   let sea = min(out.level, 0.0) * exp(min(g, 0.0) / SWASH_SEA_DRAWN);
   out.cover = max(max(thick, sea - g), 0.0);

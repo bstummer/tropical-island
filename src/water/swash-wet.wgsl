@@ -13,6 +13,12 @@ fn groundWet(xz: vec2f, aboveSea: f32, width: f32) -> Wet {
   if (aboveSea - width > (wetParams.uWet.z + WET_REACH) * swash.uSwashRun.x * swash.uSwashLook.z / wetParams.uWet.z) {
     return wetAt(0.0);
   }
+  // Lower than any wave draws the sea down it is always under water.
+  if (aboveSea + width < -swash.uSwashTime.z * swash.uSwashRun.x) {
+    var under = wetAt(1.0);
+    under.film = 1.0;
+    return under;
+  }
   let s = swashAt(xz, aboveSea, seaAt(xz).x, seaShoreAt(xz).xy, width);
   // The sets have wetted the beach as high as its highest wave runs: so high is the sets' wetness's dry top.
   let scale = max(s.runs * swash.uSwashLook.z / wetParams.uWet.z, 0.01);
