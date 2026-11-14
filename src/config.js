@@ -771,7 +771,10 @@ export const water = {
   // second (the cover the surf was tuned with, PLAN.md 6.6); how wide a pixel has it
   // as an even veil through and through (`softOver`, m); `stands`: how high
   // whitewater stands off the water where it breaks hardest (m), and how much more or less of a
-  // wave breaks in `lumps` along its crest, each wave its own, and m across; `facing`: how much of the sun's light it takes with the sun on the horizon; `backlit`:
+  // wave breaks in `lumps` along its crest, each wave its own, and m across; how much how tall it stands varies, in
+  // `heaps` m across; by the reef its water moves on along the way
+  // it runs `lean` m per m its crest stands, its face narrowing to that share of its width as it peaks, so it
+  // leans on; `facing`: how much of the sun's light it takes with the sun on the horizon; `backlit`:
   // how much of it its thin tops and spray let through, and how much of that onwards
   // (Henyey-Greenstein g), so against a low sun it glows; its `relief` up close: m towards the
   // sun over which it is told, how much a rise of one of the lace's holes' radii per m brightens
@@ -802,8 +805,10 @@ export const water = {
     patches: [24, 5.3],
     lace: { tiles: [3.1, 7.3], stretch: 0.7, covers: [0.32, 0.68] },
     softOver: 0.4,
-    stands: 0.5,
+    stands: 0.65,
     lumps: [0.5, 3],
+    heaps: [0.5, 2.2],
+    lean: [0.6, 0.5],
     loop: wavesLoop,
     facing: 0.4,
     backlit: [0.25, 0.6],
@@ -874,11 +879,19 @@ export const water = {
     // the lagoon's own waves between `from` m of depth and the second, and `within` m of the
     // waterline nearest (from and to), not over a reef's flat far from any beach; it breaks once it stands
     // `breaks` times as tall as the water is deep, and has broken in full `spread` of that depth
-    // further in. Its face takes `faces` of its period, before it breaks and once it has; it
-    // falls behind its crest over `back` of it. Its break leaves `foam`, trailing behind it over
-    // `trail` of its period and running `toe` of it ahead on its face, drifting inland at `flow`
-    // times its speed, and the water it broke in is `milk` white with sand and bubbles.
-    bore: { height: 0.6, breaks: 0.8, from: [1.2, 0.8], within: [12, 20], faces: [0.035, 0.012], back: 0.12, spread: 0.3, foam: 1.6, trail: 0.25, toe: 0.02, flow: 0.5, milk: 0.4 },
+    // further in. Its face takes `faces` of its period, out in the lagoon and from where it breaks,
+    // steepening from `steepens` times as deep as that; it falls behind its crest over `back` of
+    // it; its water moves inland `lean` m per m it stands, so its face leans in. Its break leaves
+    // `foam`, thick in the roller at its front over `roll` of its period, `holds` of that trailing
+    // behind it over `trail` of it, and running `toe` of it ahead on its face, drifting inland at
+    // `flow` times its speed; and the water it broke in holds `milk` of the sand it stirs up.
+    bore: { height: 0.6, breaks: 0.8, from: [1.2, 0.8], within: [12, 20], faces: [0.035, 0.012], steepens: 2.5, back: 0.12, lean: 0.9, spread: 0.3, foam: 1.6, roll: 0.04, holds: 0.35, trail: 0.25, toe: 0.02, flow: 0.5, milk: 0.4 },
+    // The sand the waves stir up clouds the water near the shore, `always` per m the eye's ray goes
+    // through it, gone by `within` m from the waterline, and `broken` per m more as much as a wave
+    // just broke there (its `milk`), in clouds `clouds` m across; water thick with it sends back
+    // `albedo` (linear) of the light on it, a share of the sun's mostly `onwards` [share,
+    // Henyey-Greenstein g], so against a low sun it glows.
+    stirred: { always: 0.45, within: 16, broken: 2.5, clouds: 2.3, albedo: [0.22, 0.5, 0.44], onwards: [0.4, 0.7] },
   },
   // Light on the floor under shallow water (water/caustics.js, which says what it is): the
   // ripples that gather it, [wavelength m, steepness, degrees off the wind], each turning a whole
@@ -922,7 +935,7 @@ export const water = {
     falls: 4,
     from: 0.8,
     size: [1.2, 1.6],
-    wide: 1.6,
+    wide: 2.4,
     spread: 6,
     takes: 0.15,
     spots: 0.45,

@@ -39,7 +39,12 @@ fn seabedSeen(depth: f32, fade: vec2f) -> f32 {
 // the seabed's radiance in air; viewCos, sunCos: above the surface; sun, sky:
 // the irradiance on the surface from each.
 fn waterLeaving(optics: WaterOptics, seabed: vec3f, depth: f32, viewCos: f32, sunCos: f32, sun: vec3f, sky: vec3f) -> vec3f {
-  let up = 1.0 / cosineBelow(viewCos, optics.uIor);
+  return waterLeavingAlong(optics, seabed, depth, 1.0 / cosineBelow(viewCos, optics.uIor), sunCos, sun, sky);
+}
+
+// The same, the eye's ray going `up` m through the water per m of its depth: a wave's face
+// tilted towards the eye bends it in flatter than level water would, through more of it.
+fn waterLeavingAlong(optics: WaterOptics, seabed: vec3f, depth: f32, up: f32, sunCos: f32, sun: vec3f, sky: vec3f) -> vec3f {
   let es = exp(-optics.uDimming * depth * (1.0 / cosineBelow(sunCos, optics.uIor) + up));
   let ek = exp(-optics.uDimming * depth * (1.0 / SKY_COSINE + up));
   let sunIs = sun * (1.0 - surfaceMirror(sunCos));

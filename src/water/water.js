@@ -48,7 +48,7 @@ export function opticsUniforms({ dimming, body, through, ior, seabedFade }) {
 }
 
 // The uniforms of water-surf.wgsl, from config.water.surf and the way the swell runs.
-export function surfUniforms({ period, height, shoals, fades, limit, dips, least, back, front, fall, ahead, run, always, wave, trail, toe, sets, beat, along, wander, stands, lumps, loop }, way) {
+export function surfUniforms({ period, height, shoals, fades, limit, dips, least, back, front, fall, ahead, run, always, wave, trail, toe, sets, beat, along, wander, stands, lumps, heaps, lean, loop }, way) {
   if (wander.length !== SURF_WANDERS) throw new Error(`config.water.surf: ${wander.length} terms of the front's wander; water-surf.wgsl holds ${SURF_WANDERS}`);
   return {
     uSurfSets: { value: new Vector4(sets[0], sets[1], beat, 0) },
@@ -61,6 +61,8 @@ export function surfUniforms({ period, height, shoals, fades, limit, dips, least
     uSurfBreak: { value: new Vector4(wave, trail, toe, dips) },
     uSurfStands: { value: stands },
     uSurfLumps: { value: new Vector3(...lumps, Math.round(loop / period)) },
+    uSurfLean: { value: new Vector2(...lean) },
+    uSurfHeaps: { value: new Vector2(...heaps) },
   };
 }
 
@@ -279,9 +281,9 @@ export function create(ctx) {
       return swash(map.at(a, o), a, o, groundAt(x, z), t - spectrum.loop * Math.floor(t / spectrum.loop), out);
     },
     // The waves coming in over the last of the shallows at world x, z: { height, slope, foam,
-    // milk, along } (water/swash.js bore); none until ready.
+    // milk, along, lean, drift, wave, crest, across } (water/swash.js bore); none until ready.
     boreAt(x, z, t = ctx.clock.elapsed, out = {}) {
-      if (!swash) return Object.assign(out, { height: 0, slope: 0, foam: 0, milk: 0, along: 0 });
+      if (!swash) return Object.assign(out, { height: 0, slope: 0, foam: 0, milk: 0, along: 0, lean: 0, drift: 0, wave: 0, crest: 0, across: 0 });
       const [a, o] = island.toCove(x, z);
       return swash.bore(map.at(a, o), a, o, t - spectrum.loop * Math.floor(t / spectrum.loop), out);
     },

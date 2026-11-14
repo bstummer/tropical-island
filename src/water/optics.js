@@ -43,8 +43,13 @@ export function seabedSeen(depth, seabedFade) {
 // surface): seabed is the radiance of the seabed in air; depth in metres;
 // viewCos the view's cosine above the surface, sunCos the sun's; sun and sky
 // the irradiance on the surface from each, per channel. Into `out`.
-export function waterLeaving(seabed, depth, viewCos, sunCos, sun, sky, { dimming, body, through, ior, seabedFade }, out = [0, 0, 0]) {
-  const up = 1 / cosineBelow(viewCos, ior);
+export function waterLeaving(seabed, depth, viewCos, sunCos, sun, sky, water, out = [0, 0, 0]) {
+  return waterLeavingAlong(seabed, depth, 1 / cosineBelow(viewCos, water.ior), sunCos, sun, sky, water, out);
+}
+
+// The same, the eye's ray going `up` m through the water per m of its depth: a wave's face
+// tilted towards the eye bends it in flatter than level water would, through more of it.
+export function waterLeavingAlong(seabed, depth, up, sunCos, sun, sky, { dimming, body, through, ior, seabedFade }, out = [0, 0, 0]) {
   const sunWay = depth * (1 / cosineBelow(sunCos, ior) + up);
   const skyWay = depth * (1 / SKY_COSINE + up);
   const sunIn = 1 - surfaceMirror(sunCos);

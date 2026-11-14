@@ -672,19 +672,31 @@ test('what breaks stands up off the water as whitewater, as tall as `stands` at 
   const deep = waveSpeed(Infinity, settings.period);
   // r m along the way the swell runs, on its crest: it gets there r / speed s later.
   const here = (r, breaks = 1) => ({ swell: 0.4, depth: 2, breaks, reef: 0, late: r / speed - r / deep, speed });
-  const at = (r, t, breaks, which = surf) => which(here(r, breaks), r * gameWay[0], r * gameWay[1], t);
+  // s m along the crest from the line it is followed along.
+  const at = (r, t, breaks, which = surf, s = 0) => which(here(r, breaks), r * gameWay[0] - s * gameWay[1], r * gameWay[1] + s * gameWay[0], t);
   let tallest = 0;
+  let steepest = 0;
   for (let t = 0; t < 3 * settings.period; t += 0.05) {
-    const stands = at(0, t, 1).height - at(0, t, 1, flat).height;
-    assert.ok(stands >= -1e-12 && stands <= settings.stands + 1e-9, `at ${t} s it stands ${stands} m off the water`);
-    tallest = Math.max(tallest, stands);
+    // Heaped up in places along the crest, lower between.
+    for (let s = 0; s < 4 * settings.heaps[1]; s += 0.5) {
+      const stands = at(0, t, 1, surf, s).height - at(0, t, 1, flat, s).height;
+      assert.ok(stands >= -1e-12 && stands <= settings.stands + 1e-9, `at ${t} s, ${s} m along the crest it stands ${stands} m off the water`);
+      tallest = Math.max(tallest, stands);
+    }
     assert.ok(Math.abs(at(0, t, 0).height - at(0, t, 0, flat).height) < 1e-12, `at ${t} s whitewater stands where nothing breaks`);
-    // Its slope along the way it runs, against its height a little either way.
+    // Its slope along the way it runs, against its height a little either way, where its water has
+    // moved on to as it leans on: never past the water ahead of it, so its face folds over nowhere.
     const step = 0.01;
-    const slope = (at(step, t, 1).height - at(-step, t, 1).height) / (2 * step);
+    const [ahead, behind] = [at(step, t, 1), at(-step, t, 1)];
+    const apart = 2 * step + ahead.lean - behind.lean;
+    assert.ok(apart > 0.05 * step, `at ${t} s the water ${2 * step} m apart ends up ${apart} m apart`);
+    const slope = (ahead.height - behind.height) / apart;
     assert.ok(Math.abs(slope - at(0, t, 1).slope) < 0.02 + 0.02 * Math.abs(slope), `at ${t} s: slope ${at(0, t, 1).slope}, its height's ${slope}`);
+    steepest = Math.max(steepest, -at(0, t, 1).slope);
   }
-  assert.ok(tallest > 0.4 * settings.stands, `whitewater stands ${tallest} m at most`);
+  assert.ok(tallest > 0.3 * settings.stands, `whitewater stands ${tallest} m at most`);
+  // Its face leans on, steeper than its height alone would make it.
+  assert.ok(steepest > 0.6, `its face rises at most ${steepest} per m`);
 });
 
 test('spray is thrown off spots on the reef\'s crest, under water, where the surf breaks hard: on every reef, and nowhere else', () => eachSea(({ name, map }) => {

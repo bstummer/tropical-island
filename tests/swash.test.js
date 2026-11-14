@@ -353,18 +353,50 @@ test('the waves coming in raise the sea no higher on average, change smoothly, a
   const [bare, withBeach] = [make(null), make({ swash: beach.swash, band: settings.band, wets: settings.wets })];
   const [p, q] = [[0, 0, 0], [0, 0, 0]];
   let moved = 0;
+  let leaned = 0;
   for (const point of alongCove(beach).filter((_, i) => i % 4 === 0)) {
     for (const [px, pz] of outFrom(beach, point, 1).filter(([qx, qz]) => beach.heightmap.heightAt(qx, qz) < -settings.band)) {
       for (const t of [30, 33, 36]) {
         bare.displacement(px, pz, t, p);
         withBeach.displacement(px, pz, t, q);
-        const coming = boreAt(beach, px, pz, t, b).height;
-        assert.ok(Math.abs(q[1] - Math.max(p[1] + coming, config.water.shallowTroughs * beach.heightmap.heightAt(px, pz))) < 1e-9, `at ${px}, ${pz}, t ${t}: ${q[1]} for ${p[1]} and the wave coming in, ${coming}`);
-        moved = Math.max(moved, Math.abs(coming));
+        const coming = boreAt(beach, px, pz, t, b);
+        assert.ok(Math.abs(q[1] - Math.max(p[1] + coming.height, config.water.shallowTroughs * beach.heightmap.heightAt(px, pz))) < 1e-9, `at ${px}, ${pz}, t ${t}: ${q[1]} for ${p[1]} and the wave coming in, ${coming.height}`);
+        // Its top moves inland, as far as the wave leans in.
+        const here = beach.map.at(...beach.island.toCove(px, pz));
+        const [ix, iz] = beach.island.fromCove(here.inlandA, here.inlandO);
+        const inland = Math.hypot(ix, iz);
+        assert.ok(Math.abs(q[0] - p[0] - (coming.lean * ix) / inland) < 1e-9 && Math.abs(q[2] - p[2] - (coming.lean * iz) / inland) < 1e-9, `at ${px}, ${pz}, t ${t}: moved ${q[0] - p[0]}, ${q[2] - p[2]} for a lean of ${coming.lean}`);
+        moved = Math.max(moved, Math.abs(coming.height));
+        leaned = Math.max(leaned, coming.lean);
       }
     }
   }
   assert.ok(moved > 0.02, `the waves coming in move the surface only ${moved} m`);
+  assert.ok(leaned > 0.02, `the waves coming in lean in only ${leaned} m`);
+});
+
+test('a wave coming in leans in: its face steepens as it nears where it breaks, and folds over nowhere', () => {
+  const beach = gameBeach();
+  const b = {};
+  const c = {};
+  let steepest = 0;
+  for (const point of alongCove(beach).filter((_, i) => i % 3 === 1)) {
+    for (const [x, z] of outFrom(beach, point, 0.25)) {
+      for (let t = 0; t < 200; t += 0.25) {
+        boreAt(beach, x, z, t, b);
+        // Where the water a step further out ends up: never up to this one's, so the surface folds nowhere.
+        const [a, o] = beach.island.toCove(x, z);
+        const here = beach.map.at(a, o);
+        const step = 0.05;
+        const [ia, io] = [here.inlandA, here.inlandO];
+        beach.swash.bore(beach.map.at(a - ia * step, o - io * step), a - ia * step, o - io * step, t, c);
+        assert.ok(c.lean - b.lean < 0.95 * step, `at ${x.toFixed(2)}, ${z.toFixed(2)}, t ${t}: the water ${step} m further out moves ${c.lean.toFixed(3)} m in, this ${b.lean.toFixed(3)}`);
+        steepest = Math.max(steepest, b.slope);
+      }
+    }
+  }
+  // A face steeper than its height alone makes it: the slope as drawn past 1 (45 degrees).
+  assert.ok(steepest > 1, `the steepest face rises ${steepest.toFixed(2)} per m`);
 });
 
 test('no wave comes in to break over shallows far from any beach, as over a reef\'s flat', () => {

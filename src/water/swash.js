@@ -38,7 +38,7 @@
 //   top     m: as high as the waves wet the ground now, their sheet or what they left
 import { waveSize } from './surf.js';
 import { seededNoise } from '../world/noise.js';
-import { Vector2, Vector4 } from '../maths/index.js';
+import { Vector2, Vector3, Vector4 } from '../maths/index.js';
 
 const G = 9.81;
 // The noises' seeds: a wave's lobes take LOBE_SEED + LOBES x its number in the loop + octave.
@@ -54,6 +54,8 @@ const LEAST = 0.02;
 // How much film is the last of it: the ground beside it is bare, as it was drawn, and the
 // water's surface over it may give the terrain back as it is (water/water.wgsl).
 const FILM_GONE = 0.01;
+// The share of its period past which a place's foam is the next wave's (bore()).
+const BORE_NEXT = 0.9;
 
 const smoothstep = (a, b, x) => {
   const t = Math.min(Math.max((x - a) / (b - a), 0), 1);
@@ -91,7 +93,11 @@ export function swashUniforms(settings, surf, way, period, loop) {
     uSwashBore: { value: new Vector4(settings.bore.height, settings.bore.breaks, ...settings.bore.from) },
     uSwashBoreFace: { value: new Vector4(...settings.bore.faces, settings.bore.back, settings.bore.spread) },
     uSwashBoreFoam: { value: new Vector4(settings.bore.foam, settings.bore.trail, settings.bore.toe, settings.bore.flow) },
-    uSwashBoreWithin: { value: new Vector2(...settings.bore.within) },
+    uSwashBoreWithin: { value: new Vector4(...settings.bore.within, settings.bore.lean, settings.bore.steepens) },
+    uSwashBoreRoll: { value: new Vector2(settings.bore.roll, settings.bore.holds) },
+    uSwashStirred: { value: new Vector4(settings.stirred.always, settings.stirred.broken, settings.stirred.clouds, settings.stirred.within) },
+    uSwashStirredAlbedo: { value: new Vector3(...settings.stirred.albedo) },
+    uSwashStirredOnwards: { value: new Vector2(...settings.stirred.onwards) },
   };
 }
 
@@ -184,18 +190,24 @@ export function createSwash(settings, surf, way, period, loop) {
 
   // The waves as they come in over the last of the shallows (settings.bore), at a, o, where
   // the sea map (here) says the water is `depth` m deep and the waterline nearest `shore` m off:
-  // into out, { height, slope, foam, milk, along }: m above the still sea; how it rises per m
-  // further out; how much foam its break leaves, as the beach's; how white with sand and
-  // bubbles the water it broke in is; and how far (m) that foam has drifted inland with it.
+  // into out, { height, slope, foam, milk, along, lean, drift, wave, crest, across }: m above the still sea; how
+  // it rises per m further out, as its face leans in; how much foam its break leaves, as the
+  // beach's; how much of the sand it stirs up the water it broke in holds; how far (m) that foam
+  // has drifted inland with it; how far (m) the water at a, o has moved inland, its top outrunning
+  // its foot; how far (m) what the last wave to pass stirred up has drifted in, and its number;
+  // and how near the top of the nearest crest the water stands, 0 to 1, and m through it there.
   // Each wave comes in as fast as water this shallow lets it, timed to reach the waterline
-  // when it lands there, standing taller as the water shallows (Green's law), until it stands
-  // `breaks` times as tall as the water is deep: there it breaks, a big wave further out and
-  // harder, a small one barely, its face steepening into a bore that runs on into its run-up,
-  // as tall as the water lets it. Its foam trails behind its front, and runs ahead on its face.
+  // when it lands there, standing taller as the water shallows (Green's law), its face
+  // steepening from `steepens` times as deep as it breaks, until it stands `breaks` times as
+  // tall as the water is deep: there it breaks, a big wave further out and harder, a small
+  // one barely, into a bore that runs on into its run-up, as tall as the water lets it. Its
+  // water moves inland by `lean` of how far it stands (as a Gerstner wave's does), so its face
+  // leans in, the more the steeper, near upright as a big one breaks. Its foam trails behind
+  // its front, and runs ahead on its face.
   function bore(here, a, o, t, out = {}) {
     const { lands, shore, depth, inlandA, inlandO } = here;
-    const { height: tall, breaks, from, within, faces, back: falls, spread, foam: foamy, trail, toe, flow, milk: milky } = settings.bore;
-    out.height = out.slope = out.foam = out.milk = out.along = 0;
+    const { height: tall, breaks, from, within, faces, back: falls, spread, foam: foamy, roll, holds, trail, toe, flow, milk: milky, lean, steepens } = settings.bore;
+    out.height = out.slope = out.foam = out.milk = out.along = out.lean = out.drift = out.wave = out.crest = out.across = 0;
     if (depth <= 0 || depth >= from[0] || shore >= within[1]) return out;
     const runs = runsAt(here);
     const fa = a + inlandA * shore;
@@ -215,7 +227,8 @@ export function createSwash(settings, surf, way, period, loop) {
       const breaksAt = (comes / breaks) ** 0.8;
       const tallHere = appear * Math.min(comes / Math.sqrt(Math.sqrt(depth)), breaks * depth);
       const broke = smoothstep(0, 1, (breaksAt - depth) / (spread * breaksAt + 0.01));
-      return { tall: tallHere, broke, share: comes / scale, front: faces[0] + (faces[1] - faces[0]) * broke };
+      const steep = Math.max(broke, 1 - smoothstep(breaksAt, steepens * breaksAt, depth));
+      return { tall: tallHere, broke, share: comes / scale, front: faces[0] + (faces[1] - faces[0]) * steep };
     };
     const now = one(k);
     const next = one(k + 1);
@@ -223,19 +236,31 @@ export function createSwash(settings, surf, way, period, loop) {
     const before = Math.exp(-(((1 - f) / next.front) ** 2));
     // Less its mean over the period, so it raises the sea no higher on average.
     const mean = 0.886 * ((1 - f) * now.tall * (falls + now.front) + f * next.tall * (falls + next.front));
-    out.height = now.tall * behind + next.tall * before - mean;
+    const crests = now.tall * behind + next.tall * before;
+    out.height = crests - mean;
     const rising = (-2 * f * now.tall * behind) / (falls * falls) + (2 * (1 - f) * next.tall * before) / (next.front * next.front);
-    out.slope = rising / (period * c);
+    out.lean = lean * crests;
+    const raw = rising / (period * c);
+    out.slope = raw / Math.max(1 - lean * raw, 0.1);
+    // Near its top a crest is thin: m through it at this height, its face's width and its back's.
+    const last = behind * now.tall > before * next.tall;
+    out.crest = Math.max(now.tall, next.tall) > 0 ? (last ? behind : before) : 0;
+    out.across = Math.sqrt(Math.max(-Math.log(Math.max(out.crest, 1e-4)), 0)) * ((last ? now.front : next.front) + falls) * period * c;
     // Its foam: none over the last of the water, where the run-up's own takes over.
     const ashore = appear * smoothstep(0, 2 * draws * runs, depth);
-    const trails = ashore * foamy * now.broke * now.share * Math.exp(-f / trail);
+    // Thick in the roller at its front, then thinning behind it into patches.
+    const trails = ashore * foamy * now.broke * now.share * ((1 - holds) * Math.exp(-f / roll) + holds * Math.exp(-f / trail));
     const leads = ashore * foamy * next.broke * next.share * Math.exp(-(((1 - f) / toe) ** 2));
     // It breaks whiter in places along the beach, where the foam it strands gathers too.
     const gathers = 0.4 + 0.6 * Math.max(0.35 + 0.9 * seededNoise(a / linePatches, o / linePatches, LINE_SEED), 0);
     out.foam = (trails + leads) * gathers;
     out.milk = ashore * milky * Math.min(now.broke * now.share * Math.exp(-f / (2 * trail)), 1);
+    // The foam drifts with the wave that made it: the next one's on its face, ahead of it, once
+    // what the last one left has gone (a blend of the two would stretch it across the front).
     const since = t - lands - k * period;
-    out.along = (flow * c0 * (trails * since + leads * (since - period))) / Math.max(trails + leads, 1e-6);
+    out.along = flow * c0 * (f > BORE_NEXT ? since - period : since);
+    out.drift = flow * c0 * since;
+    out.wave = k;
     return out;
   }
 

@@ -11,7 +11,7 @@ import { largestWaves } from './spectrum.js';
 // the water under it, to the ground as drawn (sea-map.wgsl troughFloor); none: as deep as they go.
 // beach: { swash, band, wets } (water/swash.js's at(); config.water.swash): near a shore, as
 // water/water.wgsl's vertices, the waves coming in over the last of the shallows (at.bore()),
-// and the beach's water, the sheet a wave runs up and the sea's edge drawn down after it, which
+// leaning in as they do, and the beach's water, the sheet a wave runs up and the sea's edge drawn down after it, which
 // takes over from the sea's over `band` m of depth, as high up the beach as `wets` times a full
 // wave's run-up; over that, bare ground has none. Needs shallow.
 export function createSurface(spectrum, map, toCove, { rest, most }, ripplesLeast, ripplesDepth = 1, surf = null, chopWander = { reach: 0, across: 1 }, shallow = null, beach = null) {
@@ -23,6 +23,14 @@ export function createSurface(spectrum, map, toCove, { rest, most }, ripplesLeas
   const smoothstep = (a, b, x) => {
     const t = Math.min(Math.max((x - a) / (b - a), 0), 1);
     return t * t * (3 - 2 * t);
+  };
+  // The cove's frame to the world's: toCove turns without stretching, so its inverse is its transpose.
+  const [[ax, ox], [az, oz]] = [toCove(1, 0), toCove(0, 1)];
+  const lean = (amount, a, o, out) => {
+    const [x, z] = [ax * a + ox * o, az * a + oz * o];
+    const across = Math.hypot(x, z) || 1;
+    out[0] += (amount * x) / across;
+    out[2] += (amount * z) / across;
   };
 
   // How the cascades reach a point (cascadeReach in water/sea-map.wgsl): the
@@ -80,7 +88,12 @@ export function createSurface(spectrum, map, toCove, { rest, most }, ripplesLeas
       if (c === 1) chopRest(x, z, chopAt);
       displaced(cascade.waves, cascade.choppy, c === 1 ? chopAt[0] : x, c === 1 ? chopAt[1] : z, wrapped, out, reach[c]);
     });
-    if (surf) out[1] += surf(here, x, z, wrapped, breaking).height;
+    if (surf) {
+      // By the reef a wave's top outruns its foot, so its face leans on.
+      surf(here, x, z, wrapped, breaking);
+      out[1] += breaking.height;
+      if (breaking.lean) lean(breaking.lean, here.wayA, here.wayO, out);
+    }
     coming.height = 0;
     if (beach) {
       const [a, o] = toCove(x, z);
@@ -99,6 +112,8 @@ export function createSurface(spectrum, map, toCove, { rest, most }, ripplesLeas
         out[1] += (ground + wash.cover - out[1]) * takes;
       }
     }
+    // Each wave's top outruns its foot as it comes in, so its face leans in.
+    if (beach && coming.lean) lean(coming.lean, here.inlandA, here.inlandO, out);
     return out;
   }
 

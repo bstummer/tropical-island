@@ -15,9 +15,14 @@ struct SurfSettings {
   uSurfWander: array<vec4f, 5>, // its front's wander, per term: m, and rad/m along x and z
   uSurfStands: f32, // m: how high whitewater stands off the water where it breaks hardest
   uSurfLumps: vec3f, // how much more or less of a wave breaks in lumps along its crest; m across; waves in the loop
+  uSurfLean: vec2f, // m its water moves on along the way it runs per m a crest peaked by the reef stands; the share of its face's width left as it peaks
+  uSurfHeaps: vec2f, // how much how tall whitewater stands varies along the crest, in heaps m across
 }
 
 const SURF_LUMP_SEED: u32 = 7867u;
+const SURF_HEAP_SEED: u32 = 7877u;
+// The most seededNoise strays from 0 either way, near enough: whitewater heaped by it stands no taller than uSurfStands.
+const SURF_NOISE_MOST: f32 = 1.4;
 
 // How much more or less of wave n breaks at xz: lumps along its crest, each wave its own (water/surf.js).
 fn surfLumps(n: f32, xz: vec2f) -> f32 {
@@ -38,7 +43,8 @@ fn surfSize(n: f32, across: f32) -> f32 {
 struct Surf {
   foam: f32,
   height: f32,
-  slope: f32, // along the way it runs
+  slope: f32, // along the way it runs, as its face leans on
+  lean: f32, // m the water here has moved on along the way it runs, its top outrunning its foot
 }
 
 // When the wave that broke here last came by, and how hard it broke: s since its crest
@@ -64,7 +70,7 @@ fn surfBreak(sea: vec4f, shore: vec4f, wave: vec4f, xz: vec2f, t: f32) -> vec3f 
 fn surfAt(sea: vec4f, shore: vec4f, wave: vec4f, wide: f32, xz: vec2f, t: f32) -> Surf {
   let reef = shore.w;
   if (sea.z <= 0.0 || reef >= surf.uSurfWay.w) {
-    return Surf(0.0, 0.0, 0.0);
+    return Surf(0.0, 0.0, 0.0, 0.0);
   }
   // Its front wanders a few metres, at sizes from hundreds of metres to a few.
   var wander = 0.0;
@@ -90,14 +96,21 @@ fn surfAt(sea: vec4f, shore: vec4f, wave: vec4f, wide: f32, xz: vec2f, t: f32) -
   let nextTall = min(rises * min(next, held), most);
   let stands = mix(nowTall, nextTall, f);
   let dies = exp(min(reef, 0.0) / surf.uSurfFoam.x) * (1.0 - smoothstep(surf.uSurfWay.z, surf.uSurfWay.w, reef));
-  // A long round wave at sea; by the reef a peak with a steep face, and flat water ahead of it; round again as it dies on the flat.
+  // A long round wave at sea; by the reef a peak with a steep face, narrowing as it peaks, and flat
+  // water ahead of it; round again as it dies on the flat.
   let peak = smoothstep(0.15, 0.6, 1.0 - speed / deep) * exp(min(reef, 0.0) / surf.uSurfFoam.x);
   let back = surf.uSurfWave.z;
-  let front = surf.uSurfWave.w;
+  let front = surf.uSurfWave.w * mix(1.0, surf.uSurfLean.y, peak);
   let behind = exp(-(f / back) * (f / back));
   let before = exp(-((1.0 - f) / front) * ((1.0 - f) / front));
-  let height = mix(0.5 * stands * cos(2.0 * PI * f), nowTall * behind + nextTall * before - 0.886 * (back + front) * stands, peak);
-  let rising = mix(-PI * stands * sin(2.0 * PI * f), -2.0 * f * nowTall * behind / (back * back) + 2.0 * (1.0 - f) * nextTall * before / (front * front), peak);
+  let crests = nowTall * behind + nextTall * before;
+  let height = mix(0.5 * stands * cos(2.0 * PI * f), crests - 0.886 * (back + front) * stands, peak);
+  let peakedly = -2.0 * f * nowTall * behind / (back * back) + 2.0 * (1.0 - f) * nextTall * before / (front * front);
+  let rising = mix(-PI * stands * sin(2.0 * PI * f), peakedly, peak);
+  // Its top outruns its foot: by the reef its water moves on as far as its crest stands, so its
+  // face leans on, squeezed steeper than its height alone makes it, and its back eases.
+  let lean = surf.uSurfLean.x * dies * peak;
+  let squeezed = max(1.0 - lean * peakedly / (speed * period), 0.1);
 
   // What the water took from it breaks, and whitens it as long as it does, less and less running
   // in, and none of it is left when the next one comes.
@@ -121,10 +134,19 @@ fn surfAt(sea: vec4f, shore: vec4f, wave: vec4f, wide: f32, xz: vec2f, t: f32) -
   let lost = mix(whiter, mean, melts);
   let foam = breaking * (surf.uSurfFoam.w + surf.uSurfBreak.x * lost);
   // What breaks stands up off the water, as tall as uSurfStands where it breaks hardest, and
-  // hides what lies behind it itself.
+  // hides what lies behind it itself; heaped up in places along the crest, lower between.
   let standing = surf.uSurfStands * breaking * exp(-surf.uSurfBreak.x * whiter);
   let losing = -surf.uSurfBreak.y * behindLost * exp(-f * surf.uSurfBreak.y) / (1.0 - last) + 2.0 * toe / surf.uSurfBreak.z * aheadLost * coming;
+  let heaps = surf.uSurfHeaps;
+  let white = surf.uSurfStands * breaking * (1.0 - exp(-surf.uSurfBreak.x * whiter));
+  var tallness = 1.0;
+  var heaping = 0.0;
+  if (white > 0.0) {
+    let heap = seededNoiseD(xz / heaps.y, SURF_HEAP_SEED) / (1.0 + SURF_NOISE_MOST * heaps.x);
+    tallness = 1.0 / (1.0 + SURF_NOISE_MOST * heaps.x) + heaps.x * heap.x;
+    heaping = heaps.x * dot(heap.yz, surf.uSurfWay.xy) / heaps.y;
+  }
   // It draws down no more than the shallows spare: the reef's crest stays under.
-  let surface = max(dies * height, -surf.uSurfBreak.w * max(sea.y, 0.0)) + surf.uSurfStands * breaking * (1.0 - exp(-surf.uSurfBreak.x * whiter));
-  return Surf(foam, surface, -(1.0 - melts) * (dies * rising + standing * surf.uSurfBreak.x * losing) / (speed * period));
+  let surface = max(dies * height, -surf.uSurfBreak.w * max(sea.y, 0.0)) + white * tallness;
+  return Surf(foam, surface, (1.0 - melts) * (white * heaping - (dies * rising + standing * surf.uSurfBreak.x * losing * tallness) / (speed * period)) / squeezed, lean * crests);
 }

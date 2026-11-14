@@ -20,6 +20,9 @@ struct SpraySettings {
 
 @group(1) @binding(25) var<uniform> spray: SpraySettings;
 
+// How many clusters of its droplets a metre holds, each way.
+const SPRAY_CLUSTERS = vec3f(2.2, 3.5, 2.2);
+
 struct VertexIn {
   @location(0) position: vec3f, // the puff's corner, -1 to 1 in x and y
   @location(1) aSpot: vec4f, // the spot's world x, z; its seed; which of its puffs
@@ -80,9 +83,11 @@ fn vertexMain(in: VertexIn) -> Varyings {
 fn fragmentMain(in: Varyings) -> @location(0) vec4f {
   let p = in.vWorld;
   let up = vec3f(0.0, 1.0, 0.0);
-  // A soft round puff, thinner at its edge.
+  // A soft puff, thinner at its edge, its droplets in clusters and streaks with clear air between,
+  // or it reads as steam.
   let d = length(in.vCorner);
-  let alpha = in.vDense * (1.0 - smoothstep(0.15, 1.0, d)) * (1.0 - smoothstep(0.15, 1.0, d));
+  let clusters = gradientNoise3(p * SPRAY_CLUSTERS) + 0.5 * gradientNoise3(p * (2.7 * SPRAY_CLUSTERS));
+  let alpha = in.vDense * (1.0 - smoothstep(0.15, 1.0, d)) * (1.0 - smoothstep(0.15, 1.0, d)) * smoothstep(-0.2, 0.4, clusters);
   shadeOnce(p, up, vec2f(0.0), vec2f(0.0), SHADE_HIGH);
   let view = normalize(frame.cameraPosition - p);
   let g = spray.uSprayLight.z;

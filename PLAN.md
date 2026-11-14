@@ -475,29 +475,52 @@ Leg 2 (7.5 and 7.6), handed to the user 2026-11-13:
   too, far from any beach, in the shore's pieces alone, so their edges parted (the sea surface check saw
   the sky through them); it fades out 12 to 20 m from the waterline now.
 
-Open after leg 2 (an outside review's findings, less what was fixed after it):
-- The reef from 30 m: where a wave breaks along the whole crest at once its whitewater is a ribbon of even
-  thickness, matte white with grey patches; it breaks in sections only as much as a set's wave varies along
-  it (`surf` opens at such a moment). From the beach through a telephoto (`reef`) the white stood in flat
-  wedges between its lumps before they came, unchecked since. From the beach the reef's white line pulses
-  with the sets and goes dark in a lull, where Stage 6's band held it steady (the user's pick then): a pick
-  for 7.8, with how much foam.
-- Spray reads as soft puffs over the crest, which can look like steam; fewer and fainter since the review.
-- The shore break: the hump coming in reads only as a dark band (the hero) or a squeezed glitter (`ankle`)
-  before it breaks; its foam as it breaks is an even white band with spiky lace (`ankle`), patchier since.
-- `knee`: the floor under knee-deep water reads mint, like a pool: the water's colour (Stage 6's optics)
-  and a net as crisp from edge to edge (one depth throughout).
+The user's look at leg 2 (2026-11-14, at the default hour): the waves come in and break at the right speed
+and size, but look fake: no wave can be seen standing up, and the water is too clear and plastic. Fixed
+before leg 3, judged at 11:00 (`beach`, `ankle`) and in the hero:
+- A wave's top outruns its foot: its water moves inland `lean` m per m it stands, as a Gerstner wave's
+  does, and its face narrows from `steepens` times as deep as it breaks, so it leans in, near upright as a
+  big one breaks, and its back eases (JS's surface follows; tests: it folds over nowhere, and a face stands
+  past 45°). The reef's waves the same as they peak (`surf.lean`); its whitewater heaps up along the crest
+  and stands lower between (`surf.heaps`, `stands` 0.65: as tall at its heaps as it stood before).
+- The light through a wave: the eye's ray from a face turned to it bends in flatter and crosses more water
+  (it was counted as crossing less, so a face read paler than the water before it), and a crest stands over
+  more water than the sea map's depth. Near its top a wave is thin: on the face turned to the eye, the eye
+  sees what lies behind it through the water, and against a low sun the sand stirred up in it sends the sun's
+  light on: the hero's waves glow gold-green along their tops; at 11:00 a face is a turquoise band.
+- Sand the waves stir up (`swash.stirred`): the surf zone always holds a little, gone by 16 m from the
+  waterline, and the water a wave just broke in clouds in patches that drift in with it and settle over
+  seconds, each wave's its own (it was a white veil); the floor and its net of light fade under it. It sends
+  the sky's light back every way and a share of the sun's onwards. `knee` reads less like a pool, and from the
+  air the shallows by the beach are aqua, no longer milky.
+- The bore's foam: a roller at its front, thinning behind into patches (`roll`, `holds`). The spiky lace along
+  its front was its drift: two waves' drifts, 8 m apart, blended across a hand's width; a place takes one
+  wave's now.
+- Spray: clusters of droplets with clear air between, wider than tall, not soft round puffs.
+
+Open after leg 2 (an outside review's findings and the user's look, less what was fixed after them):
+- The reef from 30 m: where a wave breaks along the whole crest at once its whitewater is a band, heaped
+  now; its face shows mostly as it breaks in sections (`surf` opens at such a moment). From the beach through
+  a telephoto (`reef`) the white stood in flat wedges between its lumps before they came, unchecked since.
+  From the beach the reef's white line pulses with the sets and goes dark in a lull, where Stage 6's band
+  held it steady (the user's pick then): a pick for 7.8, with how much foam.
+- The shore break: no lip is thrown over: an upright face turns into the roller's foam, which is flat white
+  with no relief up close; the hero's glow is a thin line along each crest. In `ankle` faint horizontal
+  stripes run through the water behind the bore (in leg 2's build too; cause not found).
+- `knee`: the water's colour is still Stage 6's, the net now softer through the surf zone's haze.
 - The camera-move shimmer can't follow refraction: it reads the floor's net, which moves with its apparent
   depth through the water, as shimmer (`knee` 37%, `swimmer` 10%); as the camera turns, 0.02%.
 - Cost. GPU at the median, the game's benchmark headless on the dev machine at 2562×1237 (the user's
-  leg-1 run in brackets): `into-the-sun` 19.2 ms (18.7), `ankle` 18.6, `sand` 15.6 (18.7), `air-swash`
-  13.4 (16.5), `beach` 12.8 (15.4), `swash` 11.8 (15.0), `surf` 9.7, `knee` 9.0: under 60 fps there in
-  `into-the-sun` and `ankle`. Of what leg 2 adds over the cost cut in `into-the-sun` (+3.5 ms): the bore
-  0.6, the caustics' code 0.6 to 0.9, the floor's ripples and grain 0.5 to 1.5 (most in `ankle`), spray
-  0.1 to 0.4, the rest spread through a larger shader. SwiftShader frames in the Linux container, all
-  within the 10 s budget: `into-the-sun` 9.4 s, `ankle` 9.2, `beach` 8.5, `swash` 8.4, `surf` 7.7, `sand`
-  5.5, `air-swash` 5.0, `knee` 3.3. 12 passes (the translucent pass and its composite, for the spray),
-  52 pipelines (the water's four variants).
+  leg-1 run in brackets): `into-the-sun` 20.1 ms (18.7), `ankle` 19.5, `sand` 16.1 (18.7), `air-swash`
+  14.2 (16.5), `beach` 13.5 (15.4), `swash` 12.3 (15.0), `surf` 10.1, `knee` 9.3: under 60 fps there in
+  `into-the-sun`, `ankle` and now `sand`. The fixes after the user's look add 0.3 to 0.8 ms, in a larger
+  shader (skipping the heaps' noise and the clouds' read where there are none saved under 0.25). Of what
+  leg 2 adds over the cost cut in `into-the-sun` (+3.5 ms): the bore 0.6, the caustics' code 0.6 to 0.9,
+  the floor's ripples and grain 0.5 to 1.5 (most in `ankle`), spray 0.1 to 0.4, the rest spread through a
+  larger shader. SwiftShader frames in the Linux container, all
+  within the 10 s budget: `into-the-sun` 9.4 s, `ankle` 9.3, `beach` 9.3, `swash` 8.6 since the user's
+  look (leg 2: 9.4, 9.2, 8.5, 8.4), `surf` 7.7, `sand` 5.5, `air-swash` 5.0, `knee` 3.3 at leg 2. 12
+  passes (the translucent pass and its composite, for the spray), 52 pipelines (the water's four variants).
 - From leg 1 still (the review saw them again): straight wet edges, the stepped waterline and wet margin,
   the headland's image cut off by a vertical edge with stepped teeth, the far water's stepped blocks at the
   bay's end, the seams in `sand`, the milky band from the air.
