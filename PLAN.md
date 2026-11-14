@@ -553,7 +553,12 @@ fake. An outside review traced each to its cause and left a costed plan, A1 to C
   beside the eye and breaks at the shore. Its face, steeper than the mesh holds, showed a dark blue band
   along its foot seen from behind its crest (the review's B8, then a hairline): there the shading normal
   turns to the eye at least as the back of the wave does (`water.wgsl` SEEN_LEAST, on a face coming in
-  only). `ankle` opens at 159.6 s and `side` at 159.5, as the wave stands up.
+  only). `ankle` opens at 159.6 s and `side` at 159.5, as the wave stands up. `verify` green on bfe5dd9.
+- Cost of A4 and the face, SwiftShader's GPU time at 960×540, before and after alternated at the same `t`:
+  `ankle` -0.7%, `beach` +0.7%, `side` -0.1% between waves; with a wave by the eye `side` +4.7% (156 s)
+  and +6.9% (159.5 s), the same shaders drawing a taller face standing up over the shallows, whose
+  refracted rays go further to the floor, where the old model drew whitewater. Unchecked on a GPU; if it
+  shows there, the review's §8 says where to win it back (the caustics' and the floor's code near the eye).
 - The rest of the review's plan (A5 to C2, but B8) is open.
 
 Open after leg 2 (an outside review's findings and the user's look, less what was fixed after them):
