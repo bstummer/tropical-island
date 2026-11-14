@@ -110,6 +110,10 @@ const WAVES_SMOOTH = 1.0;
 const SHORE_STEPS = 2.0;
 // How little of the beach's foam is none: where there is no more, nor film, the ground is bare.
 const SHORE_FOAM_GONE = 1e-3;
+// The least a shading normal turns to the eye on a wave's face steeper than the mesh holds, seen
+// from behind its crest; the face's slopes (rise per m) over which that holds, from and to.
+const SEEN_LEAST: f32 = 0.3;
+const SEEN_STEEP = vec2f(0.4, 1.0);
 
 struct VertexIn {
   @location(0) position: vec3f,
@@ -420,8 +424,12 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
   let sun = sunLight(p, up);
   let sky = shIrradiance(up);
 
-  let facing = max(dot(n, view), 0.0);
-  let bent = refract(-view, n, 1.0 / optics.uIor);
+  // A wave's face steeper than the mesh holds turns its normal away from the eye where it is seen
+  // from behind its crest, which shades it as a dark band along its foot: it is seen as the back
+  // of the wave round it is. Only on a face coming in: the sea's own waves stay as they are.
+  let toEye = normalize(n + view * max(SEEN_LEAST * smoothstep(SEEN_STEEP.x, SEEN_STEEP.y, bore.slope) - dot(n, view), 0.0));
+  let facing = max(dot(toEye, view), 0.0);
+  let bent = refract(-view, toEye, 1.0 / optics.uIor);
   let wide = sqrt(longest);
   // Near a shore the ground as drawn runs on under the waterline, and rocks stand
   // there; out on the reef this draws all of the seabed, the coral up to the crest.
@@ -502,7 +510,7 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
   // the horizon than at the height of its mean; three rays through them where that
   // tells, looking low, and they land more than a few cells apart.
   let mirrored = wet * seaMirrored(facing, variance);
-  let towards = reflect(-view, n);
+  let towards = reflect(-view, toEye);
   let flat2 = towards.y * towards.y;
   let eyeW = (frame.projectionMatrix * frame.viewMatrix * vec4f(p, 1.0)).w;
   let toP = length(frame.cameraPosition - p);

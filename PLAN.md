@@ -549,8 +549,12 @@ fake. An outside review traced each to its cause and left a costed plan, A1 to C
   of them), plunging (a set's biggest, 2%) or, past `surges` 3 to 3.6, surging up the beach glassy with no
   foam at its front or where it turns: a lull's small waves (16%, the user left it to the look). Waves turn
   white from 1.7 m out at the median, 2.8 m for nine in ten (were 2.1 and 3.7). Test: that, and that a
-  surging wave carries no foam up the beach.
-- The rest of the review's plan (A5 to C2) is open.
+  surging wave carries no foam up the beach. Side-on a wave now passes as a glassy face standing up
+  beside the eye and breaks at the shore. Its face, steeper than the mesh holds, showed a dark blue band
+  along its foot seen from behind its crest (the review's B8, then a hairline): there the shading normal
+  turns to the eye at least as the back of the wave does (`water.wgsl` SEEN_LEAST, on a face coming in
+  only). `ankle` opens at 159.6 s and `side` at 159.5, as the wave stands up.
+- The rest of the review's plan (A5 to C2, but B8) is open.
 
 Open after leg 2 (an outside review's findings and the user's look, less what was fixed after them):
 - The reef from 30 m: where a wave breaks along the whole crest at once its whitewater is a band, heaped
