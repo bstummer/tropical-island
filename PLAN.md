@@ -527,6 +527,19 @@ fake. An outside review traced each to its cause and left a costed plan, A1 to C
   `into-the-sun` +0.8%, `swash` -5%; one pass over all eight views moved -7% to +11% either way, as much as
   two passes of the same build differ. A few operations per wave in the beach's pixels, and none where
   `ashore` went. Unchecked on the user's GPU.
+- Seen in SwiftShader frames at the review's cameras and times (11:00, every 0.25 to 0.5 s): side-on, the
+  whitewater runs in to the waterline and its white rides on up the sand as the run-up's front, thinning to
+  its top; from `beach` the white line reaches the wet sand and the run-up's line peels off its front and
+  races up, leaving the bore's lace on the water; from `ankle` the floor stays clear after the whitewater
+  passes. The wave breaks about 0.75 s later than before (no more head start offshore). Not seen: motion
+  at frame rate on a GPU.
+- Still wrong, now easier to see: the run-up's edge is ruler-straight and bright, and the sheet behind it
+  a flat grey band from standing height (the film, A9 to A11 and B5); for half a second from `beach` two
+  white lines with that grey between (the run-up's front ahead of the bore's lace); as the bore collapses,
+  its white is a solid band along the waterline side-on; the near water stays pale side-on (the stirred
+  sand's haze, A6). The rest of the review's plan (A4 to C2) is open; A4 waits for the user's pick: whether
+  breakers shrink to match today's run-ups or run-ups grow to match today's breakers, and how much white a
+  lull wave shows (today: as little as its break, its run-up too).
 
 Open after leg 2 (an outside review's findings and the user's look, less what was fixed after them):
 - The reef from 30 m: where a wave breaks along the whole crest at once its whitewater is a band, heaped
