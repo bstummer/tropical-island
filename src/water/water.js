@@ -281,9 +281,9 @@ export function create(ctx) {
       return swash(map.at(a, o), a, o, groundAt(x, z), t - spectrum.loop * Math.floor(t / spectrum.loop), out);
     },
     // The waves coming in over the last of the shallows at world x, z: { height, slope, foam,
-    // milk, along, lean, drift, wave, crest, across } (water/swash.js bore); none until ready.
+    // milk, along, lean, drift, wave, crest, across, fill } (water/swash.js bore); none until ready.
     boreAt(x, z, t = ctx.clock.elapsed, out = {}) {
-      if (!swash) return Object.assign(out, { height: 0, slope: 0, foam: 0, milk: 0, along: 0, lean: 0, drift: 0, wave: 0, crest: 0, across: 0 });
+      if (!swash) return Object.assign(out, { height: 0, slope: 0, foam: 0, milk: 0, along: 0, lean: 0, drift: 0, wave: 0, crest: 0, across: 0, fill: 0 });
       const [a, o] = island.toCove(x, z);
       return swash.bore(map.at(a, o), a, o, t - spectrum.loop * Math.floor(t / spectrum.loop), out);
     },
@@ -297,7 +297,7 @@ export function create(ctx) {
       const wrapped = t - spectrum.loop * Math.floor(t / spectrum.loop);
       const out = surf(here, x, z, wrapped);
       const coming = swash.bore(here, a, o, wrapped);
-      const ashore = swash(here, a, o, groundAt(x, z), wrapped, {}, 0, coming.height);
+      const ashore = swash(here, a, o, groundAt(x, z), wrapped, {}, 0, coming.height, coming.fill);
       out.foam += coming.foam + ashore.foam;
       out.height += coming.height;
       out.slope += coming.slope;

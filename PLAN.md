@@ -498,6 +498,31 @@ before leg 3, judged at 11:00 (`beach`, `ankle`) and in the hero:
   wave's now.
 - Spray: clusters of droplets with clear air between, wider than tall, not soft round puffs.
 
+The user's look at 11:00 from `beach` (2026-11-14): a second wave that doesn't stand up pushes the water
+onto the beach after every wave; the wave is too clear to see stand up; too many caustics; the film looks
+fake. An outside review traced each to its cause and left a costed plan, A1 to C2 (the review artifact's
+`handoff/report.md` §7). Taken so far, judged at 11:00 from `beach` and side-on:
+- A1, one event from the break to the run-up (`water/swash.js`, its twin). The bore shrank to nothing a
+  metre short of the sand (0.8 of the depth), its foam faded out before it, the edge the last backwash drew
+  down rose all at once when the run-up started, and the run-up set off as a clear sheet of its own. Now the
+  bore runs on to the waterline no lower than the sheet it runs up as; the drawn-down edge refills as its
+  face passes (`fill`); the run-up starts from the waterline as the foot of the broken face reaches it,
+  setting off at the bore's speed and speeding up over `collapses` s as the bore collapses; its front
+  carries the bore's foam, as white as the bore's roller (`front` times it, which keeps the beach as white
+  on average: a lull wave's run-up is as faint as its break, a set's big one whiter); the edge crossing the
+  drawn-down sand is white where the face has come. Tests: on the cove and seeds 1-20 a wave's white front
+  only moves inland from its break to 1 m up the beach, with no gap, no jump over 0.3 m in 0.05 s and no
+  pause over 0.2 s, and the water behind its crest never rises again (the old model: a 1.3 m jump, a 0.35 s
+  pause, 2.8 cm risen after the crest).
+- A2: the run-up is white only within about `milkWidth` m behind its front; the milky veil that switched
+  on over all the near water 2 s after each break is gone.
+- A3: a wave lands at one time all along each line inland. The sea map's 4 m grid put each sample's
+  waterline up to 1.3 m off where the waves' timing changes 0.7 s a metre; now each finds it on its own line
+  (`sea-map.js`), and the landing time varies from 3 m up the beach to 5 m out by 0.09 s at most, from 1.46
+  (test). The bore no longer gets a 0.9 s head start 5 m out, nor the run-up's top a 0.75 s late clock.
+- `side` (new, in place of `surf`): kneeling in shin-deep water at 11:00, the waves passing side-on, with a
+  run every 0.5 s. The review's own camera, crouching at 0.45 m, is lower than the views' rule allows.
+
 Open after leg 2 (an outside review's findings and the user's look, less what was fixed after them):
 - The reef from 30 m: where a wave breaks along the whole crest at once its whitewater is a band, heaped
   now; its face shows mostly as it breaks in sections (`surf` opens at such a moment). From the beach through

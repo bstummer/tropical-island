@@ -47,6 +47,12 @@ import { fromHalfFloat, toHalfFloatNearest } from '../maths/index.js';
 
 const G = 9.81;
 const SHALLOWEST = 0.1; // m: what a wave runs over on land and at the waterline, so it gets round them
+// Finding the waterline on a line inland: steps towards it, and the least slope (rise per m) it steps by.
+// Only within FOOT_WITHIN m of a waterline: further off nothing reads when the waves land
+// (the waves coming in are within 20 m, water/swash.js), and the softening reaches 8 m.
+const FOOT_STEPS = 4;
+const FOOT_SLOPE = 0.005;
+const FOOT_WITHIN = 40;
 
 // How fast a wave of this period runs over water this deep (m/s): the dispersion
 // relation, in Fenton and McKee's (1990) closed form.
@@ -218,19 +224,38 @@ export function buildSeaMap(heightmap, settings, side, blend = 0) {
     const top = field[n + samples] + (field[n + samples + 1] - field[n + samples]) * (fx - i);
     return bottom + (top - bottom) * (fy - j);
   };
+  // The waterline nearest each sample, on its line inland: `shore` m along it, then onto
+  // where the ground as the map has it crosses the still sea, as `shore` read between
+  // samples misses it by a metre and more. Every sample on one line inland finds the
+  // same point, so the waves land there at one time, as far out and as far up the beach.
+  const footA = new Float32Array(count);
+  const footO = new Float32Array(count);
+  const slopeAt = (a, o, ia, io) => (bilinear(heights, a + ia * texel, o + io * texel) - bilinear(heights, a - ia * texel, o - io * texel)) / (2 * texel);
   for (let j = 0, n = 0; j < samples; j++) {
     for (let i = 0; i < samples; i++, n++) {
-      const a = origin[0] + i * texel + inlandA[n] * shore[n];
-      const o = origin[1] + j * texel + inlandO[n] * shore[n];
+      const [ia, io] = [inlandA[n], inlandO[n]];
+      let along = shore[n];
+      for (let step = 0; step < FOOT_STEPS && Math.abs(shore[n]) < FOOT_WITHIN; step++) {
+        const [a, o] = [origin[0] + i * texel + ia * along, origin[1] + j * texel + io * along];
+        const slope = slopeAt(a, o, ia, io);
+        if (!(slope > FOOT_SLOPE)) break;
+        along += Math.min(Math.max(-bilinear(heights, a, o) / slope, -texel), texel);
+      }
+      footA[n] = origin[0] + i * texel + ia * along;
+      footO[n] = origin[1] + j * texel + io * along;
+      const [a, o] = [footA[n], footO[n]];
       lands[n] = bilinear(late, a, o) + (a * running[0] + o * running[1]) / inDeep;
       exposure[n] = bilinear(breaking, a, o);
-      rise[n] = (bilinear(heights, a + inlandA[n] * texel, o + inlandO[n] * texel) - bilinear(heights, a - inlandA[n] * texel, o - inlandO[n] * texel)) / (2 * texel);
+      rise[n] = slopeAt(a, o, ia, io);
     }
   }
+  // Softened along the beach, then read again where each line inland meets the waterline,
+  // so it stays one time along the line.
   const softLands = roundAbout(lands, samples, Math.max(Math.round(settings.lands / texel / 2), 1));
   for (let n = 0; n < count; n++) {
-    landsHi[n] = fromHalfFloat(toHalfFloatNearest(softLands[n]));
-    landsLo[n] = softLands[n] - landsHi[n];
+    const soft = bilinear(softLands, footA[n], footO[n]);
+    landsHi[n] = fromHalfFloat(toHalfFloatNearest(soft));
+    landsLo[n] = soft - landsHi[n];
   }
 
   return {

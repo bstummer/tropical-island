@@ -105,7 +105,7 @@ export function createSurface(spectrum, map, toCove, { rest, most }, ripplesLeas
       out[1] = Math.max(out[1], shallow.share * Math.min(ground, 0));
       if (beach && ground > -beach.band && ground < beach.wets * beach.swash.runs(here)) {
         const [a, o] = toCove(x, z);
-        beach.swash(here, a, o, ground, wrapped, wash, 0, coming.height);
+        beach.swash(here, a, o, ground, wrapped, wash, 0, coming.height, coming.fill);
         const takes = 1 - smoothstep(0.5 * beach.band, beach.band, -ground);
         out[0] *= 1 - takes;
         out[2] *= 1 - takes;

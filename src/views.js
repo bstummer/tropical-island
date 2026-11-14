@@ -148,6 +148,18 @@ const all = [
     run: { seconds: 12, step: 0.75, line: [[0.5, 1], [0.5, 0.3]] },
   },
   {
+    name: 'side',
+    t: 158.5,
+    position: [-27, 0.8, -0.6],
+    yaw: -99,
+    pitch: -6,
+    fov: 45,
+    timeOfDay: 11,
+    brief: "Late morning kneeling in shin-deep water, looking along the beach so the waves pass side-on, the beach on the left and the lagoon on the right: a wave standing up and breaking a few metres out, its white water running on into the run-up and up the sand in one movement, the sun high behind on the right.",
+    crops: { break: [0.6, 0.6], edge: [0.25, 0.5] },
+    run: { seconds: 12, step: 0.5, line: [[0.12, 0.75], [0.12, 0.38]] },
+  },
+  {
     name: 'knee',
     position: [-20, 1.1, 6.5],
     yaw: 160,
@@ -191,6 +203,7 @@ const all = [
   },
   {
     name: 'surf',
+    disabled: true,
     t: 1.5,
     position: [-61, 3, 227],
     yaw: 165,

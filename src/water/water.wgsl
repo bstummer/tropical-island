@@ -171,7 +171,7 @@ fn vertexMain(in: VertexIn) -> Varyings {
   out.vPlace1 = vec4f(0.0);
   out.vPlace2 = vec4f(0.0);
   var place: SwashPlace;
-  var bore = SwashBore(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
+  var bore = SwashBore(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
   if (WATER_SHORE) {
     // The beach's water's place, for this vertex and the pixels round it, and the waves
     // coming in over the last of the shallows.
@@ -189,7 +189,7 @@ fn vertexMain(in: VertexIn) -> Varyings {
     // and a few steps of the mesh more, where it gives back the bare ground as the terrain drew
     // it. Higher it lies under the ground, which the terrain alone draws.
     if (ground > -water.uShore.x && ground < water.uShore.y * place.runs) {
-      let wash = swashFrom(place, ground, 0.0, bore.height);
+      let wash = swashFrom(place, ground, 0.0, bore.height, bore.fill);
       let spacing = in.aNode.z * (1.0 + k);
       moved = mix(moved, vec3f(0.0, ground + wash.cover, 0.0), 1.0 - smoothstep(0.5 * water.uShore.x, water.uShore.x, -ground));
       let lift = water.uShore.z + water.uShore.w * length(rest - frame.cameraPosition.xz) + water.uShoreSpacing * spacing;
@@ -350,12 +350,12 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
   let shore = seaShoreAt(in.vRest);
   var wash = Swash(0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0);
   // The waves coming in over the last of the shallows, as the vertices have them.
-  var bore = SwashBore(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
+  var bore = SwashBore(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
   if (WATER_SHORE) {
     bore = swashBore(placeOf(in), sea.x, sea.y);
   }
   if (WATER_SHORE && beach > 0.0) {
-    wash = swashFrom(placeOf(in), seenHeight, seenTall, bore.height);
+    wash = swashFrom(placeOf(in), seenHeight, seenTall, bore.height, bore.fill);
     // The sheet ripples as it runs; the film it leaves, a little, as the sand under it.
     reach.z = max(reach.z, beach * mix(water.uShoreRipples.y, water.uShoreRipples.x, smoothstep(0.0, 0.01, wash.cover)));
   }

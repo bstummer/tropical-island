@@ -824,16 +824,17 @@ export const water = {
   // hard as `full` (the sea map's exposure), and `least` of that where none does; by
   // its size in its set (water/surf.js) to the power `sizes`, and along the beach by
   // `lobes`, each wave its own: [share, m along the beach]. Its uprush takes `pace`
-  // times as long as a stone thrown up the slope at its speed, its backwash `back`
-  // times as long as that, and it draws the water at the edge down by `draws` of how
+  // times as long as a stone thrown up the slope at its speed, setting off at its bore's speed
+  // and speeding up to that over `collapses` s, its backwash `back` times as long, and it draws the water at the edge down by `draws` of how
   // high a full wave runs there. Its sheet stands `sheet` of that thick behind its edge, thinning to the edge over
   // `edge` of it (in height). The edge frays by `fray` m in height, at `frayAcross` m.
   // The glassy `film` it leaves lasts s, longest at the bottom, a share
   // `filmPatches` more or less in patches `filmAcross` m across; what it soaks
   // dries over `dries` s, and nothing a wave did lasts past two waves: the ground's own
   // wetness (chunks/wet.wgsl) holds what the sets did over minutes. Its uprush is `milk`
-  // white with bubbles and sand, clearing as it drains. Foam: `front`, how much the
-  // sheet carries at its edge, `frontWidth` m in height; what it leaves where it turned
+  // white with bubbles and sand within `milkWidth` m behind its front, clearing as it drains. Foam: its
+  // front gathers `front` times what its bore's roller carried as it landed into its edge, `frontWidth`
+  // m in height; what it leaves where it turned
   // lingers `lingers` s, `lineWidth` m in height, gathering in places `linePatches` m
   // along the beach; the backwash drags `dragged` of it back down.
   swash: {
@@ -843,6 +844,7 @@ export const water = {
     sizes: 0.8,
     lobes: [[0.2, 23], [0.12, 7.3]],
     pace: 0.8,
+    collapses: 0.2,
     back: 1.4,
     draws: 0.12,
     sheet: 0.12,
@@ -854,7 +856,8 @@ export const water = {
     filmAcross: 3.7,
     dries: 30,
     milk: 0.5,
-    front: 1,
+    milkWidth: 0.8,
+    front: 2.1,
     frontWidth: 0.02,
     lingers: 12,
     lineWidth: 0.012,
@@ -879,7 +882,7 @@ export const water = {
     // the lagoon's own waves between `from` m of depth and the second, and `within` m of the
     // waterline nearest (from and to), not over a reef's flat far from any beach; it breaks once it stands
     // `breaks` times as tall as the water is deep, and has broken in full `spread` of that depth
-    // further in. Its face takes `faces` of its period, out in the lagoon and from where it breaks,
+    // further in, running on to the waterline no lower than the sheet it runs up as. Its face takes `faces` of its period, out in the lagoon and from where it breaks,
     // steepening from `steepens` times as deep as that; it falls behind its crest over `back` of
     // it; its water moves inland `lean` m per m it stands, so its face leans in. Its break leaves
     // `foam`, thick in the roller at its front over `roll` of its period, `holds` of that trailing
