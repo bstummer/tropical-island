@@ -522,6 +522,11 @@ fake. An outside review traced each to its cause and left a costed plan, A1 to C
   (test). The bore no longer gets a 0.9 s head start 5 m out, nor the run-up's top a 0.75 s late clock.
 - `side` (new, in place of `surf`): kneeling in shin-deep water at 11:00, the waves passing side-on, with a
   run every 0.5 s. The review's own camera, crouching at 0.45 m, is lower than the views' rule allows.
+- Cost: no GPU in the cloud container, so measured as SwiftShader's GPU time (timestamp queries) at
+  960×540, the build before and after alternated view by view: `air-swash` -0.3%, `knee` +1.1%,
+  `into-the-sun` +0.8%, `swash` -5%; one pass over all eight views moved -7% to +11% either way, as much as
+  two passes of the same build differ. A few operations per wave in the beach's pixels, and none where
+  `ashore` went. Unchecked on the user's GPU.
 
 Open after leg 2 (an outside review's findings and the user's look, less what was fixed after them):
 - The reef from 30 m: where a wave breaks along the whole crest at once its whitewater is a band, heaped
