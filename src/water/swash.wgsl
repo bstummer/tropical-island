@@ -34,6 +34,9 @@ struct SwashSettings {
   uSwashStirredAlbedo: vec3f, // linear: what water thick with it sends back of the light on it
   uSwashStirredOnwards: vec2f, // the share of the sun's it sends mostly onwards, and how much onwards (Henyey-Greenstein g)
   uSwashUprush: vec2f, // s its front takes to speed up from its bore's speed as that collapses; m behind its front it is white
+  // How tall a broken wave stands per m of water; the surf-similarity numbers past which a wave surges up
+  // instead of breaking (from and to); m, the swell's deep-water wavelength
+  uSwashBreaks: vec4f,
 }
 
 @group(1) @binding(23) var<uniform> swash: SwashSettings;
@@ -68,6 +71,14 @@ struct Swash {
   runs: f32, // m: how high a full wave runs up this beach
   rise: f32, // how steeply the beach rises at its waterline, per metre inland
   top: f32, // m: as high as the waves wet the ground now, their sheet or what they left
+}
+
+// How a wave that runs r m up a beach rising `rise` per metre breaks: the depth (m) it breaks
+// in, and how white it breaks, 0 to 1: none as it surges up instead (water/swash.js breaking).
+fn swashBreaking(r: f32, rise: f32) -> vec2f {
+  let at = pow(swash.uSwashBore.x * r / swash.uSwashBore.y, 0.8);
+  let similar = clamp(rise, SWASH_LEAST, SWASH_STEEPEST) / sqrt(swash.uSwashBore.y * at / swash.uSwashBreaks.w);
+  return vec2f(at, 1.0 - smoothstep(swash.uSwashBreaks.y, swash.uSwashBreaks.z, similar));
 }
 
 // A wave's share of a full one, in its set and along its length (water/surf.js waveSize).
@@ -110,10 +121,11 @@ fn swashFrontFoam(behind: f32, width: f32) -> f32 {
 }
 
 // Wave k, landed tau s ago at the still waterline, where its bore arrived at `arrives` m/s as
-// white as `white` times a full one's front, run up r m and drained back to d m below the
-// still sea, where every wave of this beach leaves the edge, over ground g (frayed) on a beach
-// rising `rise` per metre, its edges as soft as `width` m in height, a pixel's.
-fn swashWave(tau: f32, r: f32, d: f32, rise: f32, g: f32, patches: f32, width: f32, arrives: f32, white: f32) -> SwashWave {
+// white as `white` times a full one's front, having broken `broke` white (0 as it surged up),
+// run up r m and drained back to d m below the still sea, where every wave of this beach leaves
+// the edge, over ground g (frayed) on a beach rising `rise` per metre, its edges as soft as
+// `width` m in height, a pixel's.
+fn swashWave(tau: f32, r: f32, d: f32, rise: f32, g: f32, patches: f32, width: f32, arrives: f32, white: f32, broke: f32) -> SwashWave {
   let time = swash.uSwashTime;
   let sheet = swash.uSwashSheet;
   let foamLook = swash.uSwashFoam;
@@ -172,8 +184,9 @@ fn swashWave(tau: f32, r: f32, d: f32, rise: f32, g: f32, patches: f32, width: f
     let lingering = exp(-(tau - turns) / foamLook.z);
     let wide = sqrt(foamLook.w * foamLook.w + soft * soft);
     let across = (r - foamLook.w - g) / wide;
-    w.line = lingering * exp(-across * across) * foamLook.w / wide;
-    w.foam = lingering * drag;
+    // As much as its front carried: none where it surged up glassy.
+    w.line = broke * lingering * exp(-across * across) * foamLook.w / wide;
+    w.foam = broke * lingering * drag;
   }
   w.thick *= fades;
   w.foam *= fades;
@@ -285,7 +298,8 @@ fn swashFrom(place: SwashPlace, ground: f32, width: f32, swell: f32, fill: f32) 
   for (var j = 0; j < 2; j++) {
     let k = n - f32(j);
     let r = swashPlaceRunUp(place, k);
-    let w = swashWave(since - k * period, r, d, place.rise, g, place.patches, width, c0, whitens * r);
+    let broke = swashBreaking(r, place.rise).y;
+    let w = swashWave(since - k * period, r, d, place.rise, g, place.patches, width, c0, whitens * r * broke, broke);
     out.level = max(out.level, w.tip);
     out.top = max(out.top, w.top);
     thick = max(thick, w.thick);
@@ -303,7 +317,8 @@ fn swashFrom(place: SwashPlace, ground: f32, width: f32, swell: f32, fill: f32) 
     let edge = d * ahead / crosses;
     out.level = max(out.level, edge);
     out.top = max(out.top, out.level);
-    out.foam += whitens * swashPlaceRunUp(place, n + 1.0) * fill * smoothstep(-crosses, -0.5 * crosses, ahead) * swashFrontFoam(edge - g, width);
+    let r = swashPlaceRunUp(place, n + 1.0);
+    out.foam += whitens * r * swashBreaking(r, place.rise).y * fill * smoothstep(-crosses, -0.5 * crosses, ahead) * swashFrontFoam(edge - g, width);
   }
   // The last of the film is gone, so the ground beside it is bare, as it was drawn.
   out.film = max(out.film - SWASH_FILM_GONE, 0.0) / (1.0 - SWASH_FILM_GONE);
@@ -361,15 +376,18 @@ fn swashBore(place: SwashPlace, shore: f32, depth: f32) -> SwashBore {
   let ends = smoothstep(0.0, SWASH_BORE_ENDS, depth);
   var tall = vec2f(0.0);
   var broke = vec2f(0.0);
+  var white = vec2f(0.0);
   var share = vec2f(0.0);
   var fronts = vec2f(0.0);
   for (var j = 0; j < 2; j++) {
     let runsUp = swashPlaceRunUp(place, k + f32(j));
     let comes = bore.x * runsUp;
-    let breaksAt = pow(comes / bore.y, 0.8);
-    // Broken, as tall as the water is deep, but no lower than the sheet it collapses into at the waterline.
-    tall[j] = appear * ends * min(comes / sqrt(sqrt(depth)), length(vec2f(bore.y * depth, swash.uSwashSheet.x * runsUp)));
+    let breaks = swashBreaking(runsUp, place.rise);
+    let breaksAt = breaks.x;
+    white[j] = breaks.y;
     broke[j] = smoothstep(0.0, 1.0, (breaksAt - depth) / (face.w * breaksAt + 0.01));
+    // As tall as the water lets it, a bore once broken, but no lower than the sheet it collapses into at the waterline.
+    tall[j] = appear * ends * min(comes / sqrt(sqrt(depth)), length(vec2f(mix(bore.y, swash.uSwashBreaks.x, broke[j]) * depth, swash.uSwashSheet.x * runsUp)));
     share[j] = comes / scale;
     // Its face steepens as it nears where it breaks, and stays steep once it has.
     fronts[j] = mix(face.x, face.y, max(broke[j], 1.0 - smoothstep(breaksAt, within.w * breaksAt, depth)));
@@ -393,11 +411,11 @@ fn swashBore(place: SwashPlace, shore: f32, depth: f32) -> SwashBore {
   // Its foam, thick in the roller at its front, then thinning behind it into patches; at the
   // waterline its run-up's front carries it on.
   let roll = swash.uSwashBoreRoll;
-  let trails = appear * foam.x * broke.x * share.x * mix(exp(-f / roll.x), exp(-f / foam.y), roll.y);
-  let leads = appear * foam.x * broke.y * share.y * exp(-((1.0 - f) / foam.z) * ((1.0 - f) / foam.z));
+  let trails = appear * foam.x * broke.x * white.x * share.x * mix(exp(-f / roll.x), exp(-f / foam.y), roll.y);
+  let leads = appear * foam.x * broke.y * white.y * share.y * exp(-((1.0 - f) / foam.z) * ((1.0 - f) / foam.z));
   // It breaks whiter in places along the beach, where the foam it strands gathers too.
   out.foam = (trails + leads) * (0.4 + 0.6 * place.gathers);
-  out.milk = appear * swash.uSwashLook.w * min(broke.x * share.x * exp(-f / (2.0 * foam.y)), 1.0);
+  out.milk = appear * swash.uSwashLook.w * min(broke.x * white.x * share.x * exp(-f / (2.0 * foam.y)), 1.0);
   // The foam drifts with the wave that made it: the next one's on its face, ahead of it, once
   // what the last one left has gone (a blend of the two would stretch it across the front).
   let since = frame.uWaveSeconds - place.lands - k * period;

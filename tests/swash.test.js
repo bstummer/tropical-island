@@ -393,7 +393,12 @@ test('each wave is one event from its break to its run-up: its white front only 
         // from where it first shows within 2 m of the waterline until it is 1 m up the beach.
         let white = 0;
         for (const f of frames.filter((f) => f.t < landing)) points.forEach((p, i) => { if (p.out > 0.2 && p.out < 2) white = Math.max(white, f.foam[i]); });
-        const enough = Math.max(0.3 * white, 0.05);
+        // A lull's wave that surges up instead of breaking stays glassy all the way up the beach.
+        if (white < 0.15) {
+          for (const f of frames) points.forEach((p, i) => assert.ok(p.out > 0 || f.foam[i] < 0.15, `${at}, ${p.out.toFixed(2)} m out, t ${f.t.toFixed(2)}: a wave that broke no white carries ${f.foam[i].toFixed(2)} foam up the beach`));
+          continue;
+        }
+        const enough = 0.3 * white;
         let last = null;
         let still = 0;
         for (const f of frames) {
@@ -427,6 +432,48 @@ test('each wave is one event from its break to its run-up: its white front only 
       }
     }
   }
+});
+
+test('most waves break within a few metres of the waterline, a big one further out; a lull\'s small ones surge up the beach and leave no foam', () => {
+  const beach = gameBeach();
+  const out = {};
+  const outermost = [];
+  let surging = 0;
+  for (const [x, z] of alongCove(beach).filter((_, i) => i % 2 === 0)) {
+    const [a0, o0] = beach.island.toCove(x, z);
+    const { inlandA, inlandO, lands } = beach.map.at(a0, o0);
+    const points = [];
+    for (let d = 0.1; d <= 8; d += 0.1) points.push([a0 - inlandA * d, o0 - inlandO * d, d]);
+    for (let k = 0; k < loop / period; k++) {
+      // How far out it first turns white, coming in, and how white it gets.
+      const landing = lands + k * period;
+      let from = 0;
+      let most = 0;
+      for (let t = landing - 6; t < landing; t += 0.1) {
+        for (const [a, o, d] of points) {
+          const { foam } = beach.swash.bore(beach.map.at(a, o), a, o, t - loop * Math.floor(t / loop), out);
+          if (foam > 0.1) from = Math.max(from, d);
+          most = Math.max(most, foam);
+        }
+      }
+      if (from > 0) outermost.push(from);
+      if (most > 0.02) continue;
+      // One that surges up, breaking no white, carries none up the beach at its run-up's front (the
+      // line an earlier wave stranded may lie there still).
+      surging++;
+      for (let t = landing - 0.5; t < landing + 3; t += 0.25) {
+        for (const inland of [0, 0.3, 1, 2]) {
+          const { foam } = beach.at(x, z - inland, t);
+          assert.ok(foam < 0.05, `at ${x}, ${z}, wave ${k}, t ${t}, ${inland} m up the beach: a wave that surged up carries foam ${foam.toFixed(2)}`);
+        }
+      }
+    }
+  }
+  outermost.sort((p, q) => p - q);
+  const share = (f) => outermost[Math.floor(f * (outermost.length - 1))];
+  assert.ok(share(0.5) < 2 && share(0.9) < 3.2, `the waves turn white from ${share(0.5).toFixed(2)} m out at the median, ${share(0.9).toFixed(2)} m for the 90th percentile`);
+  const surges = surging / ((loop / period) * Math.ceil(alongCove(beach).length / 2));
+  assert.ok(surges > 0.05 && surges < 0.3, `${(100 * surges).toFixed(0)}% of the waves surge up without breaking`);
 });
 
 test('the waves coming in raise the sea no higher on average, change smoothly, and the surface JS knows takes them in', () => {

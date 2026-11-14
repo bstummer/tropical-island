@@ -104,6 +104,7 @@ export function swashUniforms(settings, surf, way, period, loop) {
     uSwashStirredAlbedo: { value: new Vector3(...settings.stirred.albedo) },
     uSwashStirredOnwards: { value: new Vector2(...settings.stirred.onwards) },
     uSwashUprush: { value: new Vector2(collapses, milkWidth) },
+    uSwashBreaks: { value: new Vector4(settings.bore.bores, ...settings.bore.surges, (G * period * period) / (2 * Math.PI)) },
   };
 }
 
@@ -127,12 +128,23 @@ export function createSwash(settings, surf, way, period, loop) {
     return runs * Math.max(waveSize(k, a * way[1] - o * way[0], surf), 0) ** sizes * Math.max(lobe, 0.2);
   }
 
+  // How a wave that runs R m up a beach rising `rise` per metre breaks: the depth (m) it breaks in,
+  // and how white it breaks, 0 to 1: none as it surges up instead, by its surf-similarity number
+  // there (Battjes 1974), the slope over the root of its height per its deep-water wavelength.
+  const L0 = (G * period * period) / (2 * Math.PI);
+  function breaking(R, rise) {
+    const at = ((settings.bore.height * R) / settings.bore.breaks) ** 0.8;
+    const similar = Math.min(Math.max(rise, LEAST), STEEPEST) / Math.sqrt((settings.bore.breaks * at) / L0);
+    return { at, white: 1 - smoothstep(settings.bore.surges[0], settings.bore.surges[1], similar) };
+  }
+
   // Wave k, landed tau s ago at the still waterline, where its bore arrived at `arrives` m/s
-  // as white as `white` times a full one's front, run up R m and drained back to D m below the
-  // still sea, where every wave of this beach leaves the edge, over ground g (frayed) on a beach
-  // rising `rise` per metre, its edges as soft as `width` m in height: into `wave`, its edge's
-  // height, the water over g, its foam there, and how much film and soaking it left at g.
-  function oneWave(tau, R, D, rise, g, patches, width, arrives, white) {
+  // as white as `white` times a full one's front, having broken `broke` white (0 as it surged up),
+  // run up R m and drained back to D m below the still sea, where every wave of this beach
+  // leaves the edge, over ground g (frayed) on a beach rising `rise` per metre, its edges as soft
+  // as `width` m in height: into `wave`, its edge's height, the water over g, its foam there, and
+  // how much film and soaking it left at g.
+  function oneWave(tau, R, D, rise, g, patches, width, arrives, white, broke) {
     const soft = Math.max(width, 1e-4);
     const up = (pace * Math.sqrt((2 * R) / G)) / Math.min(Math.max(rise, LEAST), STEEPEST);
     // It sets off at its bore's speed and speeds up as the bore collapses, over `collapses` s, so
@@ -191,8 +203,9 @@ export function createSwash(settings, surf, way, period, loop) {
       const lingering = Math.exp(-(tau - turns) / lingers);
       const wide = Math.sqrt(lineWidth * lineWidth + soft * soft);
       const across = (R - lineWidth - g) / wide;
-      line = (lingering * Math.exp(-across * across) * lineWidth) / wide;
-      foam = lingering * drag;
+      // As much as its front carried: none where it surged up glassy.
+      line = (broke * lingering * Math.exp(-across * across) * lineWidth) / wide;
+      foam = broke * lingering * drag;
     }
     wave.tip = tip;
     wave.top = top;
@@ -225,7 +238,7 @@ export function createSwash(settings, surf, way, period, loop) {
   // its front, and runs ahead on its face.
   function bore(here, a, o, t, out = {}) {
     const { lands, shore, depth, inlandA, inlandO } = here;
-    const { height: tall, breaks, from, within, faces, back: falls, spread, foam: foamy, roll, holds, trail, toe, flow, milk: milky, lean, steepens } = settings.bore;
+    const { height: tall, breaks, bores, from, within, faces, back: falls, spread, foam: foamy, roll, holds, trail, toe, flow, milk: milky, lean, steepens } = settings.bore;
     out.height = out.slope = out.foam = out.milk = out.along = out.lean = out.drift = out.wave = out.crest = out.across = out.fill = 0;
     if (depth >= from[0] || shore >= within[1]) return out;
     if (depth <= 0) {
@@ -253,12 +266,12 @@ export function createSwash(settings, surf, way, period, loop) {
     const one = (j) => {
       const runsUp = runUp(j, runs, fa, fo);
       const comes = tall * runsUp; // how tall it stands in a metre of water
-      const breaksAt = (comes / breaks) ** 0.8;
-      // Broken, as tall as the water is deep, but no lower than the sheet it collapses into at the waterline.
-      const tallHere = appear * ends * Math.min(comes / Math.sqrt(Math.sqrt(depth)), Math.hypot(breaks * depth, sheet * runsUp));
+      const { at: breaksAt, white } = breaking(runsUp, here.rise);
       const broke = smoothstep(0, 1, (breaksAt - depth) / (spread * breaksAt + 0.01));
+      // As tall as the water lets it, a bore once broken, but no lower than the sheet it collapses into at the waterline.
+      const tallHere = appear * ends * Math.min(comes / Math.sqrt(Math.sqrt(depth)), Math.hypot((breaks + (bores - breaks) * broke) * depth, sheet * runsUp));
       const steep = Math.max(broke, 1 - smoothstep(breaksAt, steepens * breaksAt, depth));
-      return { tall: tallHere, broke, share: comes / scale, front: faces[0] + (faces[1] - faces[0]) * steep };
+      return { tall: tallHere, broke, white, share: comes / scale, front: faces[0] + (faces[1] - faces[0]) * steep };
     };
     const now = one(k);
     const next = one(k + 1);
@@ -278,12 +291,12 @@ export function createSwash(settings, surf, way, period, loop) {
     out.across = Math.sqrt(Math.max(-Math.log(Math.max(out.crest, 1e-4)), 0)) * ((last ? now.front : next.front) + falls) * period * c;
     // Its foam, thick in the roller at its front, then thinning behind it into patches; at the
     // waterline its run-up's front carries it on.
-    const trails = appear * foamy * now.broke * now.share * ((1 - holds) * Math.exp(-f / roll) + holds * Math.exp(-f / trail));
-    const leads = appear * foamy * next.broke * next.share * Math.exp(-(((1 - f) / toe) ** 2));
+    const trails = appear * foamy * now.broke * now.white * now.share * ((1 - holds) * Math.exp(-f / roll) + holds * Math.exp(-f / trail));
+    const leads = appear * foamy * next.broke * next.white * next.share * Math.exp(-(((1 - f) / toe) ** 2));
     // It breaks whiter in places along the beach, where the foam it strands gathers too.
     const gathers = 0.4 + 0.6 * Math.max(0.35 + 0.9 * seededNoise(a / linePatches, o / linePatches, LINE_SEED), 0);
     out.foam = (trails + leads) * gathers;
-    out.milk = appear * milky * Math.min(now.broke * now.share * Math.exp(-f / (2 * trail)), 1);
+    out.milk = appear * milky * Math.min(now.broke * now.white * now.share * Math.exp(-f / (2 * trail)), 1);
     // The foam drifts with the wave that made it: the next one's on its face, ahead of it, once
     // what the last one left has gone (a blend of the two would stretch it across the front).
     const since = t - lands - k * period;
@@ -328,7 +341,8 @@ export function createSwash(settings, surf, way, period, loop) {
     const whitens = (settings.bore.foam * (0.4 + 0.6 * gathers)) / (FRONT_MOST * runs);
     for (const k of [n, n - 1]) {
       const R = runUp(k, runs, fa, fo);
-      const w = oneWave(since - k * period, R, D, rise, g, patches, width, c0, whitens * R);
+      const { white } = breaking(R, rise);
+      const w = oneWave(since - k * period, R, D, rise, g, patches, width, c0, whitens * R * white, white);
       level = Math.max(level, w.tip);
       out.top = Math.max(out.top, w.top);
       thick = Math.max(thick, w.thick);
@@ -346,7 +360,8 @@ export function createSwash(settings, surf, way, period, loop) {
       const edge = (D * ahead) / crosses;
       level = Math.max(level, edge);
       out.top = Math.max(out.top, level);
-      out.foam += whitens * runUp(n + 1, runs, fa, fo) * fill * smoothstep(-crosses, -0.5 * crosses, ahead) * frontFoam(edge - g, width);
+      const R = runUp(n + 1, runs, fa, fo);
+      out.foam += whitens * R * breaking(R, rise).white * fill * smoothstep(-crosses, -0.5 * crosses, ahead) * frontFoam(edge - g, width);
     }
     out.film = Math.max(out.film - FILM_GONE, 0) / (1 - FILM_GONE);
     // What they strand gathers in places along the beach.

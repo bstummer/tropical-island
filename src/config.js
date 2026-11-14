@@ -881,14 +881,17 @@ export const water = {
     // a wave stands `height` m in a metre of water per m it will run up the beach, rising out of
     // the lagoon's own waves between `from` m of depth and the second, and `within` m of the
     // waterline nearest (from and to), not over a reef's flat far from any beach; it breaks once it stands
-    // `breaks` times as tall as the water is deep, and has broken in full `spread` of that depth
-    // further in, running on to the waterline no lower than the sheet it runs up as. Its face takes `faces` of its period, out in the lagoon and from where it breaks,
+    // `breaks` times as tall as the water is deep (the breaker index on a beach this steep, for waves this
+    // long), and has broken in full `spread` of that depth further in, into a bore `bores` times as tall as
+    // the water is deep, running on to the waterline no lower than the sheet it runs up as. A wave whose
+    // surf-similarity (Iribarren) number as it breaks is past `surges` (from and to) surges up the beach
+    // instead, leaving no foam: a lull's small waves. Its face takes `faces` of its period, out in the lagoon and from where it breaks,
     // steepening from `steepens` times as deep as that; it falls behind its crest over `back` of
     // it; its water moves inland `lean` m per m it stands, so its face leans in. Its break leaves
     // `foam`, thick in the roller at its front over `roll` of its period, `holds` of that trailing
     // behind it over `trail` of it, and running `toe` of it ahead on its face, drifting inland at
     // `flow` times its speed; and the water it broke in holds `milk` of the sand it stirs up.
-    bore: { height: 0.6, breaks: 0.8, from: [1.2, 0.8], within: [12, 20], faces: [0.035, 0.012], steepens: 2.5, back: 0.12, lean: 0.9, spread: 0.3, foam: 1.6, roll: 0.04, holds: 0.35, trail: 0.25, toe: 0.02, flow: 0.5, milk: 0.4 },
+    bore: { height: 0.6, breaks: 1.15, bores: 0.8, surges: [3, 3.6], from: [1.2, 0.8], within: [12, 20], faces: [0.035, 0.012], steepens: 2.5, back: 0.12, lean: 0.9, spread: 0.3, foam: 1.6, roll: 0.04, holds: 0.35, trail: 0.25, toe: 0.02, flow: 0.5, milk: 0.4 },
     // The sand the waves stir up clouds the water near the shore, `always` per m the eye's ray goes
     // through it, gone by `within` m from the waterline, and `broken` per m more as much as a wave
     // just broke there (its `milk`), in clouds `clouds` m across; water thick with it sends back

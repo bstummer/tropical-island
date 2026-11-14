@@ -540,9 +540,17 @@ fake. An outside review traced each to its cause and left a costed plan, A1 to C
   a flat grey band from standing height (the film, A9 to A11 and B5); for half a second from `beach` two
   white lines with that grey between (the run-up's front ahead of the bore's lace); as the bore collapses,
   its white is a solid band along the waterline side-on; the near water stays pale side-on (the stirred
-  sand's haze, A6). The rest of the review's plan (A4 to C2) is open; A4 waits for the user's pick: whether
-  breakers shrink to match today's run-ups or run-ups grow to match today's breakers, and how much white a
-  lull wave shows (today: as little as its break, its run-up too).
+  sand's haze, A6).
+- A4, where and how this beach breaks. The sizes stay (the user's pick): a full wave breaks 0.25 m tall and
+  runs 0.32 m up, as a swell 0.10 m high in deep water does at 11.25 s on this slope (Komar and Gaughan;
+  Stockdon et al. 2006, which the review read with the breaker's height for the deep water's). A wave now
+  breaks where it stands `breaks` 1.15 times as tall as the water is deep (it was 0.8), then runs on as a
+  bore `bores` 0.8 times as deep, by its surf-similarity number at breaking (Battjes 1974) collapsing (80%
+  of them), plunging (a set's biggest, 2%) or, past `surges` 3 to 3.6, surging up the beach glassy with no
+  foam at its front or where it turns: a lull's small waves (16%, the user left it to the look). Waves turn
+  white from 1.7 m out at the median, 2.8 m for nine in ten (were 2.1 and 3.7). Test: that, and that a
+  surging wave carries no foam up the beach.
+- The rest of the review's plan (A5 to C2) is open.
 
 Open after leg 2 (an outside review's findings and the user's look, less what was fixed after them):
 - The reef from 30 m: where a wave breaks along the whole crest at once its whitewater is a band, heaped
