@@ -522,6 +522,9 @@ fake. An outside review traced each to its cause and left a costed plan, A1 to C
   (test). The bore no longer gets a 0.9 s head start 5 m out, nor the run-up's top a 0.75 s late clock.
 - `side` (new, in place of `surf`): kneeling in shin-deep water at 11:00, the waves passing side-on, with a
   run every 0.5 s. The review's own camera, crouching at 0.45 m, is lower than the views' rule allows.
+  As the waves now break 0.75 s later, `ankle` opens at 159.35 s (was 158.6) and `side` at 159.25, each as
+  its wave breaks. `verify` green on 65f5316, before that; its shimmer warnings (`side` 0.58% turning,
+  1.48% moving; `knee` 14% moving, was 17%) are the floor's net seen through refraction, as before.
 - Cost: no GPU in the cloud container, so measured as SwiftShader's GPU time (timestamp queries) at
   960×540, the build before and after alternated view by view: `air-swash` -0.3%, `knee` +1.1%,
   `into-the-sun` +0.8%, `swash` -5%; one pass over all eight views moved -7% to +11% either way, as much as

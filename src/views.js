@@ -137,7 +137,7 @@ const all = [
   },
   {
     name: 'ankle',
-    t: 158.6,
+    t: 159.35,
     position: [-20, 1.45, -2.2],
     yaw: 168,
     pitch: -25,
@@ -149,7 +149,7 @@ const all = [
   },
   {
     name: 'side',
-    t: 158.5,
+    t: 159.25,
     position: [-27, 0.8, -0.6],
     yaw: -99,
     pitch: -6,
