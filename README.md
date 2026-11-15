@@ -50,5 +50,7 @@ with apt, so it needs root or sudo). Screenshots on a machine without a GPU, and
 from SwiftShader, which WebGPU has on Linux only: on Windows or macOS, run the command in a Linux container
 with Docker, as in `node tools/linux.js npm run verify -- --gl swiftshader`.
 
-The build is `dist/index.html`. Every push to `main` is verified by GitHub Actions, deployed to Pages and
-published as the download above. [CLAUDE.md](CLAUDE.md) holds the project rules, architecture and workflow.
+The build is `dist/index.html`. GitHub Actions verifies every push. `main`'s, once verified, is deployed to
+Pages and published as the download above; every other branch's goes up at once, unverified, at
+`https://bstummer.github.io/tropical-island/<branch>/`. [CLAUDE.md](CLAUDE.md) holds the project rules,
+architecture and workflow.

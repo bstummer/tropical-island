@@ -1,0 +1,174 @@
+# The site on GitHub Pages, built whole on every deploy, as a deploy replaces it all:
+#   - at the root, main's game: the asset of the "latest" release, which deploy.yml
+#     updates only once main has passed verify, so what other branches push never
+#     reaches it;
+#   - every other branch there is now, built from its head, in a folder of its own:
+#     stage-7 at /stage-7/. A "/" in a name is a folder deeper, and characters a URL
+#     can't hold become "-" (tools/pages.js). A branch deleted since the last deploy
+#     drops out.
+# A branch's preview isn't verified: it goes up while verify still runs, and can show
+# what verify will fail. A branch that doesn't build gets a page that says so.
+#
+# deploy.yml calls this: for a push to a branch at once, for main after the release.
+# One deploy at a time: the calling job's concurrency group.
+#
+# The jobs that install packages (build) get a read-only token, and the job that
+# publishes runs no code from node_modules: keep it that way.
+name: Pages site
+
+on:
+  workflow_call:
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  branches:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      previews: ${{ steps.list.outputs.previews }}
+      folder: ${{ steps.list.outputs.folder }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - id: list
+        name: List the branches and their folders
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/branches" --paginate --jq '.[] | "\(.commit.sha) \(.name)"' > branches.txt
+          node tools/pages.js "$GITHUB_REF_NAME" < branches.txt > outputs.txt
+          cat outputs.txt
+          cat outputs.txt >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: branches
+    if: needs.branches.outputs.previews != '[]'
+    name: Build ${{ matrix.branch }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    # A branch that doesn't build doesn't fail the deploy of every other: its page says
+    # so, and its own push fails verify.
+    continue-on-error: true
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.branches.outputs.previews) }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ matrix.sha }}
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      # The only install script is the project's own, which fetches the browser for
+      # verify; the build needs none.
+      - run: npm ci --ignore-scripts
+      - run: npm run build
+
+      - name: Put the build in its folder
+        env:
+          FOLDER: ${{ matrix.folder }}
+        run: mkdir -p "preview/$FOLDER" && mv dist/index.html "preview/$FOLDER/"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: preview-${{ strategy.job-index }}
+          path: preview/
+          retention-days: 1
+
+  publish:
+    needs: [branches, build]
+    # Also when a build failed or there was none to build; not when the run was
+    # cancelled or the branches couldn't be listed.
+    if: ${{ !cancelled() && needs.branches.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      # The run's own branch: its folder, or the root for main.
+      url: ${{ steps.deployment.outputs.page_url }}${{ needs.branches.outputs.folder }}
+    steps:
+      # With Source "Deploy from a branch", GitHub also runs its own Jekyll build on every
+      # push. It publishes the raw repo (source index.html, src/, CLAUDE.md) and races this deploy.
+      - name: Check that Pages deploys from this workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if build_type=$(gh api "repos/$GITHUB_REPOSITORY/pages" --jq .build_type); then
+            if [ "$build_type" != workflow ]; then
+              echo "::error::GitHub Pages deploys from a branch, so its own Jekyll build publishes the raw repository and races this deploy. Set Settings -> Pages -> Build and deployment -> Source to \"GitHub Actions\", then re-run this workflow."
+              exit 1
+            fi
+          else
+            echo "::warning::Could not read the Pages settings; skipping the source check."
+          fi
+
+      - if: needs.branches.outputs.previews != '[]'
+        uses: actions/download-artifact@v8
+        with:
+          pattern: preview-*
+          merge-multiple: true
+          path: site
+
+      - name: Put main's verified build at the root
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          mkdir -p site
+          gh release download latest --pattern tropical-island.html --output site/index.html \
+            || { echo "::error::No tropical-island.html in the \"latest\" release to put at the site's root: a push to main that passes verify makes it."; exit 1; }
+
+      # Folders hold only characters safe in HTML (tools/pages.js), unlike branch names.
+      - name: Say where a branch didn't build
+        env:
+          PREVIEWS: ${{ needs.branches.outputs.previews }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          jq -r '.[] | "\(.folder) \(.sha)"' <<< "$PREVIEWS" > folders.txt
+          while read -r folder sha; do
+            [ -f "site/$folder/index.html" ] && continue
+            mkdir -p "site/$folder"
+            printf '<!doctype html><meta charset="utf-8"><title>No build</title>\n<p>The build of %s at %s failed, so there is nothing to show here. <a href="%s">The run</a> says why.</p>\n' \
+              "$folder" "${sha::7}" "$RUN_URL" > "site/$folder/index.html"
+            echo "::warning::The branch at /$folder/ didn't build: its page says so."
+          done < folders.txt
+
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: site
+
+      - id: deployment
+        uses: actions/deploy-pages@v5
+
+      - name: List the site
+        env:
+          URL: ${{ steps.deployment.outputs.page_url }}
+          PREVIEWS: ${{ needs.branches.outputs.previews }}
+        run: |
+          {
+            echo "### The site"
+            echo "- main, its latest verified build: $URL"
+            jq -r --arg url "$URL" '.[] | "- \(.branch): \($url)\(.folder)/"' <<< "$PREVIEWS"
+          } >> "$GITHUB_STEP_SUMMARY"
