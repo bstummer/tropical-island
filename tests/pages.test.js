@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { folderFor, parseBranches, previews, ROOT_BRANCH } from '../tools/pages.js';
+import { artifactFor, folderFor, parseBranches, previews, ROOT_BRANCH } from '../tools/pages.js';
 
 const TOOL = join(dirname(fileURLToPath(import.meta.url)), '..', 'tools', 'pages.js');
 const sha = (n) => String(n).repeat(40).slice(0, 40);
@@ -33,8 +33,22 @@ test('every folder is a path of parts that need no escaping, and none is empty o
 
 test('main gets no folder: it is the root', () => {
   const { built, left } = previews([{ name: ROOT_BRANCH, sha: sha(1) }, { name: 'stage-7', sha: sha(2) }]);
-  assert.deepEqual(built, [{ branch: 'stage-7', sha: sha(2), folder: 'stage-7' }]);
+  assert.deepEqual(built, [{ branch: 'stage-7', sha: sha(2), folder: 'stage-7', artifact: artifactFor('stage-7', sha(2)) }]);
   assert.deepEqual(left, []);
+});
+
+test("a build's artifact is named by its folder and commit alone, in characters an artifact's name may hold", () => {
+  const names = [];
+  for (const name of NAMES) {
+    for (const commit of [sha(1), sha(2)]) {
+      const artifact = artifactFor(folderFor(name), commit);
+      assert.doesNotMatch(artifact, /[":<>|*?\r\n\\/]/, artifact);
+      names.push(artifact);
+    }
+  }
+  assert.equal(new Set(names).size, names.length);
+  assert.notEqual(artifactFor('a/b', sha(1)), artifactFor('a-b', sha(1)));
+  assert.equal(artifactFor('ci/pages', sha(3)), `preview-ci~pages-${sha(3)}`);
 });
 
 test('every other branch gets a folder of its own, in order of name, whatever order they come in', () => {
@@ -73,7 +87,10 @@ test("CI's run prints its outputs as GITHUB_OUTPUT takes them, and a warning per
 
   const branch = run('ci/pages');
   assert.equal(branch.status, 0, branch.stderr);
-  const previews = [{ branch: 'ci/pages', sha: sha(3), folder: 'ci/pages' }, { branch: 'stage-7', sha: sha(2), folder: 'stage-7' }];
+  const previews = [
+    { branch: 'ci/pages', sha: sha(3), folder: 'ci/pages', artifact: `preview-ci~pages-${sha(3)}` },
+    { branch: 'stage-7', sha: sha(2), folder: 'stage-7', artifact: `preview-stage-7-${sha(2)}` },
+  ];
   assert.equal(branch.stdout, `previews=${JSON.stringify(previews)}\nfolder=ci/pages/\n`);
   assert.match(branch.stderr, /^::warning::The branch index\.html gets no preview: .*\n$/);
 

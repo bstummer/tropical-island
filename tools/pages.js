@@ -4,9 +4,9 @@
 // CI runs `node tools/pages.js <the run's branch>` with the repository's
 // branches on stdin, a line "<sha> <name>" each, and appends what it prints to
 // GITHUB_OUTPUT: `previews`, the branches to build as a JSON array of
-// { branch, sha, folder }, and `folder`, the run's own branch's folder with a
-// trailing '/' ('' for main's root, or a branch left out). Each branch left out
-// is a warning on stderr.
+// { branch, sha, folder, artifact }, and `folder`, the run's own branch's folder
+// with a trailing '/' ('' for main's root, or a branch left out). Each branch
+// left out is a warning on stderr.
 
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -27,8 +27,15 @@ export function folderFor(branch) {
     .join('/');
 }
 
+// The name a build goes up as between the jobs: its folder and commit, as a run
+// also holds the artifacts of the attempts before a re-run, which may be of
+// other branches, or of this one at another commit. No folder holds a '~'.
+export function artifactFor(folder, sha) {
+  return `preview-${folder.replaceAll('/', '~')}-${sha}`;
+}
+
 // The branches that get a folder: every one but main, by name, each with its
-// folder. Two whose folders would be the same (names that differ only where
+// folder and artifact. Two whose folders would be the same (names that differ only where
 // characters became '-'), or one whose folder would take a name of the root's
 // files, aren't built over each other: the first by name keeps the folder, and
 // the other is left out, with the reason.
@@ -47,7 +54,7 @@ export function previews(branches) {
       continue;
     }
     owner.set(folder, name);
-    built.push({ branch: name, sha, folder });
+    built.push({ branch: name, sha, folder, artifact: artifactFor(folder, sha) });
   }
   return { built, left };
 }

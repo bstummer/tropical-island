@@ -82,15 +82,10 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npm run build
 
-      - name: Put the build in its folder
-        env:
-          FOLDER: ${{ matrix.folder }}
-        run: mkdir -p "preview/$FOLDER" && mv dist/index.html "preview/$FOLDER/"
-
       - uses: actions/upload-artifact@v7
         with:
-          name: preview-${{ strategy.job-index }}
-          path: preview/
+          name: ${{ matrix.artifact }}
+          path: dist/index.html
           retention-days: 1
 
   publish:
@@ -124,12 +119,12 @@ jobs:
             echo "::warning::Could not read the Pages settings; skipping the source check."
           fi
 
+      # Each artifact into a folder of its own name, previews/<artifact>/index.html.
       - if: needs.branches.outputs.previews != '[]'
         uses: actions/download-artifact@v8
         with:
           pattern: preview-*
-          merge-multiple: true
-          path: site
+          path: previews
 
       - name: Put main's verified build at the root
         env:
@@ -140,27 +135,37 @@ jobs:
           gh release download latest --pattern tropical-island.html --output site/index.html \
             || { echo "::error::No tropical-island.html in the \"latest\" release to put at the site's root: a push to main that passes verify makes it."; exit 1; }
 
-      # Folders hold only characters safe in HTML (tools/pages.js), unlike branch names.
-      - name: Say where a branch didn't build
+      # Only the builds the list names: after a re-run, the run also holds the artifacts
+      # of the attempts before, of branches deleted since, say. Folders hold only
+      # characters safe in HTML (tools/pages.js), unlike branch names.
+      - name: Put each branch's build in its folder
         env:
           PREVIEWS: ${{ needs.branches.outputs.previews }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          jq -r '.[] | "\(.folder) \(.sha)"' <<< "$PREVIEWS" > folders.txt
-          while read -r folder sha; do
-            [ -f "site/$folder/index.html" ] && continue
+          jq -r '.[] | "\(.folder) \(.sha) \(.artifact)"' <<< "$PREVIEWS" > previews.txt
+          while read -r folder sha artifact; do
             mkdir -p "site/$folder"
-            printf '<!doctype html><meta charset="utf-8"><title>No build</title>\n<p>The build of %s at %s failed, so there is nothing to show here. <a href="%s">The run</a> says why.</p>\n' \
-              "$folder" "${sha::7}" "$RUN_URL" > "site/$folder/index.html"
-            echo "::warning::The branch at /$folder/ didn't build: its page says so."
-          done < folders.txt
+            if [ -f "previews/$artifact/index.html" ]; then
+              cp "previews/$artifact/index.html" "site/$folder/index.html"
+            else
+              printf '<!doctype html><meta charset="utf-8"><title>No build</title>\n<p>The build of %s at %s failed, so there is nothing to show here. <a href="%s">The run</a> says why.</p>\n' \
+                "$folder" "${sha::7}" "$RUN_URL" > "site/$folder/index.html"
+              echo "::warning::The branch at /$folder/ didn't build: its page says so."
+            fi
+          done < previews.txt
+          find site -type f | sort
 
+      # Named by the attempt: a re-run's run keeps the artifact of each attempt before it.
       - uses: actions/upload-pages-artifact@v5
         with:
+          name: github-pages-${{ github.run_attempt }}
           path: site
 
       - id: deployment
         uses: actions/deploy-pages@v5
+        with:
+          artifact_name: github-pages-${{ github.run_attempt }}
 
       - name: List the site
         env:
