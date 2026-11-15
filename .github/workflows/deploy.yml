@@ -1,19 +1,24 @@
-# On every push to main: verify the game (tests, build, check, screenshots), then
-#   - deploy dist/index.html to GitHub Pages, and
-#   - update the rolling "latest" release, whose asset is always the newest build:
-#     https://github.com/bstummer/tropical-island/releases/latest/download/tropical-island.html
-# On a push to any other branch (a session's, say), only verify.
+# On every push, to any branch, verify the game (tests, build, check, screenshots). And:
+#   - on main, once verify passes, update the rolling "latest" release, whose asset is
+#     always main's newest verified build,
+#     https://github.com/bstummer/tropical-island/releases/latest/download/tropical-island.html,
+#     then deploy the site to GitHub Pages with it at the root;
+#   - on any other branch (a session's, say), deploy the site at once, without waiting
+#     for verify, with the branch's build in its folder:
+#     https://bstummer.github.io/tropical-island/stage-7/
+# Every deploy builds the whole site, every branch there is now: pages.yml.
+# "Run workflow" on a branch does the same as a push to it.
 #
-# One-time setup: Settings -> Pages -> Build and deployment -> Source: "GitHub Actions".
-# The deploy job fails until it is set (see its first step).
+# One-time setup: Settings -> Pages -> Build and deployment -> Source: "GitHub Actions"
+# (the site's publish job checks it first), and Settings -> Environments -> github-pages
+# -> Deployment branches: "No restriction", or only main's runs can deploy.
 #
 # Don't hand-edit the "latest" tag or release, and don't create other releases:
 # a newer latest release would take over the download link above.
 #
-# Only the build job installs npm packages, and it gets a read-only token. The
-# jobs that publish (Pages, release) run no third-party code from node_modules:
-# keep it that way.
-# They run for main only: on another branch, a push or "Run workflow" just verifies it.
+# The jobs that install npm packages (verify, the site's builds) get a read-only
+# token. The jobs that publish (the release, the site's publish) run no third-party
+# code from node_modules: keep it that way.
 # A push that changes only Markdown (README, PLAN, CLAUDE) runs nothing: no .md
 # file goes into the build or the checks.
 name: Build and deploy
@@ -25,13 +30,14 @@ on:
   workflow_dispatch:
 
 # One run per branch at a time. On main a newer push waits rather than cancelling
-# a deploy halfway through; elsewhere it replaces the run that is no longer needed.
+# a release halfway through; elsewhere it replaces the run that is no longer needed,
+# whose site the newer run deploys again.
 concurrency:
   group: deploy-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
-  build:
+  verify:
     # Pinned, not ubuntu-latest: Playwright installs system packages by Ubuntu release, so a new
     # runner image could break verify, and with it publishing, unannounced. Move up on purpose.
     # (The browser doesn't depend on it: every release gets the same Chromium build.)
@@ -80,49 +86,15 @@ jobs:
           retention-days: 7
 
       - name: Upload the game for the release job
+        if: github.ref == 'refs/heads/main'
         uses: actions/upload-artifact@v7
         with:
           name: game
           path: dist/index.html
           retention-days: 1
 
-      - name: Upload the Pages site
-        uses: actions/upload-pages-artifact@v5
-        with:
-          path: dist
-
-  deploy-pages:
-    needs: build
-    if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      # With Source "Deploy from a branch", GitHub also runs its own Jekyll build on every
-      # push. It publishes the raw repo (source index.html, src/, CLAUDE.md) and races this deploy.
-      - name: Check that Pages deploys from this workflow
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          if build_type=$(gh api "repos/$GITHUB_REPOSITORY/pages" --jq .build_type); then
-            if [ "$build_type" != workflow ]; then
-              echo "::error::GitHub Pages deploys from a branch, so its own Jekyll build publishes the raw repository and races this deploy. Set Settings -> Pages -> Build and deployment -> Source to \"GitHub Actions\", then re-run this workflow."
-              exit 1
-            fi
-          else
-            echo "::warning::Could not read the Pages settings; skipping the source check."
-          fi
-
-      - id: deployment
-        uses: actions/deploy-pages@v5
-
   release:
-    needs: build
+    needs: verify
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -155,3 +127,29 @@ jobs:
           else
             gh release create latest tropical-island.html --title "Latest build" --notes "$notes" --latest
           fi
+
+  # The site, for a push to any branch but main: at once, alongside verify, not after it.
+  site:
+    if: github.ref != 'refs/heads/main'
+    uses: ./.github/workflows/pages.yml
+    # One deploy of the site at a time, whichever branch it is for. A newer one waiting
+    # in line replaces an older one waiting: it builds every branch afresh anyway.
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+
+  # The site, for a push to main: once its build is the release's, which is the root.
+  site-main:
+    needs: release
+    uses: ./.github/workflows/pages.yml
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
