@@ -22,8 +22,10 @@ When choosing between approaches, pick the one that looks better in the screensh
 ## 2. Hard rules
 
 - **The output is one file**: `dist/index.html`, with all JS, CSS and shaders inlined, working when opened via
-  `file://`. It is never committed: CI verifies, builds and publishes it on every push to `main`
-  (`.github/workflows/deploy.yml`), so pushing to `main` publishes the game. `./index.html` is the source template.
+  `file://`. It is never committed: CI builds and verifies it on every push, to any branch, and publishes it
+  (`.github/workflows/deploy.yml`). Pushing to `main` publishes the game, at the site's root and as the download,
+  once it passes verify; any other branch goes up at once, unverified, at `/<branch>/`
+  (https://bstummer.github.io/tropical-island/stage-7/). `./index.html` is the source template.
 - **No external assets and no runtime network access.** No fetch, XHR, WebSocket, CDN or font links, and no image
   or model files. `npm run check` enforces this, and the screenshot tool fails on any network request.
 - **Everything is procedural**: geometry, textures, sky, sound. Generate it at runtime.
@@ -130,7 +132,7 @@ src/
   textures/           procedural textures made on the GPU at boot: the ground's tiles
   shaders/chunks/     shared WGSL: the frame (group 0), lighting, shadows, terrain, the ground's surfaces, noise, planet
   fixtures/           test scenes (?fixture=) for the screenshot tool's checks; not part of the island
-tools/                the screenshot tool, its measurements and checks, the build check, the map, the Linux container
+tools/                the screenshot tool, its measurements and checks, the build check, the map, the Linux container, the site's folders
 tests/                node:test suites and their fixtures
 ```
 
