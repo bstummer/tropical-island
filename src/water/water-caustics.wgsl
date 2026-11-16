@@ -9,7 +9,9 @@ struct CausticSettings {
   uCausticMeans: array<vec4f, 36>, // its light's mean at each of 16 depths, evenly from 0 to the deepest, for each whole number of ripples dropped, 0 to 8
   uCaustic: vec4f, // how soft its net is, and how much softer per m of depth; how many times as deep as a ripple gathers the light it blurs out; the deepest of the depths, m
   uCausticWander: vec4f, // how far the longer waves carry the ripples to and fro, m, and 2 pi over how far; how much of its net shows; how much the water bends the light (1 - 1 / ior)
-  uCausticFade: vec4f, // how wide a pixel (m) starts to drop the shortest ripple; log2 of the ratio from one ripple's length to the next; about how much brighter than even light its brightest lines are
+  // How wide a pixel (m) starts to drop the shortest ripple; log2 of the ratio from one ripple's length to the next;
+  // about how much brighter than even light its brightest lines are; how much of the sun's light each unit of foam keeps from the floor
+  uCausticFade: vec4f,
   uCausticCalm: vec4f, // how fast its net goes per unit of foam over it; under a face as steep as from and to (rise per m), down to the last's share of it
 }
 

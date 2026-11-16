@@ -6,7 +6,7 @@
 // reaches a point (sea-map.js), and JS knows where it stands (surface.js).
 //
 // Puts ctx.water on the context: { ready, heightAt(x, z, t), over(x, y, z, t),
-// surfAt(x, z, t), swashAt(x, z, t), boreAt(x, z, t), map (sea-map.js's, once ready), surface
+// surfAt(x, z, t), swashAt(x, z, t), boreAt(x, z, t), boreLens(bore, ahead, d, soft, peak), map (sea-map.js's, once ready), surface
 // (surface.js's, once ready) }. heightAt and over() take in the beach's water (water/swash.js).
 // heightAt is 0 and surfAt none until ready, and t defaults to the clock's. Needs the
 // terrain's grids, so comes after it in WORLD_SYSTEMS; the terrain reads over() each frame.
@@ -281,11 +281,15 @@ export function create(ctx) {
       return swash(map.at(a, o), a, o, groundAt(x, z), t - spectrum.loop * Math.floor(t / spectrum.loop), out);
     },
     // The waves coming in over the last of the shallows at world x, z: { height, slope, foam,
-    // milk, along, lean, drift, wave, crest, across, fill } (water/swash.js bore); none until ready.
+    // milk, along, lean, drift, wave, crest, under, fill, and its shape } (water/swash.js bore); none until ready.
     boreAt(x, z, t = ctx.clock.elapsed, out = {}) {
-      if (!swash) return Object.assign(out, { height: 0, slope: 0, foam: 0, milk: 0, along: 0, lean: 0, drift: 0, wave: 0, crest: 0, across: 0, fill: 0 });
+      if (!swash) return Object.assign(out, { height: 0, slope: 0, foam: 0, milk: 0, along: 0, lean: 0, drift: 0, wave: 0, crest: 0, under: 0, fill: 0, tallNow: 0, tallNext: 0, frontNow: 0, frontNext: 0, phase: 0, perMetre: 0 });
       const [a, o] = island.toCove(x, z);
       return swash.bore(map.at(a, o), a, o, t - spectrum.loop * Math.floor(t / spectrum.loop), out);
+    },
+    // The light they gather on the floor, as a lens, told by boreAt() (water/swash.js lens); 1 until ready.
+    boreLens(bore, ahead, d, soft, peak) {
+      return swash ? swash.lens(bore, ahead, d, soft, peak) : 1;
     },
     // The surf at world x, z: { foam, height, slope } (water/surf.js), for sound: on the reef,
     // and at the beach the waves breaking as they come in (water/swash.js bore) and the foam at

@@ -907,7 +907,12 @@ export const water = {
     // `foam`, thick in the roller at its front over `roll` of its period, `holds` of that trailing
     // behind it over `trail` of it, and running `toe` of it ahead on its face, drifting inland at
     // `flow` times its speed; and the water it broke in holds `milk` of the sand it stirs up.
-    bore: { height: 0.6, breaks: 1.15, bores: 0.8, surges: [3, 3.6], from: boresFrom, within: boresWithin, faces: [0.035, 0.012], steepens: 2.5, back: 0.12, lean: 0.9, spread: 0.3, foam: 1.6, roll: 0.04, holds: 0.35, trail: 0.25, toe: 0.02, flow: 0.5, milk: 0.4 },
+    // Through a face as steep as `stands` (rise per m, from and to) the eye sees the floor where
+    // its ray bends to, there too where the beach's water shows the ground under it as it is; it
+    // sees through the face what lies behind only near its top, where its ray crosses less than
+    // about `lip` m of water under the crest's top; and the backwash meeting a face lifts sand into
+    // its foot, `foot` as much as a break stirs up, most low on it.
+    bore: { height: 0.6, breaks: 1.15, bores: 0.8, surges: [3, 3.6], from: boresFrom, within: boresWithin, faces: [0.035, 0.012], steepens: 2.5, back: 0.12, lean: 0.9, spread: 0.3, foam: 1.6, roll: 0.04, holds: 0.35, trail: 0.25, toe: 0.02, flow: 0.5, milk: 0.4, stands: [0.1, 0.4], lip: 0.04, foot: 0.2 },
     // The sand the waves stir up clouds the water near the shore, `always` per m the eye's ray goes
     // through it, gone by `within` m from the waterline, and `broken` per m more as much as a wave
     // just broke there (its `milk`), in clouds `clouds` m across; water thick with it sends back
@@ -949,6 +954,7 @@ export const water = {
     reach: 25,
     churned: 4,
     face: [0.1, 0.5, 0.5],
+    shaded: 0.5, // how much of the sun's light each unit of foam over the floor keeps from it, as exp(-shaded x foam)
   },
   // Spray thrown off the reef's crest where the surf breaks hardest (water/spray.js): from spots
   // where it breaks at least `breaks` hard, `puffs` puffs each, going up `apart` s apart as a wave
@@ -1178,7 +1184,7 @@ export const capture = {
   // share: the foam on a wave's face changes by 8 a second, and the GPU reads the sea map's
   // distances and depths as half floats, which moves it a few ms); the light the ripples gather on
   // the floor (`caustics`, at 98% of the points). Each one's mistake must land further.
-  waves: { fields: 0.01, mips: 0.002, looped: 0.002, map: 0.02, surface: 0.06, inJs: 0.25, least: 100, surf: { foam: 0.05, height: 0.05, slope: 0.05, time: 0.2 }, swash: { level: 0.005, cover: 0.005, foam: 0.02, film: 0.02 }, bore: { height: 0.005, slope: 0.02, foam: 0.1 }, caustics: 0.02 },
+  waves: { fields: 0.01, mips: 0.002, looped: 0.002, map: 0.02, surface: 0.06, inJs: 0.25, least: 100, surf: { foam: 0.05, height: 0.05, slope: 0.05, time: 0.2 }, swash: { level: 0.005, cover: 0.005, foam: 0.02, film: 0.02 }, bore: { height: 0.005, slope: 0.02, foam: 0.1, lens: 0.02 }, caustics: 0.02 },
   // The sea's surface must have no holes: at these times, in `view`'s frame from `below`
   // rows under the rim of the sea down, the far sea's levels of detail too, nothing lies on the far plane.
   seaHoles: { view: 'air-pass', times: [15.5, 120.25], below: 2 },

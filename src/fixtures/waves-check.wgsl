@@ -4,7 +4,8 @@
 // 4, as 1 but
 // read where the texel's corner is, half a texel off (a mistake); 5, the beach's water
 // (water/swash.wgsl) over the ground as drawn there, at the frame's waves' time; 6, the
-// waves coming in over the last of the shallows there (swashBore), at that time; 7, the light
+// waves coming in over the last of the shallows there (swashBore), and the light they gather on the
+// floor (swashLens), at that time; 7, the light
 // the ripples gather on the floor (water-caustics.wgsl causticAt) at each point's x, z, depth and
 // ripples dropped (uPoints' four channels), at uSeconds.
 
@@ -22,6 +23,10 @@ struct Check {
   uWaveTexels: f32, // across each cascade's texture
   uSeconds: f32, // wrapped as the waves' time is
 }
+
+// The light the waves coming in gather on the floor is told `ahead` m further out, the light going `d` m
+// sideways per their rise per m, as soft as `soft`, held to `peak` (waves.js BORE_LENS).
+const BORE_LENS = vec4f(0.05, 0.06, 0.2, 4.0);
 
 @group(1) @binding(0) var<uniform> check: Check;
 @group(1) @binding(1) var uPoints: texture_2d<f32>;
@@ -45,7 +50,7 @@ fn fragmentMain(in: Fullscreen) -> @location(0) vec4f {
   }
   if (check.uMode == 6) {
     let bore = swashBore(swashPlace(xz, sea.x, seaShoreAt(xz).xy), sea.x, sea.y);
-    return vec4f(bore.height, bore.slope, bore.foam, bore.along);
+    return vec4f(bore.height, bore.slope, bore.foam, swashLens(bore, BORE_LENS.x, BORE_LENS.y, BORE_LENS.z, BORE_LENS.w));
   }
   if (check.uMode == 2) {
     let breaking = surfAt(sea, seaShoreAt(xz), seaWaveAt(xz), 0.0, xz, check.uSeconds);

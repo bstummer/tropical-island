@@ -735,7 +735,7 @@ function toolCheckTasks(context, fileUrl, query, outDir) {
         `the surface off the whole sum of its waves by ${w.surface.gpu.toFixed(3)} m, ${w.surface.time.toFixed(2)} m at a time off, ${w.surface.texel.toFixed(3)} m half a texel off; off the game's sum by ${w.surface.inJs.toFixed(3)} m; ` +
         `the surf at ${w.surf.points} points off its twin by ${w.surf.foam.toFixed(4)} in foam, ${w.surf.height.toFixed(4)} m high, ${w.surf.slope.toFixed(4)} in slope, ${w.surf.time.toFixed(2)} at a time off; ` +
         `the beach's water at ${w.swash.points} points off its twin by ${w.swash.level.toFixed(4)} m at its edge, ${w.swash.cover.toFixed(4)} m deep, ${w.swash.foam.toFixed(4)} in foam, ${w.swash.film.toFixed(4)} in film; ` +
-        `the waves coming in at ${w.bore.points} points off their twin by ${w.bore.height.toFixed(4)} m high, ${w.bore.slope.toFixed(4)} in slope, ${w.bore.foam.toFixed(4)} in foam; ` +
+        `the waves coming in at ${w.bore.points} points off their twin by ${w.bore.height.toFixed(4)} m high, ${w.bore.slope.toFixed(4)} in slope, ${w.bore.foam.toFixed(4)} in foam, ${w.bore.lens.toFixed(4)} in the light they gather; ` +
         `the floor's light at ${w.caustics.points} points off its twin by ${w.caustics.off.toFixed(4)} at most, ${w.caustics.time.toFixed(2)} at a time off`
       );
     }),
@@ -1173,7 +1173,7 @@ export function wavesProblems(w, { fields, mips, looped, map, surface, inJs, lea
   }
   if (!(w?.swash?.time > swash.level)) problems.push(`the beach's water's edge at a time off is only ${w?.swash?.time} m off: the check misses it`);
   if (!(w?.bore?.points >= least)) problems.push(`only ${w?.bore?.points} points of the shallows judged (at least ${least})`);
-  for (const key of ['height', 'slope', 'foam']) {
+  for (const key of ['height', 'slope', 'foam', 'lens']) {
     if (!(w?.bore?.[key] <= bore[key])) problems.push(`the waves coming in: their ${key} is off its JS twin by ${w?.bore?.[key]} (limit ${bore[key]})`);
   }
   if (!(w?.bore?.time > bore.height)) problems.push(`the waves coming in at a time off are only ${w?.bore?.time} m off: the check misses it`);

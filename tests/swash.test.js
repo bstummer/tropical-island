@@ -629,3 +629,45 @@ test('no wave comes in to break over shallows far from any beach, as over a reef
   }
   assert.ok(far >= 100 && near >= 20, `${far} points far from a beach, ${near} near one with waves coming in`);
 });
+
+test('a wave coming in is a lens: a bright line on the floor under its crest, a dim band under its face\'s foot, and no more light than level water lets through', () => {
+  const beach = gameBeach();
+  const { blur, peak } = config.water.caustics;
+  const bend = 1 - 1 / config.water.ior;
+  const b = {};
+  let tall = 0;
+  for (const point of alongCove(beach)) {
+    for (const [x, z] of outFrom(beach, point, 0.5).slice(0, 8)) {
+      // The moment the tallest crest over a minute stands over this point.
+      let crest = null;
+      for (let t = 100; t < 160; t += 0.02) {
+        boreAt(beach, x, z, t, b);
+        if (b.crest > 0.99 && (!crest || Math.max(b.tallNow, b.tallNext) > Math.max(crest.tallNow, crest.tallNext))) crest = { ...b };
+      }
+      if (!crest) continue;
+      const [a, o] = beach.island.toCove(x, z);
+      const depth = beach.map.at(a, o).depth + crest.height;
+      const lens = (ahead) => beach.swash.lens(crest, ahead, bend * depth, blur[0] + blur[1] * depth, peak);
+      const top = (crest.phase < 0.5 ? -crest.phase : 1 - crest.phase) / crest.perMetre;
+      const face = (crest.phase < 0.5 ? crest.frontNow : crest.frontNext) / crest.perMetre;
+      let [gained, moved, brightest, at] = [0, 0, 0, 0];
+      for (let ahead = -8; ahead <= 8; ahead += 0.002) {
+        const light = lens(ahead);
+        gained += light - 1;
+        moved += Math.abs(light - 1);
+        if (light > brightest) [brightest, at] = [light, ahead];
+      }
+      const where = `at ${x}, ${z.toFixed(2)}, a wave ${Math.max(crest.tallNow, crest.tallNext).toFixed(3)} m tall`;
+      assert.ok(Math.abs(gained) < 0.1 * moved, `${where}: it gains ${gained.toFixed(4)} of the ${moved.toFixed(4)} it moves`);
+      assert.ok(Math.abs(at - top) < 0.25 * face, `${where}: its brightest ${at.toFixed(3)} m out, its crest's top ${top.toFixed(3)}`);
+      let dimmest = Infinity;
+      for (let ahead = at - 2 * face; ahead < at; ahead += 0.002) dimmest = Math.min(dimmest, lens(ahead));
+      // A wave about to break, or broken, whose top alone would gather the light into half the floor.
+      if ((bend * depth * 2 * Math.max(crest.tallNow, crest.tallNext)) / (face * face) > 0.5) {
+        tall++;
+        assert.ok(brightest > 1.3 && dimmest < 0.92, `${where}: ${brightest.toFixed(2)} under its crest, ${dimmest.toFixed(2)} under its foot`);
+      }
+    }
+  }
+  assert.ok(tall >= 8, `${tall} steep waves judged`);
+});

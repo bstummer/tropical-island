@@ -27,6 +27,9 @@ struct SwashSettings {
   // stands; from how many times as deep as it breaks its face steepens
   uSwashBoreWithin: vec4f,
   uSwashBoreRoll: vec2f, // the share of its period the roller at its front takes; how much of its foam the trail behind holds
+  // Its face (water.wgsl): the slopes over which it stands (rise per m, from and to); m of water under its
+  // crest's top through which the eye still sees what lies behind; how much sand it lifts into its foot
+  uSwashBoreLook: vec4f,
   // The sand the waves stir up: how much it clouds the water near the shore always, per m the eye's
   // ray goes through it, and as much again per how much a wave just broke there; m across its clouds;
   // m from the waterline nearest by which the first is gone
@@ -58,8 +61,8 @@ const SWASH_BORE_ENDS: f32 = 0.01;
 const SWASH_FRONT_MOST: f32 = 1.35;
 // The share of its period past which a place's foam is the next wave's (swashBore).
 const SWASH_BORE_NEXT: f32 = 0.9;
-// How near a crest's top the eye starts to see through it, and sees only through it (water.wgsl).
-const SWASH_THIN = vec2f(0.3, 0.9);
+// The share of a wave's face's width over which its lens takes its curve (swashLens).
+const SWASH_LENS_ROUND: f32 = 0.5;
 
 struct Swash {
   level: f32,
@@ -350,14 +353,19 @@ struct SwashBore {
   drift: f32, // m what the last wave to pass stirred up has drifted inland with it
   wave: f32, // that wave's number
   crest: f32, // how near the top of the nearest crest the water here stands, 0 to 1
-  across: f32, // m through that crest at this height, front to back
+  under: f32, // m under that crest's top
   fill: f32, // how much of the edge the last backwash drew down the next wave has refilled here (swashFrom)
+  // Its shape (swashLens): how tall the last wave and the next stand here, their faces' shares of
+  // the period; how far into the period it is, and how far that moves per m out to sea.
+  shape: vec4f,
+  phase: f32,
+  perMetre: f32,
 }
 
 // The waves as they come in over the last of the shallows at a place, `shore` m out from
 // the waterline nearest, over `depth` m of water as the sea map has it (water/swash.js bore).
 fn swashBore(place: SwashPlace, shore: f32, depth: f32) -> SwashBore {
-  var out = SwashBore(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
+  var out = SwashBore(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, vec4f(0.0), 0.0, 0.0);
   let bore = swash.uSwashBore;
   let face = swash.uSwashBoreFace;
   let foam = swash.uSwashBoreFoam;
@@ -413,10 +421,13 @@ fn swashBore(place: SwashPlace, shore: f32, depth: f32) -> SwashBore {
   out.lean = within.z * crests;
   let raw = rising / (period * c);
   out.slope = raw / max(1.0 - within.z * raw, 0.1);
-  // Near its top a crest is thin: m through it at this height, its face's width and its back's.
-  let nearest = select(before, behind, behind * tall.x > before * tall.y);
-  out.crest = select(0.0, nearest, max(tall.x, tall.y) > 0.0);
-  out.across = sqrt(max(-log(max(out.crest, 1e-4)), 0.0)) * (select(fronts.y, fronts.x, behind * tall.x > before * tall.y) + face.z) * period * c;
+  // How near the top of the nearest crest the water stands, and m under its top.
+  let last = behind * tall.x > before * tall.y;
+  out.crest = select(0.0, select(before, behind, last), max(tall.x, tall.y) > 0.0);
+  out.under = select(tall.y, tall.x, last) * (1.0 - out.crest);
+  out.shape = vec4f(tall, fronts);
+  out.phase = f;
+  out.perMetre = 1.0 / (period * c);
   // Its foam, thick in the roller at its front, then thinning behind it into patches; at the
   // waterline its run-up's front carries it on.
   let roll = swash.uSwashBoreRoll;
@@ -435,4 +446,36 @@ fn swashBore(place: SwashPlace, shore: f32, depth: f32) -> SwashBore {
   // has passed, until it lands at the waterline, it stays full.
   out.fill = select(before, 1.0, k > floor((frame.uWaveSeconds - place.lands + face.y * period) / period));
   return out;
+}
+
+// How a wave coming in rises along the way out, per share of its period, phase f into the period
+// swashBore() told it at: the last wave's crest at 0 and the next's at 1, each falling over its
+// face's share of the period shoreward of it and over its back's behind it (water/swash.js rises).
+fn swashRises(bore: SwashBore, f: f32) -> f32 {
+  var rise = 0.0;
+  for (var j = 0; j < 2; j++) {
+    let x = f - f32(j);
+    let w = select(swash.uSwashBoreFace.z, bore.shape[2 + j], x < 0.0);
+    rise += -2.0 * x / (w * w) * bore.shape[j] * exp(-(x / w) * (x / w));
+  }
+  return rise;
+}
+
+// The light a wave coming in gathers on the floor, as a lens: how much of the sun's light that
+// level water would let through reaches the floor where it went in `ahead` m further out than
+// where swashBore() told the wave, the light going `d` m sideways per its rise per m (1 - 1 / ior,
+// times the depth it crosses), its lines as soft as `soft` and held to about `peak` times even
+// light (water/swash.js lens, which says what it is).
+fn swashLens(bore: SwashBore, ahead: f32, d: f32, soft: f32, peak: f32) -> f32 {
+  if (max(bore.shape.x, bore.shape.y) <= 0.0) {
+    return 1.0;
+  }
+  let k = bore.perMetre;
+  let there = bore.phase + ahead * k;
+  // Where the light it lands there with went in: one step back along its way.
+  let entered = there - d * swashRises(bore, there) * k * k;
+  let half = 0.5 * SWASH_LENS_ROUND * select(bore.shape.w, bore.shape.z, entered < 0.5);
+  let j = 1.0 + d * (swashRises(bore, entered + half) - swashRises(bore, entered - half)) * k * k / (2.0 * half);
+  let g = sqrt((1.0 + soft * soft) / (j * j + soft * soft));
+  return g / (1.0 + g / peak) * (1.0 + 1.0 / peak);
 }

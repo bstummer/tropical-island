@@ -24,12 +24,14 @@
 // Each is one event from its break to the top of its run-up: its bore runs on to the waterline,
 // as tall there as the sheet it runs up as, refilling the edge the last backwash drew down as
 // its face passes, and its run-up starts from the waterline as it lands there, carrying its
-// foam on up the sand.
+// foam on up the sand. Each is a lens too: at.lens() says how it gathers the sun's light on
+// the floor under it.
 //
 // createSwash(settings, surf, way, period, loop) -> at(here, a, o, ground, t, out, width, swell, fill),
-// at.runs(here), how high a full wave runs up there, and at.bore(here, a, o, t, out), the waves
+// at.runs(here), how high a full wave runs up there, at.bore(here, a, o, t, out), the waves
 // coming in (swell: the height that adds to the sea at the edge; fill: how much of the edge
-// drawn down the next wave has refilled there, at.bore()'s):
+// drawn down the next wave has refilled there, at.bore()'s), and at.lens(bore, ahead, d, soft,
+// peak), the light a wave coming in gathers on the floor under it:
 // settings: config.water.swash; surf: config.water.surf, whose sets the beach's waves keep;
 // way: the way the swell runs in the cove's frame (unit); period: s between waves; loop:
 // s the waves come round in. here: the sea map at a, o (water/sea-map.js at(), in the cove's
@@ -64,6 +66,8 @@ const LEAST = 0.02;
 const FILM_GONE = 0.01;
 // The share of its period past which a place's foam is the next wave's (bore()).
 const BORE_NEXT = 0.9;
+// The share of a wave's face's width over which its lens takes its curve (lens()).
+const LENS_ROUND = 0.5;
 
 const smoothstep = (a, b, x) => {
   const t = Math.min(Math.max((x - a) / (b - a), 0), 1);
@@ -103,6 +107,7 @@ export function swashUniforms(settings, surf, way, period, loop) {
     uSwashBoreFoam: { value: new Vector4(settings.bore.foam, settings.bore.trail, settings.bore.toe, settings.bore.flow) },
     uSwashBoreWithin: { value: new Vector4(...settings.bore.within, settings.bore.lean, settings.bore.steepens) },
     uSwashBoreRoll: { value: new Vector2(settings.bore.roll, settings.bore.holds) },
+    uSwashBoreLook: { value: new Vector4(...settings.bore.stands, settings.bore.lip, settings.bore.foot) },
     uSwashStirred: { value: new Vector4(settings.stirred.always, settings.stirred.broken, settings.stirred.clouds, settings.stirred.within) },
     uSwashStirredAlbedo: { value: new Vector3(...settings.stirred.albedo) },
     uSwashStirredOnwards: { value: new Vector2(...settings.stirred.onwards) },
@@ -236,8 +241,10 @@ export function createSwash(settings, surf, way, period, loop) {
   // beach's; how much of the sand it stirs up the water it broke in holds; how far (m) that foam
   // has drifted inland with it; how far (m) the water at a, o has moved inland, its top outrunning
   // its foot; how far (m) what the last wave to pass stirred up has drifted in, and its number;
-  // how near the top of the nearest crest the water stands, 0 to 1, and m through it there;
-  // and how much of the edge the last backwash drew down the next wave has refilled here (at()).
+  // how near the top of the nearest crest the water stands, 0 to 1, and m under its top; how much
+  // of the edge the last backwash drew down the next wave has refilled here (at()); and its shape,
+  // for at.lens(): how tall the last wave and the next stand here, their faces' shares of the period,
+  // how far into the period it is, and how far that moves per m out to sea.
   // Each wave comes in as fast as water this shallow lets it, timed to reach the waterline
   // when it lands there, standing taller as the water shallows (Green's law), its face
   // steepening from `steepens` times as deep as it breaks, until it stands `breaks` times as
@@ -250,7 +257,8 @@ export function createSwash(settings, surf, way, period, loop) {
   function bore(here, a, o, t, out = {}) {
     const { lands, shore, depth, inlandA, inlandO } = here;
     const { height: tall, breaks, bores, from, within, faces, back: falls, spread, foam: foamy, roll, holds, trail, toe, flow, milk: milky, lean, steepens } = settings.bore;
-    out.height = out.slope = out.foam = out.milk = out.along = out.lean = out.drift = out.wave = out.crest = out.across = out.fill = 0;
+    out.height = out.slope = out.foam = out.milk = out.along = out.lean = out.drift = out.wave = out.crest = out.under = out.fill = 0;
+    out.tallNow = out.tallNext = out.frontNow = out.frontNext = out.phase = out.perMetre = 0;
     if (depth >= from[0] || shore >= within[1]) return out;
     if (depth <= 0) {
       // Past the waterline as the map has it, only how near the next wave's face has come to it:
@@ -296,10 +304,16 @@ export function createSwash(settings, surf, way, period, loop) {
     out.lean = lean * crests;
     const raw = rising / (period * c);
     out.slope = raw / Math.max(1 - lean * raw, 0.1);
-    // Near its top a crest is thin: m through it at this height, its face's width and its back's.
+    // How near the top of the nearest crest the water stands, and m under its top.
     const last = behind * now.tall > before * next.tall;
     out.crest = Math.max(now.tall, next.tall) > 0 ? (last ? behind : before) : 0;
-    out.across = Math.sqrt(Math.max(-Math.log(Math.max(out.crest, 1e-4)), 0)) * ((last ? now.front : next.front) + falls) * period * c;
+    out.under = (last ? now.tall : next.tall) * (1 - out.crest);
+    out.tallNow = now.tall;
+    out.tallNext = next.tall;
+    out.frontNow = now.front;
+    out.frontNext = next.front;
+    out.phase = f;
+    out.perMetre = 1 / (period * c);
     // Its foam, thick in the roller at its front, then thinning behind it into patches; at the
     // waterline its run-up's front carries it on.
     const trails = appear * foamy * now.broke * now.white * now.share * ((1 - holds) * Math.exp(-f / roll) + holds * Math.exp(-f / trail));
@@ -386,8 +400,44 @@ export function createSwash(settings, surf, way, period, loop) {
     out.runs = runs;
     return out;
   }
+  // How a wave coming in rises along the way out, per share of its period, phase f into the period
+  // bore() told it at (its shape): the last wave's crest at 0 and the next's at 1, each falling over
+  // its face's share of the period shoreward of it and over `back` behind it.
+  function rises(shape, f) {
+    const { back } = settings.bore;
+    let rise = 0;
+    for (const [x, tall, front] of [[f, shape.tallNow, shape.frontNow], [f - 1, shape.tallNext, shape.frontNext]]) {
+      const w = x < 0 ? front : back;
+      rise += ((-2 * x) / (w * w)) * tall * Math.exp(-((x / w) ** 2));
+    }
+    return rise;
+  }
+
+  // The light a wave coming in gathers on the floor, as a lens: how much of the sun's light that
+  // level water would let through reaches the floor where it went in `ahead` m further out than
+  // where bore() told the wave (`shape`, its out), the light going `d` m sideways per its rise
+  // per m (1 - 1 / ior, times the depth it crosses). It lands at x + d h'(x) from where it went in
+  // at x, over 1 + d h''(x) as much floor: a crest gathers it into a line, the hollow at its face's
+  // foot spreads it. Along the way the wave runs only, as it lies along its crest; as the wave
+  // stands, not as its face leans in, so no more light reaches the floor than went in. Its curve
+  // over LENS_ROUND of its face's width, so where its face's curve meets its back's at its top
+  // the line has no edge. Its lines as soft as `soft` and held to about `peak` times even light,
+  // as the ripples' (caustics.js).
+  function lens(shape, ahead, d, soft, peak) {
+    if (!(shape.tallNow > 0 || shape.tallNext > 0)) return 1;
+    const k = shape.perMetre;
+    const there = shape.phase + ahead * k;
+    // Where the light it lands there with went in: one step back along its way.
+    const entered = there - d * rises(shape, there) * k * k;
+    const half = 0.5 * LENS_ROUND * (entered < 0.5 ? shape.frontNow : shape.frontNext);
+    const j = 1 + (d * (rises(shape, entered + half) - rises(shape, entered - half)) * k * k) / (2 * half);
+    const g = Math.sqrt((1 + soft * soft) / (j * j + soft * soft));
+    return (g / (1 + g / peak)) * (1 + 1 / peak);
+  }
+
   at.runs = runsAt;
   at.bore = bore;
+  at.lens = lens;
   return at;
 }
 

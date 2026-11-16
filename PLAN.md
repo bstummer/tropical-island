@@ -645,7 +645,34 @@ fake. An outside review traced each to its cause and left a costed plan, A1 to C
   and after alternated three times a view: `sand` -0.7%, `ankle` +0.8%, `air-swash` -1.1%, `knee` -3.7%,
   `side` -1.4%: none to tell. `verify` green on the tree as committed; `side`'s shimmer 0.65% turning, 0.83%
   moving.
-- The rest of the review's plan (B1 to B7 and C, but B8) is open.
+- B1, the face's optics. It was painted: over its upper 70% the sky behind it, dimmed by the crest's whole
+  width (2 to 4 m), so a neon-mint band in `sand`, a lime tube in `swash`, a glowing turquoise rope in
+  `side` and `ankle`. Now the eye sees through a face only near its top, where its bent ray crosses less
+  than `bore.lip` 0.04 m of water under the crest's top (`swashBore` tells how far under it, `under`, where
+  it told how wide the crest was): a thin lip line, gold against a low sun, on a wave at least two lips tall.
+  Lower, through a face steeper than `bore.stands` (0.1 to 0.4 rise per m), its ray takes the path it
+  bends to, in the beach band too (it took the film's there, about the depth); and the backwash lifts sand
+  into its foot, `bore.foot` 0.2 as much as a break, most low on it (0.5 over the whole face made it a muddy
+  wall in `ankle`). Seen in SwiftShader frames: `ankle` (15:00) a clear aqua wall of water with a
+  sand-tinged foot and a bright lip, where a pale turquoise band; `swash` (golden hour) a dark teal face
+  under a thin gold lip, where a lime glow-stick; `side` (11:00) a glassy translucent face.
+- B2, the floor refracted under a face: in the beach band, where the water draws the pixel's own ground
+  straight through, a face standing up (`bore.stands`) shows the floor where the eye's bent ray lands
+  (the walk `seenBelow` already makes), so it slides and magnifies as the face passes, and the ripples'
+  light is read there. Free: the walk ran for every pixel already.
+- B3, the wave's own lens: each wave coming in gathers the sun's light into a bright line on the floor
+  under its crest and spreads it in a dim band under its face's foot (`swash.js lens`, `swashLens`): along
+  the way it runs only, from the bore's two Gaussians where the light that lights the floor went in, as the
+  wave stands (not as its face leans, so it adds no light), its curve taken over half its face's width
+  (`LENS_ROUND`): where its face's curve meets its back's at its top the line had a hard edge. On the
+  game's beach a wave about to break lights the floor under its crest 1.3 to 1.6 times and its foot 0.8 to
+  0.9 times. Foam keeps `caustics.shaded` 0.5 per unit of the sun's light from the floor under it. Tests:
+  the light it gains over a wave's length is under a tenth of what it moves, its brightest lies under the
+  crest's top, and a steep wave lights the floor under its crest at least 1.3 times and under its foot at
+  most 0.92 (red with the lens's sign flipped, its entry step dropped, or twice its strength); the waves
+  fixture holds the GPU's lens to it. `side`: a soft band of light runs under the crest as it passes; `knee`
+  (a gentle swell over 0.7 m) brightens by up to 11 levels as one passes.
+- The rest of the review's plan (B4 to B7 and C) is open.
 
 Open after leg 2 (an outside review's findings and the user's look, less what was fixed after them):
 - The reef from 30 m: where a wave breaks along the whole crest at once its whitewater is a band, heaped

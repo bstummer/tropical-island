@@ -14,7 +14,7 @@
 // water/surf.js; its mistake a time off. And the beach's water where the waves wash,
 // its edge, its depth, its foam and its film, against water/swash.js (ctx.water.swashAt);
 // its mistake a time off. And the waves coming in over the last of the shallows, their height,
-// their slope and their foam (ctx.water.boreAt); its mistake a time off. And the light the
+// their slope, their foam (ctx.water.boreAt) and the light they gather on the floor; its mistake a time off. And the light the
 // ripples gather on the floor (water/caustics.js), at points of any depth and pixel width; its
 // mistake a time off.
 // window.__WAVES__ holds the worst differences for tools/screenshot.js. The island
@@ -35,6 +35,7 @@ const AT_POINTS = 1024; // over the sea
 const MISTAKE = { time: 0.05, surfaceTime: 2.5, surfTime: 2, texels: 1, layout: 0.5, swashTime: 0.5 };
 const SURFACE_TIME = 12.5;
 const SWASH_TIME = 437.3; // s, the waves' time, wrapped
+const BORE_LENS = [0.05, 0.06, 0.2, 4]; // waves-check.wgsl's: ahead, d, soft, peak
 
 export function create(ctx) {
   const { renderer, gpu, config } = ctx;
@@ -277,7 +278,7 @@ export function create(ctx) {
     const boreSeen = await run(6);
     seconds.value = was;
     material.uniforms.uPoints.value = input;
-    result.bore = { points: coming.length, height: 0, slope: 0, foam: 0, time: 0 };
+    result.bore = { points: coming.length, height: 0, slope: 0, foam: 0, lens: 0, time: 0 };
     const boreTwin = {};
     const boreLater = {};
     coming.forEach(({ xz }, n) => {
@@ -287,6 +288,7 @@ export function create(ctx) {
       result.bore.height = Math.max(result.bore.height, Math.abs(seen[0] - boreTwin.height));
       result.bore.slope = Math.max(result.bore.slope, Math.abs(seen[1] - boreTwin.slope));
       result.bore.foam = Math.max(result.bore.foam, Math.abs(seen[2] - boreTwin.foam));
+      result.bore.lens = Math.max(result.bore.lens, Math.abs(seen[3] - ctx.water.boreLens(boreTwin, ...BORE_LENS)));
       result.bore.time = Math.max(result.bore.time, Math.abs(seen[0] - boreLater.height));
     });
     boreInput.destroy();

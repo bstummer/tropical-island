@@ -147,7 +147,7 @@ export function causticUniforms(settings, { waves, means }, ior) {
     uCausticMeans: { value: fours(means.flat()) },
     uCaustic: { value: new Vector4(...settings.blur, settings.beyond, settings.deepest) },
     uCausticWander: { value: new Vector4(settings.wander[0], (2 * Math.PI) / settings.wander[1], settings.strength, 1 - 1 / ior) },
-    uCausticFade: { value: new Vector4(fade * ripples[0][0], Math.log2(ripples.at(-1)[0] / ripples[0][0]) / (ripples.length - 1), settings.peak, 0) },
+    uCausticFade: { value: new Vector4(fade * ripples[0][0], Math.log2(ripples.at(-1)[0] / ripples[0][0]) / (ripples.length - 1), settings.peak, settings.shaded) },
     uCausticCalm: { value: new Vector4(settings.churned, ...settings.face) },
   };
 }
