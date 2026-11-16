@@ -896,8 +896,10 @@ export const water = {
     // through it, gone by `within` m from the waterline, and `broken` per m more as much as a wave
     // just broke there (its `milk`), in clouds `clouds` m across; water thick with it sends back
     // `albedo` (linear) of the light on it, a share of the sun's mostly `onwards` [share,
-    // Henyey-Greenstein g], so against a low sun it glows.
-    stirred: { always: 0.45, within: 16, broken: 2.5, clouds: 2.3, albedo: [0.22, 0.5, 0.44], onwards: [0.4, 0.7] },
+    // Henyey-Greenstein g], so against a low sun it glows. Water carrying sand sends back about a
+    // tenth of the light, most in the green: a warm khaki-jade. Little of it lingers, and only by the
+    // waterline, so between waves the shallows are clear and a wave reads against them.
+    stirred: { always: 0.15, within: 6, broken: 2.5, clouds: 2.3, albedo: [0.1, 0.13, 0.09], onwards: [0.4, 0.7] },
   },
   // Light on the floor under shallow water (water/caustics.js, which says what it is): the
   // ripples that gather it, [wavelength m, steepness, degrees off the wind], each turning a whole
@@ -907,21 +909,30 @@ export const water = {
   // from the shortest up, their lengths evenly in ratio, as a pixel wider than `fade` of a
   // ripple's length drops it, and with it its share of the net; its brightest lines are held to about
   // `peak` times as bright as even light; its mean at `depths` depths to `deepest` m, past which the light is even;
-  // how much of it shows (`strength`); how far (m per m of depth) the floor a pixel sees spreads
+  // how much of it shows under ripples as rough as the wind makes them in the open (`strength`): as
+  // much less as they are calmer, in the island's lee or a lull of the gusts, and as much more as
+  // a gust roughens them; how far (m per m of depth) the floor a pixel sees spreads
   // through the waves too small for it, per the root of their slopes' variance (`spread`), which it
-  // drops ripples for too; m from the eye within which the water draws it (`reach`).
+  // drops ripples for too; m from the eye within which the water draws it (`reach`). Its contrast there
+  // (the deviation of the sun's share over its mean) falls from about 0.3 knee-deep to 0.2 at 3 m,
+  // as under clear water in light wind. Churned water spreads it: it goes by `churned` per unit of
+  // foam over it, the surf's, a wave's break and the sheet's, with the sheet's milk; under a wave's
+  // face as steep as `face` (rise per m, from and to) it keeps the last share of it, as the face's
+  // own curve bends the light its way.
   caustics: {
     ripples: [[0.04, 0.07, -40], [0.055, 0.066, 25], [0.075, 0.062, -15], [0.1, 0.058, 50], [0.14, 0.054, -65], [0.19, 0.05, 10], [0.26, 0.046, 35], [0.36, 0.042, -25]],
-    blur: [0.12, 0.08],
+    blur: [0.15, 0.35],
     beyond: 2.5,
     wander: [0.06, 1.1],
     depths: 16,
     deepest: 4,
-    strength: 0.6,
-    peak: 5,
+    strength: 0.45,
+    peak: 4,
     fade: 0.2,
     spread: 0.4,
     reach: 25,
+    churned: 4,
+    face: [0.1, 0.5, 0.5],
   },
   // Spray thrown off the reef's crest where the surf breaks hardest (water/spray.js): from spots
   // where it breaks at least `breaks` hard, `puffs` puffs each, going up `apart` s apart as a wave

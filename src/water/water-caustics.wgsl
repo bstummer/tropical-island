@@ -1,7 +1,7 @@
 // Light on the floor under shallow water: water/caustics.js's twin, which says what it is.
 // causticLight() is how much of the sun's light reaches the floor at a point as drawn: around 1,
-// coarsening into even light where a pixel can't hold its net, and deeper than it reaches.
-// Needs `frame` (the waves' time).
+// coarsening into even light where a pixel can't hold its net, and deeper than it reaches;
+// causticCalm() how much of its net the water over it lets show. Needs `frame` (the waves' time).
 
 struct CausticSettings {
   uCausticWaves: array<vec4f, 8>, // per ripple, shortest first: its wave numbers along world x and z (rad/m), its amplitude (m), how fast it turns (rad/s)
@@ -10,12 +10,14 @@ struct CausticSettings {
   uCaustic: vec4f, // how soft its net is, and how much softer per m of depth; how many times as deep as a ripple gathers the light it blurs out; the deepest of the depths, m
   uCausticWander: vec4f, // how far the longer waves carry the ripples to and fro, m, and 2 pi over how far; how much of its net shows; how much the water bends the light (1 - 1 / ior)
   uCausticFade: vec4f, // how wide a pixel (m) starts to drop the shortest ripple; log2 of the ratio from one ripple's length to the next; about how much brighter than even light its brightest lines are
+  uCausticCalm: vec4f, // how fast its net goes per unit of foam over it; under a face as steep as from and to (rise per m), down to the last's share of it
 }
 
 @group(1) @binding(24) var<uniform> caustic: CausticSettings;
 
 const CAUSTIC_WAVES: i32 = 8; // water/caustics.js holds the counts to these
 const CAUSTIC_DEPTHS: i32 = 16;
+const CAUSTIC_LEAST: f32 = 0.005; // of its net shown, under which it isn't drawn: its brightest lines a hundredth over even light
 
 // How many of the shortest ripples a pixel `footprint` m wide drops (water/caustics.js droppedBy).
 fn causticDropped(footprint: f32) -> f32 {
@@ -47,8 +49,8 @@ fn causticAt(xz: vec2f, depth: f32, t: f32, dropped: f32) -> f32 {
   let turn = caustic.uCausticWander.y;
   let carried = xz + caustic.uCausticWander.x * vec2f(sin(turn * dot(xz, vec2f(0.8, 0.6)) + 1.3), sin(turn * dot(xz, vec2f(-0.6, 0.8)) - 0.7));
   // How much of each ripple's tilt reaches the floor this deep: it blurs out `beyond` times as
-  // deep as it gathers the light; none of what the pixel drops. Where the light went in: a step
-  // up the slope from straight above.
+  // deep as it gathers the light; none of what the pixel drops. Where the light went in: the water
+  // bends the light up the slope it goes in by, so a step down it from straight above.
   var reach: array<f32, CAUSTIC_WAVES>;
   var g = vec2f(0.0);
   for (var i = 0; i < CAUSTIC_WAVES; i++) {
@@ -57,14 +59,15 @@ fn causticAt(xz: vec2f, depth: f32, t: f32, dropped: f32) -> f32 {
     reach[i] = exp(-focus * focus) * clamp(f32(i + 1) - dropped, 0.0, 1.0);
     g += reach[i] * w.z * cos(dot(w.xy, carried) - w.w * t + caustic.uCausticPhases[i / 4][i % 4]) * w.xy;
   }
-  let p = carried + d * g;
+  let p = carried - d * g;
   var h = vec3f(0.0); // xx, xz, zz
   for (var i = 0; i < CAUSTIC_WAVES; i++) {
     let w = caustic.uCausticWaves[i];
     let s = -reach[i] * w.z * sin(dot(w.xy, p) - w.w * t + caustic.uCausticPhases[i / 4][i % 4]);
     h += s * vec3f(w.x * w.x, w.x * w.y, w.y * w.y);
   }
-  let det = (1.0 - d * h.x) * (1.0 - d * h.z) - d * d * h.y * h.y;
+  // The light lands at p + d grad h(p): the area it lands on per the area it went in at.
+  let det = (1.0 + d * h.x) * (1.0 + d * h.z) - d * d * h.y * h.y;
   let soft = caustic.uCaustic.x + caustic.uCaustic.y * depth;
   // Its brightest lines held to about uCausticFade.z times as bright as even light.
   let gathered = inverseSqrt(det * det + soft * soft);
@@ -72,16 +75,30 @@ fn causticAt(xz: vec2f, depth: f32, t: f32, dropped: f32) -> f32 {
 }
 
 // How much of the sun's light reaches the floor at world xz, `depth` m under the surface,
-// for a pixel `footprint` m wide, the sun's way under the water `sunBelow` (up, unit): around 1.
-fn causticLight(xz: vec2f, depth: f32, footprint: f32, sunBelow: vec3f) -> f32 {
+// for a pixel `footprint` m wide, the sun's way under the water `sunBelow` (up, unit), `shows`
+// as much of its net as under the open's ripples through clear water: around 1.
+fn causticLight(xz: vec2f, depth: f32, footprint: f32, sunBelow: vec3f, shows: f32) -> f32 {
   let deepest = caustic.uCaustic.w;
   let dropped = causticDropped(footprint);
-  let shows = caustic.uCausticWander.z * (1.0 - smoothstep(0.75 * deepest, deepest, depth)) * step(0.0, depth);
+  // The light crosses depth / sunBelow.y of water to the floor.
+  let across = depth / max(sunBelow.y, 0.1);
+  let net = caustic.uCausticWander.z * shows * (1.0 - smoothstep(0.75 * deepest, deepest, across)) * step(0.0, depth);
   var light = 1.0;
-  if (shows > 0.0 && dropped < f32(CAUSTIC_WAVES)) {
+  // Where it would show too little to tell, it is not worked out.
+  if (net > CAUSTIC_LEAST && dropped < f32(CAUSTIC_WAVES)) {
     // Where the light that lights it went in.
     let entered = xz + depth * sunBelow.xz / max(sunBelow.y, 0.1);
-    light = 1.0 + shows * (causticAt(entered, depth, frame.uWaveSeconds, dropped) - 1.0);
+    light = 1.0 + net * (causticAt(entered, across, frame.uWaveSeconds, dropped) - 1.0);
   }
   return light;
+}
+
+// How much of its net shows (causticLight's `shows`) under ripples `rough` times as steep as the
+// open's, through water churned by `churned` units of foam (and the sheet's milk), under a wave's
+// face rising `face` per m. Calmer ripples bend the light less: short of their focus, as most are
+// this shallow, their net shows as much less as they are less steep. Churned water spreads the
+// light evenly; a face's own curve bends it its way.
+fn causticCalm(rough: f32, churned: f32, face: f32) -> f32 {
+  let calm = caustic.uCausticCalm;
+  return max(rough, 0.0) * exp(-calm.x * max(churned, 0.0)) * (1.0 - calm.w * smoothstep(calm.y, calm.z, abs(face)));
 }

@@ -366,7 +366,8 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
   // How much of this is water: the sea's, the sheet's and the film's, and none of the bare beach.
   let wet = mix(1.0, wash.film, beach);
   // The gusts fade out far off, where at a grazing angle their patches read as hills of water.
-  reach.z *= mix(seaGusts(in.vRest, water.uGustSeconds), 1.0, smoothstep(water.uGustFades.x, water.uGustFades.y, length(in.vRest - frame.cameraPosition.xz)));
+  let gusts = mix(seaGusts(in.vRest, water.uGustSeconds), 1.0, smoothstep(water.uGustFades.x, water.uGustFades.y, length(in.vRest - frame.cameraPosition.xz)));
+  reach.z *= gusts;
   let chopped = vec4f(s1.xy * wanderedStretch(in.vRest, frame.uChopWander), s1.zw);
   let rippled = s2 + water.uFinest.y * vec4f(finest.xy * FINEST_TURN, 0.0, 0.0);
   var slopes = reach.x * s0 + reach.y * chopped + reach.z * vec4f(rippled.xy * rippleStretch, rippled.zw);
@@ -467,11 +468,15 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
   var light = 1.0;
   if (WATER_NEAR) {
     let sunBelow = -refract(-frame.uSunDirection, vec3f(0.0, 1.0, 0.0), 1.0 / optics.uIor);
-    // Through the waves too small for the pixel the floor it sees spreads wider, the deeper the more;
-    // through clouded water it melts into even light.
-    light = causticLight(below.xz, below.depth, wide + water.uCausticSpread * below.depth * sqrt(variance), sunBelow);
-    light = mix(1.0, light, exp(-2.0 * stirred * below.depth));
-    let lit = dot(sun, WATER_LUMINANCE) * max(sunBelow.y, 0.0);
+    // Its net shows as rough as the wind and the shelter leave the ripples, in the shallows' last
+    // decimetres too; through clouded water it melts into even light, and under the foam and white
+    // water a wave leaves, the sheet's too. Through the waves too small for the pixel the floor it
+    // sees spreads wider, the deeper the more.
+    let shows = exp(-2.0 * stirred * below.depth) * causticCalm(max(sea.w, frame.uSeaLayout.w) * gusts, foam + bore.foam + beach * (wash.foam + wash.milk), bore.slope);
+    light = causticLight(below.xz, below.depth, wide + water.uCausticSpread * below.depth * sqrt(variance), sunBelow, shows);
+    // What of the sun's light falls on the level surface (sunLight() holds its slant) falls on a
+    // level floor below, however the water bends it.
+    let lit = dot(sun, WATER_LUMINANCE);
     below.on = vec4f(below.on.rgb * mix(1.0, light, lit / max(lit + dot(sky, WATER_LUMINANCE), 1e-6)), below.on.a);
   }
   var seabed = vec3f(0.0);

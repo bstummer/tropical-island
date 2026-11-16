@@ -559,7 +559,43 @@ fake. An outside review traced each to its cause and left a costed plan, A1 to C
   and +6.9% (159.5 s), the same shaders drawing a taller face standing up over the shallows, whose
   refracted rays go further to the floor, where the old model drew whitewater. Unchecked on a GPU; if it
   shows there, the review's §8 says where to win it back (the caustics' and the floor's code near the eye).
-- The rest of the review's plan (A5 to C2, but B8) is open.
+- A6, the stirred sand: it clouds the water by `always` 0.15 per m (was 0.45), only within 6 m of the
+  waterline (was 16), and sends back (0.10, 0.13, 0.09) of the light, as water carrying sand does (was a
+  bright mint, 0.22, 0.5, 0.44). Between waves the shallows are clear (`knee`, 7.8 m out, is now clear of
+  it), so a wave reads against them; after a break the water behind the white is sand-coloured, not mint.
+- A7, the caustics' settings, the review's: `blur` 0.15 and 0.35 more per m, `strength` 0.45, `peak` 4. On
+  the JS twin the net's contrast (the deviation of the sun's share over its mean) is 0.27 to 0.29 from 0.3 to
+  1 m and falls to 0.20 at 3 m (was 0.44 to 0.49 at every depth); its brightest 2% from 2.4 to 1.7 times the
+  mean.
+- A8, where the net shows: as much as the ripples over it are rough, the wind's in the open being 1 (the
+  shelter's `ripplesLeast` and the gusts, so 0.6 in the cove's lee, more in a gust); not faded over the
+  shallows' last decimetres as the drawn ripples are, where ripples still gather the light. Tried first as
+  the depth the net is read at (exact for the model): in the cove that left only
+  its shortest, most regular ripples, an even honeycomb in `knee`, so the strength instead. It goes under
+  foam, `churned` 4 per unit of it (the surf's, a break's, the sheet's with its milk), and under a face
+  steeper than `face` 0.1 to 0.5 keeps half. The light crosses depth / cos of the sun under water to the
+  floor, for the net's focus, blur and fade. The sign is fixed: a crest gathers the light (a test, red on
+  the old sign); harmless until the wave's own lens (B3). The sun's share no longer takes its slant twice
+  (`sunLight()` holds it), which raises it at a low sun.
+- Seen in SwiftShader captures, luminance's deviation over its mean in crops of the near water: `side`
+  0.17 to 0.12, `ankle` 0.20 to 0.13, `air-swash` 0.22 to 0.18, `knee` 0.16 to 0.16 (the haze that hid
+  half its net is gone with its strength: the same contrast, clearer and lighter water, softer lines). Side-on
+  over a wave (154 to 166 s, every 0.5 s): the face stands out more against the clearer water, no net runs
+  under the white water, and behind the break the water clouds with sand. From `beach` the near shallows are
+  a little more turquoise and less grey, the floor's dark patches show further out. `swash`'s backlit crest
+  is a duller olive than its lime (still B1's painted face).
+- Cost, SwiftShader's GPU time at 960×540, before and after alternated three times a view: `beach` -0.7%,
+  `ankle` +0.1% and +0.4%, `knee` +0.2% (+2.3% before the fades went in front of the net's loops, which now
+  skip it where it can't show, under foam and sand), `air-swash` -1.4%, `into-the-sun` +1.0%, `swash` -0.2%,
+  `sand` +1.3%, `side` +0.3% and +1.8% (two runs): a few operations per near pixel, inside what two runs of
+  one build differ by. Unchecked on a GPU. `verify` green on the tree as committed; its shimmer warnings:
+  `side` 0.60% turning, 0.72% as the camera moves (was 4.4%), `knee` 18% moving (was 14%: its net no
+  longer under the haze, read through refraction as shimmer, as before).
+- Shown by the weaker net: `ankle`'s horizontal stripes (open since leg 2) are the floor's wave ripples
+  (`sea-ripples.wgsl`), parallel within a metre and as regular as corduroy where nothing lies over them.
+  `knee` is still a pool: an even net of cells over one mint (B4 breaks the lattice; the lagoon's colour is a
+  taste pick of its own).
+- The rest of the review's plan (A5, A9 to C2, but B8) is open.
 
 Open after leg 2 (an outside review's findings and the user's look, less what was fixed after them):
 - The reef from 30 m: where a wave breaks along the whole crest at once its whitewater is a band, heaped
@@ -568,9 +604,9 @@ Open after leg 2 (an outside review's findings and the user's look, less what wa
   From the beach the reef's white line pulses with the sets and goes dark in a lull, where Stage 6's band
   held it steady (the user's pick then): a pick for 7.8, with how much foam.
 - The shore break: no lip is thrown over: an upright face turns into the roller's foam, which is flat white
-  with no relief up close; the hero's glow is a thin line along each crest. In `ankle` faint horizontal
-  stripes run through the water behind the bore (in leg 2's build too; cause not found).
-- `knee`: the water's colour is still Stage 6's, the net now softer through the surf zone's haze.
+  with no relief up close; the hero's glow is a thin line along each crest. In `ankle` horizontal
+  stripes run through the water behind the bore: the floor's wave ripples (found after A8).
+- `knee`: the water's colour is still Stage 6's; the surf zone's haze over it is gone (A6).
 - The camera-move shimmer can't follow refraction: it reads the floor's net, which moves with its apparent
   depth through the water, as shimmer (`knee` 37%, `swimmer` 10%); as the camera turns, 0.02%.
 - Cost. GPU at the median, the game's benchmark headless on the dev machine at 2562×1237 (the user's

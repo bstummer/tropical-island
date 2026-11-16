@@ -6,15 +6,15 @@
 // surface curves like a lens the light gathers, and where it curves the other way it spreads, so
 // the floor `depth` m down is lit by the light that went in over an area larger or smaller than
 // its own: by the area's ratio, 1 / |det J|, J the derivative of where the light lands by where
-// it went in (Wallace 2011, from the surface's own shape). In ankle-deep water the shortest ripples
-// gather it into a fine bright net; deeper, they have crossed past their focus and blur, and the
-// longer ones draw a wider, softer net: each ripple blurs out `beyond` times as deep as it gathers
-// the light. The sun's own size blurs it too, the more the deeper. Longer waves carry the ripples
-// to and fro, so they never lie in a lattice.
+// it went in (Wallace 2011, from the surface's own shape). A crest gathers it, a trough spreads
+// it. In ankle-deep water the shortest ripples gather it into a fine bright net; deeper, they have
+// crossed past their focus and blur, and the longer ones draw a wider, softer net: each ripple
+// blurs out `beyond` times as deep as it gathers the light. The sun's own size blurs it too, the
+// more the deeper. Longer waves carry the ripples to and fro, so they never lie in a lattice.
 //
 // A pixel too wide to hold a ripple's net drops it, the shortest first (`fade` of its length), so
 // further off the net coarsens and melts into even light. Each floor point is lit by the light that
-// went in at one point a step up the slope it came down, its brightest lines held to about `peak`
+// went in at one point, a step from straight above it, its brightest lines held to about `peak`
 // times as bright as even light: the net is what this looks like, not the
 // exact sum of every ray, so it is divided by its mean (means: at each of `depths` depths to
 // `deepest` m, with each whole number of ripples dropped), and the floor is as bright on average
@@ -75,7 +75,8 @@ export function createCaustics(settings, wind, loop, ior) {
     });
     // Carried to and fro by the longer waves.
     const [cx, cz] = [x + carried * Math.sin(turn * (0.8 * x + 0.6 * z) + 1.3), z + carried * Math.sin(turn * (-0.6 * x + 0.8 * z) - 0.7)];
-    // Where it went in: a step up the slope from straight above.
+    // Where it went in: the water bends the light up the slope it goes in by, so a step down it
+    // from straight above.
     let gx = 0;
     let gz = 0;
     waves.forEach(({ kx, kz, a, w, phase }, i) => {
@@ -83,7 +84,7 @@ export function createCaustics(settings, wind, loop, ior) {
       gx += c * kx;
       gz += c * kz;
     });
-    const [px, pz] = [cx + d * gx, cz + d * gz];
+    const [px, pz] = [cx - d * gx, cz - d * gz];
     let hxx = 0;
     let hxz = 0;
     let hzz = 0;
@@ -93,7 +94,8 @@ export function createCaustics(settings, wind, loop, ior) {
       hxz += s * kx * kz;
       hzz += s * kz * kz;
     });
-    const det = (1 - d * hxx) * (1 - d * hzz) - d * d * hxz * hxz;
+    // The light lands at p + d grad h(p): the area it lands on per the area it went in at.
+    const det = (1 + d * hxx) * (1 + d * hzz) - d * d * hxz * hxz;
     const soft = blur + blurDeeper * depth;
     // Its brightest lines held to about `peak` times as bright as even light.
     const gathered = 1 / Math.sqrt(det * det + soft * soft);
@@ -146,5 +148,6 @@ export function causticUniforms(settings, { waves, means }, ior) {
     uCaustic: { value: new Vector4(...settings.blur, settings.beyond, settings.deepest) },
     uCausticWander: { value: new Vector4(settings.wander[0], (2 * Math.PI) / settings.wander[1], settings.strength, 1 - 1 / ior) },
     uCausticFade: { value: new Vector4(fade * ripples[0][0], Math.log2(ripples.at(-1)[0] / ripples[0][0]) / (ripples.length - 1), settings.peak, 0) },
+    uCausticCalm: { value: new Vector4(settings.churned, ...settings.face) },
   };
 }

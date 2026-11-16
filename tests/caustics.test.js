@@ -69,3 +69,17 @@ test('the net moves with time and comes round with the waves\' loop, nothing jum
   assert.ok(now.some((v, i) => Math.abs(v - later[i]) > 0.3), 'the net stands still');
   now.forEach((v, i) => assert.ok(Math.abs(v - looped[i]) < 1e-6, `a loop later ${looped[i]}, not ${v}`));
 });
+
+test('a crest gathers the light under it and a trough spreads it', () => {
+  // One ripple along x, carried nowhere: its crests where its phase is a quarter turn.
+  const one = { ...settings, ripples: [[0.2, 0.05, 0]], wander: [0, 1], blur: [0.05, 0] };
+  const net = createCaustics(one, [1, 0], loop, config.water.ior);
+  const [{ kx, w, phase }] = net.waves;
+  const t = 12.3;
+  const crest = (Math.PI / 2 - phase + w * t) / kx;
+  const trough = crest + Math.PI / kx;
+  // Short of its focus (2.6 m down), the floor under a crest is the brighter.
+  const depth = 1;
+  const [under, between] = [net.at(crest, 0, depth, t), net.at(trough, 0, depth, t)];
+  assert.ok(under > 1.3 && between < 0.85, `under a crest ${under.toFixed(3)}, under a trough ${between.toFixed(3)}`);
+});
