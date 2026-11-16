@@ -672,6 +672,15 @@ fake. An outside review traced each to its cause and left a costed plan, A1 to C
   most 0.92 (red with the lens's sign flipped, its entry step dropped, or twice its strength); the waves
   fixture holds the GPU's lens to it. `side`: a soft band of light runs under the crest as it passes; `knee`
   (a gentle swell over 0.7 m) brightens by up to 11 levels as one passes.
+- Cost of B1 to B3, SwiftShader's GPU time at 960×540, before and after alternated three times a view.
+  First as written: `ankle` +0.3%, `swash` +1.6%, `sand` +2.0%, `beach` +1.9%, `into-the-sun` -0.8%,
+  `air-swash` +1.5%, `knee` +1.4% (`side`'s first round ran beside the test suite; its other two even):
+  the lens ran wherever a wave passes, though out in the lagoon a swell bends the floor's light by a few
+  percent. Paid back: it is worked out only where it can bend it by `LENS_LEAST` 5% or more, in full from
+  10% (a wave about to break: 50% and more). Then, before and after alternated three times again: `side`
+  -0.5%, `sand` +0.7%, `beach` +1.0% (its rounds overlapping), `swash` -0.4%, `air-swash` -0.3%, `knee`
+  -0.3%: none to tell. The see-through near a face's top, now on few pixels, gives back what the lens and
+  the floor's refraction take. Unchecked on a GPU.
 - The rest of the review's plan (B4 to B7 and C) is open.
 
 Open after leg 2 (an outside review's findings and the user's look, less what was fixed after them):
