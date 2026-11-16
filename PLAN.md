@@ -670,8 +670,8 @@ fake. An outside review traced each to its cause and left a costed plan, A1 to C
   the light it gains over a wave's length is under a tenth of what it moves, its brightest lies under the
   crest's top, and a steep wave lights the floor under its crest at least 1.3 times and under its foot at
   most 0.92 (red with the lens's sign flipped, its entry step dropped, or twice its strength); the waves
-  fixture holds the GPU's lens to it. `side`: a soft band of light runs under the crest as it passes; `knee`
-  (a gentle swell over 0.7 m) brightens by up to 11 levels as one passes.
+  fixture holds the GPU's lens to it. `side`: a soft band of light runs under the crest as it passes; at `knee`'s
+  spot (a gentle swell over 0.7 m) it lights the floor at most 3% more as one passes.
 - Cost of B1 to B3, SwiftShader's GPU time at 960×540, before and after alternated three times a view.
   First as written: `ankle` +0.3%, `swash` +1.6%, `sand` +2.0%, `beach` +1.9%, `into-the-sun` -0.8%,
   `air-swash` +1.5%, `knee` +1.4% (`side`'s first round ran beside the test suite; its other two even):
