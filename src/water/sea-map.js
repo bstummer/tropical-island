@@ -9,7 +9,8 @@
 //   inlandA, inlandO  the way inland, a unit vector (a, o): the waterline lies `shore` m
 //          along it, from land as from the sea, and it runs on smoothly across the waterline
 //   reef   m to the nearest line of the reef's crest under the sea: + seaward of it, - inside
-//   swell  how much of the open sea's swell reaches here, 0 to 1
+//   swell  how much of the open sea's swell reaches here, 0 to 1: little where the beach's
+//          own waves come in, which are its waves there (water/swash.js bore)
 //   wind   how much of the wind's chop has grown here, 0 to 1
 //   chop   how much of the chop reaches here, 0 to 1: the wind's own, or the open sea's
 //   surf   how much of the swell breaks here, 0 to 1
@@ -141,6 +142,13 @@ export function buildSeaMap(heightmap, settings, side, blend = 0) {
     }
   });
   for (let n = 0; n < count; n++) surf[n] = Math.min((surf[n] * settings.swell.surf) / settings.texel, 1);
+  // Where the beach's own waves rise out of the lagoon's and come in, they are the swell: its own
+  // waves, running on at the deep sea's pace, give way to them as they rise (water/swash.js bore).
+  const { from: rises, within, keeps } = settings.swell.bores;
+  for (let n = 0; n < count; n++) {
+    const taken = (1 - smoothstep(rises[1], rises[0], depths[n])) * (1 - smoothstep(within[0], within[1], shore[n]));
+    swell[n] *= 1 - (1 - keeps) * taken;
+  }
   const breaking = roundAbout(surf, samples, Math.max(Math.round(settings.swell.round / texel), 1));
   for (let n = 0; n < count; n++) breaking[n] = Math.min(breaking[n] / settings.swell.full, 1);
 

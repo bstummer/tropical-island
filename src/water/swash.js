@@ -15,7 +15,10 @@
 // its front carries foam, which it strands where it turns and partly drags back down. The
 // ground it leaves keeps a glassy film for seconds, from the top down and in patches, and
 // is soaked for longer; what a wave did fades within two waves, by when the ground's own
-// wetness (chunks/wet.wgsl) holds what the sets did over minutes.
+// wetness (chunks/wet.wgsl) holds what the sets did over minutes. Over the top of its run-up
+// the water sinks into the sand as it stops, so no film is left there; low on the beach, where
+// the water in the sand meets the beach's face (the seepage face: Turner 1993), the sand stays
+// saturated and glassy between waves.
 //
 // The waves come in over the last metres of the shallows as at.bore() says, and break there.
 // Each is one event from its break to the top of its run-up: its bore runs on to the waterline,
@@ -104,12 +107,13 @@ export function swashUniforms(settings, surf, way, period, loop) {
     uSwashStirredAlbedo: { value: new Vector3(...settings.stirred.albedo) },
     uSwashStirredOnwards: { value: new Vector2(...settings.stirred.onwards) },
     uSwashUprush: { value: new Vector2(collapses, milkWidth) },
+    uSwashSoaks: { value: new Vector4(settings.soaks, settings.seeps, settings.soakedTop, 0) },
     uSwashBreaks: { value: new Vector4(settings.bore.bores, ...settings.bore.surges, (G * period * period) / (2 * Math.PI)) },
   };
 }
 
 export function createSwash(settings, surf, way, period, loop) {
-  const { height, full, least, sizes, lobes, pace, collapses, back, draws, sheet, edge, fray, frayAcross, film, filmPatches, filmAcross, dries, milk, milkWidth, front, frontWidth, lingers, lineWidth, linePatches, dragged } = settings;
+  const { height, full, least, sizes, lobes, pace, collapses, back, draws, sheet, edge, fray, frayAcross, film, filmPatches, filmAcross, dries, soaks, soakedTop, seeps, milk, milkWidth, front, frontWidth, lingers, lineWidth, linePatches, dragged } = settings;
   const waves = Math.round(loop / period);
   const wave = {};
   // The foam at the front of the sheet, `behind` m in height behind its edge (- ahead of it).
@@ -141,10 +145,10 @@ export function createSwash(settings, surf, way, period, loop) {
   // Wave k, landed tau s ago at the still waterline, where its bore arrived at `arrives` m/s
   // as white as `white` times a full one's front, having broken `broke` white (0 as it surged up),
   // run up R m and drained back to D m below the still sea, where every wave of this beach
-  // leaves the edge, over ground g (frayed) on a beach rising `rise` per metre, its edges as soft
-  // as `width` m in height: into `wave`, its edge's height, the water over g, its foam there, and
-  // how much film and soaking it left at g.
-  function oneWave(tau, R, D, rise, g, patches, width, arrives, white, broke) {
+  // leaves the edge, over ground g (frayed) on a beach rising `rise` per metre whose seepage face
+  // stands `seep` m above the still sea, its edges as soft as `width` m in height: into `wave`,
+  // its edge's height, the water over g, its foam there, and how much film and soaking it left at g.
+  function oneWave(tau, R, D, rise, g, patches, width, arrives, white, broke, seep) {
     const soft = Math.max(width, 1e-4);
     const up = (pace * Math.sqrt((2 * R) / G)) / Math.min(Math.max(rise, LEAST), STEEPEST);
     // It sets off at its bore's speed and speeds up as the bore collapses, over `collapses` s, so
@@ -183,16 +187,23 @@ export function createSwash(settings, surf, way, period, loop) {
       const behind = tip - g;
       const under = smoothstep(-soft, soft, behind);
       const b = Math.max(behind, 0);
-      // Left behind as it drained: glassy for seconds, from the top down, soaked for longer.
+      // Left behind as it drained, as far as it ran, its edge no sharper than the pixel: glassy for
+      // seconds, from the top down, soaked for longer; on the seepage face saturated, glassy until
+      // the next wave. Over the top of its run-up it soaked in as it stopped: no film, and the sand
+      // wet but matte, thinning to that over at least two pixels' height.
       let filmLeft = 0;
       let soakedLeft = 0;
       let drag = 0;
-      if (g < R) {
+      if (g < R + soft) {
         const left = turns + down * Math.sqrt(Math.max((R - g) / (R + D), 0));
         const since = Math.max(tau - left, 0);
-        filmLeft = Math.exp(-since / (film * (0.3 + 0.7 * smoothstep(0, R, R - g)) * patches));
-        soakedLeft = Math.exp(-since / dries);
-        drag = dragged * (1 - s) * Math.exp(-(R - g) / (frontWidth + 0.5 * (R - Math.max(tip, -D))));
+        const lasts = film * (0.3 + 0.7 * smoothstep(0, Math.max(R - seep, 1e-3), R - g)) * patches;
+        const seeping = 1 - smoothstep(0.75 * seep - soft, 1.25 * seep + soft, g);
+        const reached = smoothstep(-soft, soft, R - g);
+        const below = smoothstep(0, Math.max(soaks * R, 2 * soft), R - g);
+        filmLeft = Math.max(Math.exp(-since / lasts), seeping) * below;
+        soakedLeft = Math.max(Math.exp(-since / dries), seeping) * (soakedTop + (1 - soakedTop) * below) * reached;
+        drag = reached * dragged * (1 - s) * Math.exp(-Math.max(R - g, 0) / (frontWidth + 0.5 * (R - Math.max(tip, -D))));
       }
       thick = under * sheet * R * (1 - 0.7 * s) * (1 - Math.exp(-b / (edge * R)));
       milky = under * milk * 0.5 * (1 - s) * (1 - s) * Math.exp(-b / behindFront);
@@ -331,6 +342,7 @@ export function createSwash(settings, surf, way, period, loop) {
     out.soaked = 0;
     out.milk = 0;
     const D = draws * runs;
+    const seep = seeps * runs;
     // The waves coming in reach the waterline at c0, and cross the edge drawn down at about c0 and cD (bore()).
     const scale = settings.bore.height * runs;
     const c0 = Math.sqrt(G * scale);
@@ -342,7 +354,7 @@ export function createSwash(settings, surf, way, period, loop) {
     for (const k of [n, n - 1]) {
       const R = runUp(k, runs, fa, fo);
       const { white } = breaking(R, rise);
-      const w = oneWave(since - k * period, R, D, rise, g, patches, width, c0, whitens * R * white, white);
+      const w = oneWave(since - k * period, R, D, rise, g, patches, width, c0, whitens * R * white, white, seep);
       level = Math.max(level, w.tip);
       out.top = Math.max(out.top, w.top);
       thick = Math.max(thick, w.thick);

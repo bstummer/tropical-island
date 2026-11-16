@@ -595,7 +595,42 @@ fake. An outside review traced each to its cause and left a costed plan, A1 to C
   (`sea-ripples.wgsl`), parallel within a metre and as regular as corduroy where nothing lies over them.
   `knee` is still a pool: an even net of cells over one mint (B4 breaks the lattice; the lagoon's colour is a
   taste pick of its own).
-- The rest of the review's plan (A5, A9 to C2, but B8) is open.
+- A5, one wave field near the shore: where the beach's waves rise out of the lagoon's and come in (1.2 to
+  0.8 m deep, within 20 to 12 m of the waterline: `boresFrom`, `boresWithin`, shared with `swash.bore`), the
+  sea map's swell keeps `bores.keeps` 0.1 of itself, so the FFT swell, running on at the deep sea's 17 m/s
+  with crests 190 m apart, no longer heaves the shallows by 3 to 5 cm out of step with them (at `knee`'s spot
+  0.23 to 0.023, at `side`'s 0.07 to 0.007). In the map's build: free. Test: it holds there on seeds 1 to 20,
+  and nowhere else changes (red without the fade).
+- A9, a glassy film: its surface's variance 0.0008 (was 0.012), none of the sea's ripples (a millimetre of
+  water holds none, was 0.15), and the sand's rumples under it a third as steep (`swash.rumples`). It mirrors
+  sky from lower and brighter, and the sun's glare on it narrows to a streak (`sand`, `swash`). The sand's
+  `roughness.film`, never read, is gone.
+- A10, the top of a run-up soaks in as it stops: no film over its top `soaks` 0.3, thinning to that over at
+  least two pixels' height, and the sand there wet but matte (`soakedTop` 0.5) where it was soaked and glossy
+  up to a line. The review's worst film flaw, `swash`'s gold glare stopping on a line stepped 6 px a row, was
+  that: the soaked sand's gloss (the terrain's), not the film. It now fades up the beach into matte wet sand;
+  the edge of what a wave soaked is filtered by the pixel too. Tests: neither the film nor the soaking moves
+  more than 0.06 a millimetre of ground with a pixel 2 cm tall, and just under the top there is no film (both
+  red on the old code).
+- A11, a seepage face: below `seeps` 0.3 of a full wave's run-up the sand stays saturated and glassy between
+  waves, and above it the film lasts `film` 3 s at the seepage face's top down to 0.9 s at the run-up's (was 4 s
+  over the whole run-up). Test: the film holds above 0.99 there through three waves (red on the old code).
+  From standing height the wet band now has its three tones in `air-swash`: a silvery strip at the water, a
+  darker matte band, then dry sand. From `beach`, 12 m up the sand, it hardly shows.
+- Cost, SwiftShader's GPU time at 960×540, before and after alternated three times a view: `swash` -0.5%,
+  `sand` -0.9%, `side` +1.0%, `beach` -0.4%, `air-swash` -0.2%, `into-the-sun` +0.3%, `ankle` -1.5%, `knee`
+  +2.1% (+2.1% again over five rounds; with A5 alone +1.2%, its rounds -0.9% to +3.6%). No new work runs at
+  `knee`'s spot (0.67 m deep, outside the beach band): the calmer water there changes what its glints and
+  mirror do. `knee` is the cheapest view, a third of the others. A few operations per beach pixel otherwise.
+  Unchecked on a GPU. `verify` green on the tree as committed; its shimmer warnings: `side` 0.69% turning and
+  0.84% moving (were 0.60% and 0.72%: the glassy strip's toothed mirror, below), `knee` 16% moving (was 18%).
+- Shown by the glassy strip: from a crouch at the waterline (`side`) its mirror of the far hill ends in a
+  picket fence of vertical teeth. Not the film: the land's image is thrown cell by cell to where its mirror
+  lies (`mirror.js`), which leaves empty cells at grazing angles, read as sky; the same stair-stepped
+  reflection the review saw on the headland (open since leg 1). The film's old roughness and its fading veil
+  hid it; at 0.012 the teeth are fainter but there. The fix is in the mirror (fill its empty cells from their
+  neighbours), not the film.
+- The rest of the review's plan (B1 to B7 and C, but B8) is open.
 
 Open after leg 2 (an outside review's findings and the user's look, less what was fixed after them):
 - The reef from 30 m: where a wave breaks along the whole crest at once its whitewater is a band, heaped

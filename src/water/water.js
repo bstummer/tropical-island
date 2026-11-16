@@ -173,7 +173,7 @@ export function create(ctx) {
       uShoreRipples: { value: new Vector2(...settings.swash.ripples) },
       uShoreVariance: { value: new Vector2(...settings.swash.variance) },
       uShoreMirror: { value: settings.swash.mirrors },
-      uShoreRumples: { value: new Vector2(config.world.terrain.sand.rumples.wavelength, config.world.terrain.sand.rumples.slope) },
+      uShoreRumples: { value: new Vector2(config.world.terrain.sand.rumples.wavelength, config.world.terrain.sand.rumples.slope * settings.swash.rumples) },
       uShoreFlow: { value: settings.swash.flow },
       uMirror,
       uMirrorCells: { value: uMirrorCells },

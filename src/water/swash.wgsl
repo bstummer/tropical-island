@@ -34,6 +34,7 @@ struct SwashSettings {
   uSwashStirredAlbedo: vec3f, // linear: what water thick with it sends back of the light on it
   uSwashStirredOnwards: vec2f, // the share of the sun's it sends mostly onwards, and how much onwards (Henyey-Greenstein g)
   uSwashUprush: vec2f, // s its front takes to speed up from its bore's speed as that collapses; m behind its front it is white
+  uSwashSoaks: vec4f, // the share of its run-up at its top that soaks in as it stops, leaving no film; the seepage face's top, per a full wave's run-up; how wet it leaves the sand at its top
   // How tall a broken wave stands per m of water; the surf-similarity numbers past which a wave surges up
   // instead of breaking (from and to); m, the swell's deep-water wavelength
   uSwashBreaks: vec4f,
@@ -123,9 +124,9 @@ fn swashFrontFoam(behind: f32, width: f32) -> f32 {
 // Wave k, landed tau s ago at the still waterline, where its bore arrived at `arrives` m/s as
 // white as `white` times a full one's front, having broken `broke` white (0 as it surged up),
 // run up r m and drained back to d m below the still sea, where every wave of this beach leaves
-// the edge, over ground g (frayed) on a beach rising `rise` per metre, its edges as soft as
-// `width` m in height, a pixel's.
-fn swashWave(tau: f32, r: f32, d: f32, rise: f32, g: f32, patches: f32, width: f32, arrives: f32, white: f32, broke: f32) -> SwashWave {
+// the edge, over ground g (frayed) on a beach rising `rise` per metre whose seepage face stands
+// `seep` m above the still sea, its edges as soft as `width` m in height, a pixel's.
+fn swashWave(tau: f32, r: f32, d: f32, rise: f32, g: f32, patches: f32, width: f32, arrives: f32, white: f32, broke: f32, seep: f32) -> SwashWave {
   let time = swash.uSwashTime;
   let sheet = swash.uSwashSheet;
   let foamLook = swash.uSwashFoam;
@@ -164,16 +165,23 @@ fn swashWave(tau: f32, r: f32, d: f32, rise: f32, g: f32, patches: f32, width: f
     let behind = w.tip - g;
     let under = smoothstep(-soft, soft, behind);
     let b = max(behind, 0.0);
-    // Left behind as it drained: glassy for seconds, from the top down, soaked for longer.
+    // Left behind as it drained, as far as it ran, its edge no sharper than the pixel: glassy for
+    // seconds, from the top down, soaked for longer; on the seepage face saturated, glassy until
+    // the next wave. Over the top of its run-up it soaked in as it stopped: no film, and the sand
+    // wet but matte, thinning to that over at least two pixels' height.
     var film = 0.0;
     var soaked = 0.0;
     var drag = 0.0;
-    if (g < r) {
+    if (g < r + soft) {
       let left = turns + down * sqrt(max((r - g) / (r + d), 0.0));
       let since = max(tau - left, 0.0);
-      film = exp(-since / (swash.uSwashFilm.x * (0.3 + 0.7 * smoothstep(0.0, r, r - g)) * patches));
-      soaked = exp(-since / swash.uSwashFilm.w);
-      drag = swash.uSwashMore.x * (1.0 - s) * exp(-(r - g) / (foamLook.y + 0.5 * (r - max(w.tip, -d))));
+      let lasts = swash.uSwashFilm.x * (0.3 + 0.7 * smoothstep(0.0, max(r - seep, 1e-3), r - g)) * patches;
+      let seeping = 1.0 - smoothstep(0.75 * seep - soft, 1.25 * seep + soft, g);
+      let reached = smoothstep(-soft, soft, r - g);
+      let below = smoothstep(0.0, max(swash.uSwashSoaks.x * r, 2.0 * soft), r - g);
+      film = max(exp(-since / lasts), seeping) * below;
+      soaked = max(exp(-since / swash.uSwashFilm.w), seeping) * mix(swash.uSwashSoaks.z, 1.0, below) * reached;
+      drag = reached * swash.uSwashMore.x * (1.0 - s) * exp(-max(r - g, 0.0) / (foamLook.y + 0.5 * (r - max(w.tip, -d))));
     }
     w.thick = under * sheet.x * r * (1.0 - 0.7 * s) * (1.0 - exp(-b / (sheet.y * r)));
     w.milk = under * swash.uSwashLook.x * 0.5 * (1.0 - s) * (1.0 - s) * exp(-b / behindFront);
@@ -288,6 +296,7 @@ fn swashFrom(place: SwashPlace, ground: f32, width: f32, swell: f32, fill: f32) 
   var out = Swash(-1e9, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, runs, place.rise, -1e9);
   var thick = 0.0;
   let d = swash.uSwashTime.z * runs;
+  let seep = swash.uSwashSoaks.y * runs;
   // The waves coming in reach the waterline at c0, and cross the edge drawn down at about c0 and cD (swashBore).
   let scale = swash.uSwashBore.x * runs;
   let c0 = sqrt(SWASH_G * scale);
@@ -299,7 +308,7 @@ fn swashFrom(place: SwashPlace, ground: f32, width: f32, swell: f32, fill: f32) 
     let k = n - f32(j);
     let r = swashPlaceRunUp(place, k);
     let broke = swashBreaking(r, place.rise).y;
-    let w = swashWave(since - k * period, r, d, place.rise, g, place.patches, width, c0, whitens * r * broke, broke);
+    let w = swashWave(since - k * period, r, d, place.rise, g, place.patches, width, c0, whitens * r * broke, broke, seep);
     out.level = max(out.level, w.tip);
     out.top = max(out.top, w.top);
     thick = max(thick, w.thick);

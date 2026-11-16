@@ -154,6 +154,55 @@ test('where the edge stands over the ground there is water over it and the groun
   }
 });
 
+test('no film is left over the top of a run-up, where it soaks in as it stops, and neither the film nor the soaking ends in a line where a pixel holds two centimetres', () => {
+  const beach = gameBeach();
+  const { soaks } = config.water.swash;
+  const out = {};
+  let tops = 0;
+  for (const [x, z] of alongCove(beach)) {
+    const [a, o] = beach.island.toCove(x, z);
+    const here = beach.map.at(a, o);
+    for (let t = 300; t < 300 + 3 * period; t += 0.37) {
+      let last = null;
+      for (let g = -0.05; g < 0.7; g += 0.001) {
+        beach.swash(here, a, o, g, t, out, 0.02);
+        if (last !== null) {
+          assert.ok(Math.abs(out.film - last.film) < 0.06, `at ${x}, ${z}, t ${t.toFixed(2)}: the film from ${last.film.toFixed(3)} to ${out.film.toFixed(3)} a millimetre higher, at ${g.toFixed(3)} m`);
+          assert.ok(Math.abs(out.soaked - last.soaked) < 0.06, `at ${x}, ${z}, t ${t.toFixed(2)}: soaked from ${last.soaked.toFixed(3)} to ${out.soaked.toFixed(3)} a millimetre higher, at ${g.toFixed(3)} m`);
+        }
+        last = { film: out.film, soaked: out.soaked };
+      }
+      // Just under as high as the waves ran, once their edge has left it: almost none.
+      beach.swash(here, a, o, 0, t, out, 0);
+      const top = out.top;
+      const g = top * (1 - 0.1 * soaks);
+      if (top > 0.05 && out.level < g) {
+        beach.swash(here, a, o, g, t, out, 0);
+        assert.ok(out.film < 0.05, `at ${x}, ${z}, t ${t.toFixed(2)}: film ${out.film.toFixed(3)} just under the top of the run-up, ${top.toFixed(3)} m`);
+        tops++;
+      }
+    }
+  }
+  assert.ok(tops > 50, `only ${tops} times past a run-up's turn`);
+});
+
+test('low on the beach, below the seepage face\'s top, the sand stays glassy between waves', () => {
+  const beach = gameBeach();
+  const { seeps } = config.water.swash;
+  const out = {};
+  for (const [x, z] of alongCove(beach)) {
+    const [a, o] = beach.island.toCove(x, z);
+    const here = beach.map.at(a, o);
+    const seep = seeps * beach.swash.runs(here);
+    for (const share of [0.05, 0.3, 0.6]) {
+      for (let t = 300; t < 300 + 3 * period; t += 0.1) {
+        beach.swash(here, a, o, share * seep, t, out, 0);
+        assert.ok(out.film > 0.99, `at ${x}, ${z}, ${(share * seep).toFixed(3)} m up, t ${t.toFixed(1)}: film ${out.film.toFixed(3)}`);
+      }
+    }
+  }
+});
+
 test('above as high as the waves wet the ground now, the beach is bare: no water, film or foam (water/water.wgsl lies under the ground there)', () => {
   const beach = gameBeach();
   const out = {};

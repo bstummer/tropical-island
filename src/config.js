@@ -455,8 +455,8 @@ export const world = {
       // steps down by `step` (of 1, soaked) to a faint damp, dry above `dry`.
       wetness: { film: 0.05, dry: 0.6, step: 0.18 },
       // Damp sand is matte, wet sand has a soft sheen and soaked sand a glossy
-      // one; a film of water mirrors.
-      roughness: { dry: 0.9, wet: 0.65, soaked: 0.4, film: 0.07 },
+      // one; a film of water over it the water draws (water/swash.js).
+      roughness: { dry: 0.9, wet: 0.65, soaked: 0.4 },
       // Metres from the camera within which sand shows its detail; beyond, its
       // albedo alone, drawn by a cheaper shader (world/terrain.js).
       range: 120,
@@ -637,6 +637,10 @@ export const world = {
 const surfPeriod = 11.25; // s between the waves of the swell that reach the reef
 const wavesLoop = 900; // s the waves come round in: the surf's sets come round in it too
 const swellFrom = 15; // degrees to the right of straight out to sea the swell comes from: the map's and the waves' alike
+// Where the beach's waves rise out of the lagoon's (water/swash.js bore): between these depths (m, from and to),
+// and within these distances of the waterline (m, nearest and furthest); the map's swell gives way to them there.
+const boresFrom = [1.2, 0.8];
+const boresWithin = [12, 20];
 export const water = {
   ior: 1.33,
   dimming: [0.4, 0.04, 0.028],
@@ -673,11 +677,14 @@ export const water = {
   // Past the map's square the open sea goes on: what the island held back gives way to it
   // over `open.over` m, and the reef's crest is taken to lie `open.reef` m off, past any surf's fade.
   // When the waves land at the waterline nearest each place is softened over `lands` m (water/swash.js).
+  // Where the beach's own waves rise out of the lagoon's and come in (`bores`: as deep as `from`, as near
+  // the waterline as `within`), the swell keeps only `keeps` of itself: they are its waves there, slowed
+  // and steepened by the shallows, where its own would run on at the deep sea's pace with no thought of them.
   map: {
     texel: 4,
     open: { over: 2000, reef: 2000 },
     lands: 8,
-    swell: { from: swellFrom, spread: [[-40, 0.1], [-20, 0.2], [0, 0.4], [20, 0.2], [40, 0.1]], breaks: 1.6, spreading: 0.08, surf: 6, round: 20, full: 0.08, period: surfPeriod },
+    swell: { from: swellFrom, spread: [[-40, 0.1], [-20, 0.2], [0, 0.4], [20, 0.2], [40, 0.1]], breaks: 1.6, spreading: 0.08, surf: 6, round: 20, full: 0.08, period: surfPeriod, bores: { from: boresFrom, within: boresWithin, keeps: 0.1 } },
     wind: { blows: world.terrain.sand.wind, gusts: [[-15, 0.25], [0, 0.5], [15, 0.25]], fetch: 400, depth: 1, grows: 30 },
     chop: { breaks: 1, dies: 80, deep: 10, spreading: 0.3, round: 8 },
   },
@@ -829,8 +836,11 @@ export const water = {
   // high a full wave runs there. Its sheet stands `sheet` of that thick behind its edge, thinning to the edge over
   // `edge` of it (in height). The edge frays by `fray` m in height, at `frayAcross` m.
   // The glassy `film` it leaves lasts s, longest at the bottom, a share
-  // `filmPatches` more or less in patches `filmAcross` m across; what it soaks
-  // dries over `dries` s, and nothing a wave did lasts past two waves: the ground's own
+  // `filmPatches` more or less in patches `filmAcross` m across; none over the top `soaks` of its
+  // run-up, which sinks into the sand as it stops, leaving it `soakedTop` wet (1 soaked: wet but
+  // matte, with no water on it); below the seepage face's top, `seeps` of how high
+  // a full wave runs up (the water in the sand meets the beach there), it lasts until the next wave;
+  // what it soaks dries over `dries` s, and nothing a wave did lasts past two waves: the ground's own
   // wetness (chunks/wet.wgsl) holds what the sets did over minutes. Its uprush is `milk`
   // white with bubbles and sand within `milkWidth` m behind its front, clearing as it drains. Foam: its
   // front gathers `front` times what its bore's roller carried as it landed into its edge, `frontWidth`
@@ -851,9 +861,12 @@ export const water = {
     edge: 0.05,
     fray: 0.008,
     frayAcross: 0.9,
-    film: 4,
+    film: 3,
     filmPatches: 0.6,
     filmAcross: 3.7,
+    soaks: 0.3,
+    soakedTop: 0.5,
+    seeps: 0.3,
     dries: 30,
     milk: 0.5,
     milkWidth: 0.8,
@@ -866,14 +879,17 @@ export const water = {
     // The water's surface (water/water.wgsl): the beach's water takes over from the sea's
     // over `band` m of depth; over the beach, up to `wets` times a full wave's run-up, it
     // lies just over the ground as drawn, by `lift`: m, m more per m from the eye, and per m
-    // of its mesh's spacing there. The sheet has `ripples` of the sea's ripples, and the film
-    // it leaves less; their surfaces are rougher than the sea's by `variance` (of their slopes, per
-    // axis), the film's over the sand's grains most; the sheet's foam moves `flow` as far as its edge does.
+    // of its mesh's spacing there. The sheet has `ripples` of the sea's ripples, and the film it
+    // leaves none: a millimetre of water holds no ripple. Their surfaces are rougher than the sea's
+    // by `variance` (of their slopes, per axis): the sheet's churned, the film's glassy, lying over
+    // the sand's rumples `rumples` as steep as they stand bare, as it fills their hollows; the sheet's
+    // foam moves `flow` as far as its edge does.
     band: 0.4,
     wets: 2.2,
     lift: [0.003, 0.0008, 0.02],
-    ripples: [0.5, 0.15],
-    variance: [0.003, 0.012],
+    ripples: [0.5, 0],
+    variance: [0.003, 0.0008],
+    rumples: 0.33,
     flow: 0.6,
     mirrors: 0.15, // m: how much higher than the ground under it what it mirrors must stand
     reach: 25, // m from a waterline within which the water's surface draws the beach's water
@@ -891,7 +907,7 @@ export const water = {
     // `foam`, thick in the roller at its front over `roll` of its period, `holds` of that trailing
     // behind it over `trail` of it, and running `toe` of it ahead on its face, drifting inland at
     // `flow` times its speed; and the water it broke in holds `milk` of the sand it stirs up.
-    bore: { height: 0.6, breaks: 1.15, bores: 0.8, surges: [3, 3.6], from: [1.2, 0.8], within: [12, 20], faces: [0.035, 0.012], steepens: 2.5, back: 0.12, lean: 0.9, spread: 0.3, foam: 1.6, roll: 0.04, holds: 0.35, trail: 0.25, toe: 0.02, flow: 0.5, milk: 0.4 },
+    bore: { height: 0.6, breaks: 1.15, bores: 0.8, surges: [3, 3.6], from: boresFrom, within: boresWithin, faces: [0.035, 0.012], steepens: 2.5, back: 0.12, lean: 0.9, spread: 0.3, foam: 1.6, roll: 0.04, holds: 0.35, trail: 0.25, toe: 0.02, flow: 0.5, milk: 0.4 },
     // The sand the waves stir up clouds the water near the shore, `always` per m the eye's ray goes
     // through it, gone by `within` m from the waterline, and `broken` per m more as much as a wave
     // just broke there (its `milk`), in clouds `clouds` m across; water thick with it sends back

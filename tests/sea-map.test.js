@@ -136,6 +136,30 @@ test('the swell: full over the open sea on the side it comes from, none over lan
   assert.ok(count > 20 && inside / count < 0.5, `${name}: in the lagoon the swell reaches ${(inside / count).toFixed(2)} on average over ${count} points`);
 }));
 
+test('where the beach\'s own waves rise out of the lagoon\'s and come in, the swell gives way to them, and nowhere else', () => {
+  const { breaks, bores } = config.water.map.swell;
+  const [deep, shallow] = bores.from;
+  const [near, far] = bores.within;
+  eachSea(({ name, map }) => {
+    let checked = 0;
+    for (let k = 0; k < map.samples * map.samples; k++) {
+      const [depth, shore] = [map.depth[k], map.shore[k]];
+      if (depth <= 0 || depth >= shallow || shore >= near) continue;
+      checked++;
+      assert.ok(map.swell[k] <= bores.keeps * Math.min(depth / breaks, 1) + 1e-6, `${name}: swell ${map.swell[k].toFixed(3)} where the beach's waves come in, ${depth.toFixed(2)} m deep ${shore.toFixed(1)} m out`);
+    }
+    assert.ok(checked > 20, `${name}: only ${checked} samples where the beach's waves come in`);
+  });
+  // Elsewhere, as it was.
+  for (const seed of SEEDS.slice(0, 3)) {
+    const { name, map } = seaOf(seed);
+    const all = seaFor(seed, name, { ...config.world.terrain, levels: [{ texel: 8 }] }, { ...config.water.map, texel: 8, swell: { ...config.water.map.swell, bores: { ...bores, keeps: 1 } } }).map;
+    for (let k = 0; k < map.samples * map.samples; k++) {
+      if (map.depth[k] >= deep || map.shore[k] >= far) assert.equal(map.swell[k], all.swell[k], `${name}: the swell changed ${map.depth[k].toFixed(2)} m deep ${map.shore[k].toFixed(1)} m out`);
+    }
+  }
+});
+
 test('a pass lets through more swell than the reef beside it, and the surf breaks on the reef and not in the pass', () => {
   const { pass } = config.world.island.seabed;
   const [a0, o0] = pass.from;

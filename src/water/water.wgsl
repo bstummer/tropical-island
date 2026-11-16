@@ -86,7 +86,7 @@ struct Water {
   uShoreSpacing: f32, // and m more per m of the mesh's spacing there
   uShoreRipples: vec2f, // how much of the ripples the sheet has, and the film it leaves
   uShoreVariance: vec2f, // how much rougher than the sea's their surfaces are, the variance of their slopes per axis
-  uShoreRumples: vec2f, // the sand's rumples, which the film it leaves lies over (chunks/rumples.wgsl): m, slope
+  uShoreRumples: vec2f, // the sand's rumples, which the film it leaves lies over (chunks/rumples.wgsl): m, and their slope under it
   uShoreMirror: f32, // m: how much higher than the ground under it what the water mirrors must stand
   uShoreFlow: f32, // how far the foam on the sheet moves with it, per the sheet's edge
   uCausticSpread: f32, // how far (m per m of depth) the floor a pixel sees through the waves too small for it spreads, per the root of their slopes' variance
