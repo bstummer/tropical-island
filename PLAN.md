@@ -624,12 +624,27 @@ fake. An outside review traced each to its cause and left a costed plan, A1 to C
   mirror do. `knee` is the cheapest view, a third of the others. A few operations per beach pixel otherwise.
   Unchecked on a GPU. `verify` green on the tree as committed; its shimmer warnings: `side` 0.69% turning and
   0.84% moving (were 0.60% and 0.72%: the glassy strip's toothed mirror, below), `knee` 16% moving (was 18%).
-- Shown by the glassy strip: from a crouch at the waterline (`side`) its mirror of the far hill ends in a
-  picket fence of vertical teeth. Not the film: the land's image is thrown cell by cell to where its mirror
-  lies (`mirror.js`), which leaves empty cells at grazing angles, read as sky; the same stair-stepped
-  reflection the review saw on the headland (open since leg 1). The film's old roughness and its fading veil
-  hid it; at 0.012 the teeth are fainter but there. The fix is in the mirror (fill its empty cells from their
-  neighbours), not the film.
+- Shown by the glassy strip: from a crouch at the waterline (`side`) its mirror ended in a picket fence of
+  teeth. Not the film, nor empty cells (filling them, with a span from each row's image to the next's,
+  changed no pixel): the beach rising behind, seen along it from 0.8 m, mirrors stretched about five times
+  (at 8 m out on a slope of 0.067, (0.8 + 0.54) / (0.8 - 0.54)), so each cell of the frame fills a block of
+  five of the image's rows, and the beach's cut, what stands no higher than the water's ground + 0.15 m
+  isn't mirrored, was told by each cell's own height: steps five rows tall. The water's old roughness and
+  the film's fading veil hid it.
+- The land's mirror, fixed (the user's pick): the beach's cut is now told per pixel, by the height where its
+  own ray meets what it mirrors (`water-land.wgsl landAbove`: the image is mirrored in the still sea and the
+  ray in the beach's water, higher, so less twice that), fading in over `mirrors[1]` 0.05 m and with how much
+  of the pixel is beach, where it switched on at the band's edge. A tilted ray can read a cell of something
+  nearer or further than its own `far`, which that takes for higher (dark dots over `sand`'s glare, a brown
+  band of beach in `into-the-sun`'s near water when tried alone): the cell's own height must still clear the
+  cut less 0.1 m, which leaves its steps where the ray's test has cut everything. `side`'s strip ends in a
+  clean silvery line. Cells of a pixel on high (`waterMirror` 1, not 2) would halve the steps of the headland's
+  reflection in `beach` and `into-the-sun` (blocks of 4 by 6 px where its image stretches, to 2 by 3), for
+  +0.8% (`knee`) to +2.6% (`air-swash`) of SwiftShader's GPU time (alternated five times): left at 2, the
+  user's pick. Filling empty cells changed nothing, so they aren't the steps' cause. Cost of the cut, before
+  and after alternated three times a view: `sand` -0.7%, `ankle` +0.8%, `air-swash` -1.1%, `knee` -3.7%,
+  `side` -1.4%: none to tell. `verify` green on the tree as committed; `side`'s shimmer 0.65% turning, 0.83%
+  moving.
 - The rest of the review's plan (B1 to B7 and C, but B8) is open.
 
 Open after leg 2 (an outside review's findings and the user's look, less what was fixed after them):

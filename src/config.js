@@ -891,7 +891,7 @@ export const water = {
     variance: [0.003, 0.0008],
     rumples: 0.33,
     flow: 0.6,
-    mirrors: 0.15, // m: how much higher than the ground under it what it mirrors must stand
+    mirrors: [0.15, 0.05], // m: how much higher than the ground under it what it mirrors must stand, and over how much it fades in
     reach: 25, // m from a waterline within which the water's surface draws the beach's water
     // How the waves come in over the last of the shallows and break (water/swash.js bore):
     // a wave stands `height` m in a metre of water per m it will run up the beach, rising out of

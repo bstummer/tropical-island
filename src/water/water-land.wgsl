@@ -9,7 +9,6 @@ const MIRROR_INDEX_BITS = 22u; // as mirror-project.wgsl
 const MIRROR_NEAR_OCTAVES = 17.0;
 const MIRROR_NEAR_LEVELS = 1022.0;
 const MIRROR_NEARER = 0.98; // a level of how near is 1.2%: what stands at the water's foot counts as behind it
-const LAND_ANY = -1e8; // as `above` (landCell): whatever its height
 
 // Where the first thing along the view at this pixel of the opaque scene lies, in the world.
 fn opaqueSeen(pixel: vec2i, size: vec2f) -> vec3f {
@@ -29,10 +28,9 @@ fn landKeyW(key: u32) -> f32 {
 // The land's stored colour at a cell of the image, and how much of it there is: its
 // row's share of the frame fades it off the frame's top, whose rows mirror nothing
 // further. Nothing where it stands nearer the eye than this water (eyeW, along the
-// eye's axis): water behind a rock can't mirror it; nor where it stands no higher than
-// `above` m over the still sea: the image is the still sea's, and water lying higher,
-// on a beach, mirrors nothing of the beach lower down round it.
-fn landCell(cell: vec2i, eyeW: f32, above: f32) -> vec4f {
+// eye's axis): water behind a rock can't mirror it; nor where it stands lower than
+// `least` m over the still sea (landAbove() says why).
+fn landCell(cell: vec2i, eyeW: f32, least: f32) -> vec4f {
   let key = uMirror[u32(cell.x) + u32(cell.y) * u32(water.uMirrorCells.x)];
   if (key == 0u || landKeyW(key) < MIRROR_NEARER * eyeW) {
     return vec4f(0.0);
@@ -42,9 +40,9 @@ fn landCell(cell: vec2i, eyeW: f32, above: f32) -> vec4f {
   let source = vec2u(index % across, index / across);
   let stride = u32(water.uMirrorCells.z);
   let pixel = min(source * stride + stride / 2u, vec2u(textureDimensions(uOpaque)) - 1u);
-  if (above > LAND_ANY) {
+  if (least > 0.0) {
     let standing = opaqueSeen(vec2i(pixel), vec2f(textureDimensions(uOpaqueDepth)));
-    if (standing.y + planetDrop(standing.xz) < above) {
+    if (standing.y + planetDrop(standing.xz) < least) {
       return vec4f(0.0);
     }
   }
@@ -82,16 +80,16 @@ fn landOnImage(at: vec3f) -> bool {
 }
 
 // The land along that ray, read at the nearest cell: enough where the waves blur it.
-fn landNearest(at: vec3f, eyeW: f32, above: f32) -> vec4f {
+fn landNearest(at: vec3f, eyeW: f32, least: f32) -> vec4f {
   if (!landOnImage(at)) {
     return vec4f(0.0);
   }
   let cell = vec2i(at.xy * water.uMirrorCells.xy);
-  return landCell(vec2i(clamp(cell.x, 0, i32(water.uMirrorCells.x) - 1), cell.y), eyeW, above);
+  return landCell(vec2i(clamp(cell.x, 0, i32(water.uMirrorCells.x) - 1), cell.y), eyeW, least);
 }
 
 // Between the four nearest cells: where the water lies still enough to show the land sharp.
-fn landSmooth(at: vec3f, eyeW: f32, above: f32) -> vec4f {
+fn landSmooth(at: vec3f, eyeW: f32, least: f32) -> vec4f {
   if (!landOnImage(at)) {
     return vec4f(0.0);
   }
@@ -104,9 +102,29 @@ fn landSmooth(at: vec3f, eyeW: f32, above: f32) -> vec4f {
   for (var k = 0; k < 4; k++) {
     let corner = vec2f(f32(k & 1), f32(k >> 1u));
     let weight = mix(1.0 - f.x, f.x, corner.x) * mix(1.0 - f.y, f.y, corner.y);
-    let land = landCell(vec2i(clamp(i + corner, vec2f(0.0), top)), eyeW, above);
+    let land = landCell(vec2i(clamp(i + corner, vec2f(0.0), top)), eyeW, least);
     color += weight * land.a * land.rgb;
     share += weight * land.a;
   }
   return vec4f(color / max(share, 1e-4), share);
+}
+
+// How much of what a ray from p towards dir mirrors, landing `far` m on, the water on a beach
+// mirrors: none of what stands lower than `above.x` m over the still sea, fading in over `above.y`
+// m. The image is the still sea's, and water lying higher, on a beach, mirrors nothing of the beach
+// lower down round it. Told by where this pixel's own ray meets it, not by the cell it reads: the
+// beach rising behind stretches over several of the image's rows a row of the frame's as the eye
+// looks along it, which a cell's own height would cut in steps as tall. The image is mirrored in the
+// still sea, the ray in water `lifted` m higher, so it meets what it mirrors twice that higher. A
+// tilted ray can read a cell of something else than lies `far` on, which this would take for higher:
+// the cell's own height must clear landLeast() as well, lower, so its steps lie where this cuts it all.
+fn landAbove(p: vec3f, dir: vec3f, far: f32, lifted: f32, above: vec2f) -> f32 {
+  let q = p + dir * far;
+  return smoothstep(above.x - above.y, above.x + above.y, q.y + planetDrop(q.xz) - 2.0 * lifted);
+}
+
+// How high (m over the still sea) a cell's own land must stand for water on a beach (`beach`, 0 to
+// 1, how much of it) to mirror it at all (landCell's `least`): none of the sea's below 0.
+fn landLeast(above: vec2f, beach: f32) -> f32 {
+  return mix(-1.0, above.x - 2.0 * above.y, beach);
 }

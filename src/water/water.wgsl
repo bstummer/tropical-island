@@ -87,7 +87,7 @@ struct Water {
   uShoreRipples: vec2f, // how much of the ripples the sheet has, and the film it leaves
   uShoreVariance: vec2f, // how much rougher than the sea's their surfaces are, the variance of their slopes per axis
   uShoreRumples: vec2f, // the sand's rumples, which the film it leaves lies over (chunks/rumples.wgsl): m, and their slope under it
-  uShoreMirror: f32, // m: how much higher than the ground under it what the water mirrors must stand
+  uShoreMirror: vec2f, // m: how much higher than the ground under it what the water mirrors must stand, and over how much it fades in
   uShoreFlow: f32, // how far the foam on the sheet moves with it, per the sheet's edge
   uCausticSpread: f32, // how far (m per m of depth) the floor a pixel sees through the waves too small for it spreads, per the root of their slopes' variance
 }
@@ -523,14 +523,19 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
   let far = select(max(sea.x, 0.0) + water.uMirrorBeyond, toLand, toLand > 0.0);
   let blur = 8.0 * variance;
   // On the beach the water lies over the ground: what stands round it no higher isn't mirrored.
-  let mirrorsAbove = select(LAND_ANY, seenHeight + water.uShoreMirror, WATER_SHORE && beach > 0.0);
+  let mirrorsAbove = vec2f(seenHeight + water.uShoreMirror.x, water.uShoreMirror.y);
+  let onBeach = select(0.0, beach, WATER_SHORE);
+  let least = landLeast(mirrorsAbove, onBeach);
   let spread = (sqrt(flat2 + water.uMirrorTaps.z * variance) - sqrt(flat2 + water.uMirrorTaps.x * variance)) * frame.projectionMatrix[1][1] * water.uMirrorCells.y * 0.5;
   var skyPart = vec3f(0.0);
   var landPart = vec3f(0.0);
   var landShare = 0.0;
   if (spread < 2.0 || flat2 > water.uMirrorSteep * variance) {
     let dir = normalize(vec3f(towards.x, sqrt(flat2 + water.uMirrorTaps.y * variance), towards.z));
-    let land = landSmooth(landImageUv(p, dir, far), eyeW, mirrorsAbove);
+    var land = landSmooth(landImageUv(p, dir, far), eyeW, least);
+    if (onBeach > 0.0) {
+      land.a *= mix(1.0, landAbove(p, dir, far, lifted, mirrorsAbove), onBeach);
+    }
     skyPart = (1.0 - land.a) * (seaSkyRadiance(dir) + beam * sunGlow(dir, water.uAureole, blur));
     landPart = land.a * sceneRadiance(land.rgb);
     landShare = land.a;
@@ -541,9 +546,12 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
       let on = landImageUv(p, dir, far);
       var land: vec4f;
       if (i == 1) {
-        land = landSmooth(on, eyeW, mirrorsAbove);
+        land = landSmooth(on, eyeW, least);
       } else {
-        land = landNearest(on, eyeW, mirrorsAbove);
+        land = landNearest(on, eyeW, least);
+      }
+      if (onBeach > 0.0) {
+        land.a *= mix(1.0, landAbove(p, dir, far, lifted, mirrorsAbove), onBeach);
       }
       skyPart += (1.0 - land.a) * (seaSkyRadiance(dir) + beam * sunGlow(dir, water.uAureole, blur)) / 3.0;
       landPart += land.a * sceneRadiance(land.rgb) / 3.0;
