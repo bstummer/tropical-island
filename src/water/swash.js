@@ -66,8 +66,11 @@ const LEAST = 0.02;
 const FILM_GONE = 0.01;
 // The share of its period past which a place's foam is the next wave's (bore()).
 const BORE_NEXT = 0.9;
-// The share of a wave's face's width over which its lens takes its curve (lens()).
+// The share of a wave's face's width over which its lens takes its curve (lens()), and how
+// much at most it must bend the light (as a share of the floor it lands on) to be worked out,
+// in full from twice that.
 const LENS_ROUND = 0.5;
+const LENS_LEAST = 0.05;
 
 const smoothstep = (a, b, x) => {
   const t = Math.min(Math.max((x - a) / (b - a), 0), 1);
@@ -424,15 +427,18 @@ export function createSwash(settings, surf, way, period, loop) {
   // the line has no edge. Its lines as soft as `soft` and held to about `peak` times even light,
   // as the ripples' (caustics.js).
   function lens(shape, ahead, d, soft, peak) {
-    if (!(shape.tallNow > 0 || shape.tallNext > 0)) return 1;
     const k = shape.perMetre;
+    // The most it can gather: under a crest as tall as the taller and as narrow as the narrower face.
+    // A swell out in the lagoon gathers too little to tell.
+    const most = (2 * d * Math.max(shape.tallNow, shape.tallNext) * k * k) / Math.min(shape.frontNow, shape.frontNext) ** 2;
+    if (!(most > LENS_LEAST)) return 1;
     const there = shape.phase + ahead * k;
     // Where the light it lands there with went in: one step back along its way.
     const entered = there - d * rises(shape, there) * k * k;
     const half = 0.5 * LENS_ROUND * (entered < 0.5 ? shape.frontNow : shape.frontNext);
     const j = 1 + (d * (rises(shape, entered + half) - rises(shape, entered - half)) * k * k) / (2 * half);
     const g = Math.sqrt((1 + soft * soft) / (j * j + soft * soft));
-    return (g / (1 + g / peak)) * (1 + 1 / peak);
+    return 1 + ((g / (1 + g / peak)) * (1 + 1 / peak) - 1) * smoothstep(LENS_LEAST, 2 * LENS_LEAST, most);
   }
 
   at.runs = runsAt;

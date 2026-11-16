@@ -61,8 +61,10 @@ const SWASH_BORE_ENDS: f32 = 0.01;
 const SWASH_FRONT_MOST: f32 = 1.35;
 // The share of its period past which a place's foam is the next wave's (swashBore).
 const SWASH_BORE_NEXT: f32 = 0.9;
-// The share of a wave's face's width over which its lens takes its curve (swashLens).
+// The share of a wave's face's width over which its lens takes its curve (swashLens), and how
+// much at most it must bend the light to be worked out, in full from twice that.
 const SWASH_LENS_ROUND: f32 = 0.5;
+const SWASH_LENS_LEAST: f32 = 0.05;
 
 struct Swash {
   level: f32,
@@ -467,15 +469,18 @@ fn swashRises(bore: SwashBore, f: f32) -> f32 {
 // times the depth it crosses), its lines as soft as `soft` and held to about `peak` times even
 // light (water/swash.js lens, which says what it is).
 fn swashLens(bore: SwashBore, ahead: f32, d: f32, soft: f32, peak: f32) -> f32 {
-  if (max(bore.shape.x, bore.shape.y) <= 0.0) {
+  let k = bore.perMetre;
+  // The most it can gather: a swell out in the lagoon gathers too little to tell.
+  let narrowest = min(bore.shape.z, bore.shape.w);
+  let most = 2.0 * d * max(bore.shape.x, bore.shape.y) * k * k / max(narrowest * narrowest, 1e-12);
+  if (most <= SWASH_LENS_LEAST) {
     return 1.0;
   }
-  let k = bore.perMetre;
   let there = bore.phase + ahead * k;
   // Where the light it lands there with went in: one step back along its way.
   let entered = there - d * swashRises(bore, there) * k * k;
   let half = 0.5 * SWASH_LENS_ROUND * select(bore.shape.w, bore.shape.z, entered < 0.5);
   let j = 1.0 + d * (swashRises(bore, entered + half) - swashRises(bore, entered - half)) * k * k / (2.0 * half);
   let g = sqrt((1.0 + soft * soft) / (j * j + soft * soft));
-  return g / (1.0 + g / peak) * (1.0 + 1.0 / peak);
+  return 1.0 + (g / (1.0 + g / peak) * (1.0 + 1.0 / peak) - 1.0) * smoothstep(SWASH_LENS_LEAST, 2.0 * SWASH_LENS_LEAST, most);
 }
