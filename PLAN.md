@@ -587,8 +587,8 @@ fake. An outside review traced each to its cause and left a costed plan, A1 to C
 - Cost, SwiftShader's GPU time at 960×540, before and after alternated three times a view: `beach` -0.7%,
   `ankle` +0.1% and +0.4%, `knee` +0.2% (+2.3% before the fades went in front of the net's loops, which now
   skip it where it can't show, under foam and sand), `air-swash` -1.4%, `into-the-sun` +1.0%, `swash` -0.2%,
-  `sand` +1.3%, `side` +0.3% and +1.8% (two runs): a few operations per near pixel, inside what two runs of
-  one build differ by. Unchecked on a GPU. `verify` green on the tree as committed; its shimmer warnings:
+  `sand` +1.3%, `side` +0.3% and +1.8% in two runs, then 0.0% in four rounds (and +0.3% at 162 s, after
+  the break): a few operations per near pixel, inside what two runs of one build differ by. Unchecked on a GPU. `verify` green on the tree as committed; its shimmer warnings:
   `side` 0.60% turning, 0.72% as the camera moves (was 4.4%), `knee` 18% moving (was 14%: its net no
   longer under the haze, read through refraction as shimmer, as before).
 - Shown by the weaker net: `ankle`'s horizontal stripes (open since leg 2) are the floor's wave ripples
