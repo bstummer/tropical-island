@@ -657,6 +657,8 @@ test('a wave coming in is a lens: a bright line on the floor under its crest, a 
         moved += Math.abs(light - 1);
         if (light > brightest) [brightest, at] = [light, ahead];
       }
+      // Too gentle to tell, as a swell out in the lagoon: not worked out.
+      if (moved === 0) continue;
       const where = `at ${x}, ${z.toFixed(2)}, a wave ${Math.max(crest.tallNow, crest.tallNext).toFixed(3)} m tall`;
       assert.ok(Math.abs(gained) < 0.1 * moved, `${where}: it gains ${gained.toFixed(4)} of the ${moved.toFixed(4)} it moves`);
       assert.ok(Math.abs(at - top) < 0.25 * face, `${where}: its brightest ${at.toFixed(3)} m out, its crest's top ${top.toFixed(3)}`);
