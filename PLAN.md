@@ -776,7 +776,10 @@ fake. An outside review traced each to its cause and left a costed plan, A1 to C
     rows of diagonal bands; `sand` and `swash` as above; `side` a soft grey foot along the white band's
     front and its foam in streaks along the crest; the dark line gone along every crest from the beach. Not
     seen: motion at frame rate, which is what B6 is for.
-  - `verify` on 39150cf: running.
+  - `verify` green on fbdecae (39150cf's code): the waves fixture holds the film's cover law 0.0000 off its
+    twin and the floor's light 0.0020 (limit 0.02). SwiftShader frames all under 10 s (`side` 9.9, `ankle`
+    9.5: 13.2 before the payback). Shimmer warnings: `side` 0.59% turning and 0.63% moving (were 0.59% and
+    0.74%), `knee` 16.3% moving (15.9%): the floor's net read through refraction, as before.
 - C1 and C2 (a face that curls over; waves carried out to sea) are open.
 
 Open after leg 2 (an outside review's findings and the user's look, less what was fixed after them):
