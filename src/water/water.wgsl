@@ -490,9 +490,12 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
   if (WATER_SHORE) {
     // A wave coming in is a lens: a bright line on the floor under its crest, a dim band under its
     // face's foot, told where the light that lights this floor went in, from where this water rests
-    // (its lean moves the water drawn here, not the floor).
+    // (its lean moves the water drawn here, not the floor). The floor the eye sees as its ray bends
+    // through the wave's face alone: through the ripples too small for the pixel the line's edge
+    // would flicker as the eye moves; their own light (above) dances over it.
+    let face = refract(-view, normalize(vec3f(bore.slope * inland.x, 1.0, bore.slope * inland.y)), 1.0 / optics.uIor);
     let slant = below.depth / max(sunBelow.y, 0.1);
-    let entered = below.xz + slant * sunBelow.xz;
+    let entered = p.xz + face.xz * (below.depth / max(-face.y, 0.1)) + slant * sunBelow.xz;
     light *= swashLens(bore, dot(in.vRest - entered, inland), caustic.uCausticWander.w * slant, caustic.uCaustic.x + caustic.uCaustic.y * slant, caustic.uCausticFade.z);
   }
   // The foam over it keeps some of the sun's light from the floor.
