@@ -418,7 +418,9 @@ export function createSwash(settings, surf, way, period, loop) {
 
   // The light a wave coming in gathers on the floor, as a lens: how much of the sun's light that
   // level water would let through reaches the floor where it went in `ahead` m further out than
-  // where bore() told the wave (`shape`, its out), the light going `d` m sideways per its rise
+  // where bore() told the wave (`shape`, its out), as its water is drawn: moved in by its lean, as
+  // far as the nearest crest's top (so the floor's light stays put whichever way the eye looks);
+  // the light going `d` m sideways per its rise
   // per m (1 - 1 / ior, times the depth it crosses). It lands at x + d h'(x) from where it went in
   // at x, over 1 + d h''(x) as much floor: a crest gathers it into a line, the hollow at its face's
   // foot spreads it. Along the way the wave runs only, as it lies along its crest; as the wave
@@ -432,7 +434,9 @@ export function createSwash(settings, surf, way, period, loop) {
     // A swell out in the lagoon gathers too little to tell.
     const most = (2 * d * Math.max(shape.tallNow, shape.tallNext) * k * k) / Math.min(shape.frontNow, shape.frontNext) ** 2;
     if (!(most > LENS_LEAST)) return 1;
-    const there = shape.phase + ahead * k;
+    // The water drawn there stood further out by its lean.
+    const drawn = shape.phase + ahead * k;
+    const there = drawn + settings.bore.lean * (drawn < 0.5 ? shape.tallNow : shape.tallNext) * k;
     // Where the light it lands there with went in: one step back along its way.
     const entered = there - d * rises(shape, there) * k * k;
     const half = 0.5 * LENS_ROUND * (entered < 0.5 ? shape.frontNow : shape.frontNext);

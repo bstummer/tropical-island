@@ -465,7 +465,8 @@ fn swashRises(bore: SwashBore, f: f32) -> f32 {
 
 // The light a wave coming in gathers on the floor, as a lens: how much of the sun's light that
 // level water would let through reaches the floor where it went in `ahead` m further out than
-// where swashBore() told the wave, the light going `d` m sideways per its rise per m (1 - 1 / ior,
+// where swashBore() told the wave, as its water is drawn: moved in by its lean, as far as the
+// nearest crest's top (so the floor's light stays put whichever way the eye looks); the light going `d` m sideways per its rise per m (1 - 1 / ior,
 // times the depth it crosses), its lines as soft as `soft` and held to about `peak` times even
 // light (water/swash.js lens, which says what it is).
 fn swashLens(bore: SwashBore, ahead: f32, d: f32, soft: f32, peak: f32) -> f32 {
@@ -476,7 +477,9 @@ fn swashLens(bore: SwashBore, ahead: f32, d: f32, soft: f32, peak: f32) -> f32 {
   if (most <= SWASH_LENS_LEAST) {
     return 1.0;
   }
-  let there = bore.phase + ahead * k;
+  // The water drawn there stood further out by its lean.
+  let drawn = bore.phase + ahead * k;
+  let there = drawn + swash.uSwashBoreWithin.z * select(bore.shape.y, bore.shape.x, drawn < 0.5) * k;
   // Where the light it lands there with went in: one step back along its way.
   let entered = there - d * swashRises(bore, there) * k * k;
   let half = 0.5 * SWASH_LENS_ROUND * select(bore.shape.w, bore.shape.z, entered < 0.5);

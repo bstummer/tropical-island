@@ -648,7 +648,8 @@ test('a wave coming in is a lens: a bright line on the floor under its crest, a 
       const [a, o] = beach.island.toCove(x, z);
       const depth = beach.map.at(a, o).depth + crest.height;
       const lens = (ahead) => beach.swash.lens(crest, ahead, bend * depth, blur[0] + blur[1] * depth, peak);
-      const top = (crest.phase < 0.5 ? -crest.phase : 1 - crest.phase) / crest.perMetre;
+      // Its top as drawn: its water moved in by its lean.
+      const top = (crest.phase < 0.5 ? -crest.phase : 1 - crest.phase) / crest.perMetre - config.water.swash.bore.lean * Math.max(crest.tallNow, crest.tallNext);
       const face = (crest.phase < 0.5 ? crest.frontNow : crest.frontNext) / crest.perMetre;
       let [gained, moved, brightest, at] = [0, 0, 0, 0];
       for (let ahead = -8; ahead <= 8; ahead += 0.002) {

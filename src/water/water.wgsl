@@ -489,10 +489,11 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
   }
   if (WATER_SHORE) {
     // A wave coming in is a lens: a bright line on the floor under its crest, a dim band under its
-    // face's foot, told where the light that lights this floor went in.
+    // face's foot, told where the light that lights this floor went in, from where this water rests
+    // (its lean moves the water drawn here, not the floor).
     let slant = below.depth / max(sunBelow.y, 0.1);
     let entered = below.xz + slant * sunBelow.xz;
-    light *= swashLens(bore, dot(p.xz - entered, inland), caustic.uCausticWander.w * slant, caustic.uCaustic.x + caustic.uCaustic.y * slant, caustic.uCausticFade.z);
+    light *= swashLens(bore, dot(in.vRest - entered, inland), caustic.uCausticWander.w * slant, caustic.uCaustic.x + caustic.uCaustic.y * slant, caustic.uCausticFade.z);
   }
   // The foam over it keeps some of the sun's light from the floor.
   light *= exp(-caustic.uCausticFade.w * (foam + bore.foam + beach * wash.foam));
