@@ -689,6 +689,10 @@ fake. An outside review traced each to its cause and left a costed plan, A1 to C
   1.21%. And the floor it was read at came from the eye's ray bent through every ripple, which at `side`'s
   grazing angle moves it about 5 cm from pixel to pixel: now through the wave's face alone, the ripples'
   net dancing over it as before, 0.91%. The band keeps its soft edges.
+- The final code against before B1 (SwiftShader, 960×540, alternated three times): `side` -0.2%, `sand`
+  +0.5%, `beach` +0.9%. `verify` green on 6a869f2. The waves fixture holds the GPU's lens 0.0004 off its twin.
+  Shimmer warnings: `side` 0.66% turning and 0.91% moving, against 0.65% and 0.83% before B1. `knee` moving
+  is 15.9%, as before.
 - The rest of the review's plan (B4 to B7 and C) is open.
 
 Open after leg 2 (an outside review's findings and the user's look, less what was fixed after them):
