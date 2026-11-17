@@ -23,7 +23,7 @@ struct CausticSettings {
 const CAUSTIC_WAVES: i32 = 8; // water/caustics.js holds the counts to these
 const CAUSTIC_DEPTHS: i32 = 16;
 const CAUSTIC_LEAST: f32 = 0.005; // of its net shown, under which it isn't drawn: its brightest lines a hundredth over even light
-const CAUSTIC_GROUP_SEED: u32 = 7877u; // water/caustics.js GROUP_SEED: the groups' noise along x, and + 1 along z
+const CAUSTIC_GROUP_SEED: u32 = 7877u; // water/caustics.js GROUP_SEED: the groups' noises along x and z
 
 // How many of the shortest ripples a pixel `footprint` m wide drops (water/caustics.js droppedBy).
 fn causticDropped(footprint: f32) -> f32 {
@@ -53,7 +53,7 @@ fn causticAt(xz: vec2f, depth: f32, t: f32, dropped: f32) -> f32 {
   let d = caustic.uCausticWander.w * depth;
   // The groups: a slow noise along x and z, which carries the ripples to and fro.
   let across = xz * caustic.uCausticWander.y;
-  let groups = vec2f(seededNoise(across, CAUSTIC_GROUP_SEED), seededNoise(across, CAUSTIC_GROUP_SEED + 1u));
+  let groups = seededNoise2(across, CAUSTIC_GROUP_SEED);
   let carried = xz + caustic.uCausticWander.x * groups;
   // How much of each ripple's tilt reaches the floor this deep: it blurs out `beyond` times as
   // deep as it gathers the light; none of what the pixel drops; more or less as its groups go.

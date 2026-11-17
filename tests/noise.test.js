@@ -4,7 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRandom } from '../src/core/random.js';
-import { cellBits, cellHash, createNoise, fbm, seededNoise } from '../src/world/noise.js';
+import { cellBits, cellHash, createNoise, fbm, pairBits, seededNoise, seededNoise2 } from '../src/world/noise.js';
 
 const noise = createNoise(createRandom(1)('test/noise'));
 
@@ -127,4 +127,42 @@ test('the seeded noise takes its lattice from the cell bits, and the seed picks 
   let differ = 0;
   for (const [x, y] of spread(1000, 50)) if (seededNoise(x, y, 1) !== seededNoise(x, y, 2)) differ++;
   assert.ok(differ > 990, `${differ} of 1000 points differ between seeds`);
+});
+
+test('the paired seeded noise: two noises within about [-1, 1], averaging 0, zero on the lattice, smooth, unlike each other, from their bits', () => {
+  const sums = [0, 0];
+  const most = [0, 0];
+  let both = 0;
+  const points = spread(100_000, 300);
+  for (const [x, y] of points) {
+    const v = seededNoise2(x - 150, y - 150, 7);
+    for (const n of [0, 1]) {
+      sums[n] += v[n];
+      most[n] = Math.max(most[n], Math.abs(v[n]));
+    }
+    both += v[0] * v[1];
+  }
+  for (const n of [0, 1]) {
+    assert.ok(most[n] <= 1.2 && most[n] > 0.6, `noise ${n}: max |noise| ${most[n]}`);
+    assert.ok(Math.abs(sums[n] / points.length) < 0.01, `noise ${n}: mean ${sums[n] / points.length}`);
+  }
+  // The two are unrelated: their product averages near 0 against a variance of about 0.06.
+  assert.ok(Math.abs(both / points.length) < 0.005, `the two noises' covariance ${both / points.length}`);
+  for (let i = -20; i <= 20; i += 3) for (let j = -20; j <= 20; j += 5) assert.ok(seededNoise2(i, j, 7).every((v) => v === 0), `${seededNoise2(i, j, 7)} at ${i}, ${j}`);
+  for (let k = 0; k < 500; k++) {
+    const [x, y] = [(k % 41) - 20, ((k * 0.618) % 30) - 15];
+    const [a, b] = [seededNoise2(x - 1e-7, y, 3), seededNoise2(x + 1e-7, y, 3)];
+    assert.ok(Math.abs(a[0] - b[0]) < 1e-5 && Math.abs(a[1] - b[1]) < 1e-5, `a step at ${x}, ${y}`);
+  }
+  // Next to a lattice point each follows its gradient, its bits' halves.
+  for (let k = 0; k < 200; k++) {
+    const [i, j, seed] = [(k * 37) % 101 - 50, (k * 53) % 89 - 44, k];
+    const e = 1e-4;
+    const [dx, dy] = [seededNoise2(i + e, j, seed), seededNoise2(i, j + e, seed)];
+    for (const n of [0, 1]) {
+      const h = pairBits(i, j, seed, n);
+      assert.ok(h >= 0 && h < 2 ** 32 && Number.isInteger(h));
+      assert.ok(Math.abs(dx[n] / (1.4 * e) - ((h & 65535) / 32767.5 - 1)) < 1e-3 && Math.abs(dy[n] / (1.4 * e) - ((h >>> 16) / 32767.5 - 1)) < 1e-3, `noise ${n}'s gradient at ${i}, ${j}`);
+    }
+  }
 });

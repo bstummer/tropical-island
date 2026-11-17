@@ -91,6 +91,34 @@ fn seededNoiseD(p: vec2f, seed: u32) -> vec3f {
   return 1.4 * vec3f(value, slope);
 }
 
+// Two gradient noises at once, for a third of the hashing of two seededNoise calls: each
+// lattice point's two gradients from one mix of its cell and the seed and one more of that.
+// world/noise.js seededNoise2 is its twin, bit for bit in its lattice. seed: a whole number.
+fn seededGradients(cell: vec2i, seed: u32) -> vec4f {
+  let h = noiseMix(seed ^ (u32(cell.x) * 0x9e3779b1u) ^ (u32(cell.y) * 0x85ebca77u));
+  let k = noiseMix(h ^ 0x27d4eb2fu);
+  return vec4f(f32(h & 65535u), f32(h >> 16u), f32(k & 65535u), f32(k >> 16u)) / 32767.5 - 1.0;
+}
+
+fn seededNoise2(p: vec2f, seed: u32) -> vec2f {
+  let i = floor(p);
+  let f = p - i;
+  let c = vec2i(i);
+  let u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+  let ga = seededGradients(c, seed);
+  let gb = seededGradients(c + vec2i(1, 0), seed);
+  let gc = seededGradients(c + vec2i(0, 1), seed);
+  let gd = seededGradients(c + vec2i(1, 1), seed);
+  let fb = f - vec2f(1.0, 0.0);
+  let fc = f - vec2f(0.0, 1.0);
+  let fd = f - vec2f(1.0, 1.0);
+  let a = vec2f(dot(ga.xy, f), dot(ga.zw, f));
+  let b = vec2f(dot(gb.xy, fb), dot(gb.zw, fb));
+  let cc = vec2f(dot(gc.xy, fc), dot(gc.zw, fc));
+  let d = vec2f(dot(gd.xy, fd), dot(gd.zw, fd));
+  return 1.4 * (a + u.x * (b - a) + u.y * (cc - a) + u.x * u.y * (a - b - cc + d));
+}
+
 fn noiseHash33(pIn: vec3f) -> vec3f {
   var p = fract(pIn * vec3f(0.1031, 0.1030, 0.0973));
   p += dot(p, p.yxz + 33.33);

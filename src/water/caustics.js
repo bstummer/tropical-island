@@ -30,11 +30,11 @@
 // strength (water-caustics.wgsl causticLight).
 
 import { Vector4 } from '../maths/index.js';
-import { seededNoise } from '../world/noise.js';
+import { seededNoise2 } from '../world/noise.js';
 
 const G = 9.81;
 const TENSION = 7.3e-5; // m3/s2: water's surface tension per its density, which speeds the shortest ripples
-// The seeds of the noise that carries the ripples to and fro and makes them stronger and weaker: along x, then z.
+// The seed of the noises that carry the ripples to and fro and make them stronger and weaker, along x and z.
 const GROUP_SEED = 7877;
 
 // The ripples: [wavelength m, steepness (amplitude x wave number), degrees off the wind] each; and
@@ -68,13 +68,14 @@ export function createCaustics(settings, wind, loop, ior) {
   const [blur, blurDeeper] = settings.blur;
   const [carried, across] = settings.wander;
   const reach = new Float64Array(waves.length);
+  const groups = [0, 0];
 
   // The light reaching the floor `depth` m down where it went in at x, z, at time t (the waves'
   // time, wrapped), with `dropped` of the shortest ripples left out, as drawn before its mean.
   function raw(x, z, depth, t, dropped) {
     const d = bend * depth;
     // The groups: a slow noise along x and z.
-    const [nx, nz] = [seededNoise(x / across, z / across, GROUP_SEED), seededNoise(x / across, z / across, GROUP_SEED + 1)];
+    const [nx, nz] = seededNoise2(x / across, z / across, GROUP_SEED, groups);
     // How much of each ripple's tilt reaches the floor this deep: a ripple gathers the light
     // 1 / (a k^2) down, as the water bends it, and blurs out `beyond` times as deep; none of a
     // ripple the pixel drops; and more or less of it as its groups go.

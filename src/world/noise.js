@@ -102,6 +102,34 @@ export function seededNoise(x, y, seed) {
   return 1.4 * (a + u * (b - a) + v * (c - a) + u * v * (a - b - c + d));
 }
 
+// Two gradient noises at once, each in about [-1, 1], for a third of the hashing of two
+// seededNoise calls: each lattice point's two gradients come from one mix of its cell and the
+// seed (pairBits) and one more of that. chunks/noise.wgsl seededNoise2 is its twin, bit for bit
+// in its lattice. Into out ([a, b]).
+export function seededNoise2(x, y, seed, out = [0, 0]) {
+  const i = Math.floor(x);
+  const j = Math.floor(y);
+  x -= i;
+  y -= j;
+  const u = x * x * x * (x * (x * 6 - 15) + 10);
+  const v = y * y * y * (y * (y * 6 - 15) + 10);
+  for (let n = 0; n < 2; n++) {
+    const dot = (di, dj) => {
+      const h = pairBits(i + di, j + dj, seed, n);
+      return ((h & 65535) / 32767.5 - 1) * (x - di) + ((h >>> 16) / 32767.5 - 1) * (y - dj);
+    };
+    const [a, b, c, d] = [dot(0, 0), dot(1, 0), dot(0, 1), dot(1, 1)];
+    out[n] = 1.4 * (a + u * (b - a) + v * (c - a) + u * v * (a - b - c + d));
+  }
+  return out;
+}
+
+// The bits of lattice point i, j's gradient in seededNoise2's noise n (0 or 1), unsigned.
+export function pairBits(i, j, seed, n) {
+  const h = fmix(seed ^ Math.imul(i, 0x9e3779b1) ^ Math.imul(j, 0x85ebca77));
+  return (n === 0 ? h : fmix(h ^ 0x27d4eb2f)) >>> 0;
+}
+
 // murmur3's 32-bit finaliser: a bijection that spreads every bit into every other.
 function fmix(h) {
   h ^= h >>> 16;
