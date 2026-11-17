@@ -681,6 +681,14 @@ fake. An outside review traced each to its cause and left a costed plan, A1 to C
   -0.5%, `sand` +0.7%, `beach` +1.0% (its rounds overlapping), `swash` -0.4%, `air-swash` -0.3%, `knee`
   -0.3%: none to tell. The see-through near a face's top, now on few pixels, gives back what the lens and
   the floor's refraction take. Unchecked on a GPU.
+- The lens shimmered: `side`'s shimmer as the camera moves went from 0.83% to 1.23% (0.83% again with the lens
+  off), a line along its band's shoreward edge. Two causes. It was told from the drawn point the eye's ray
+  crosses, whose water the wave's lean moves in by up to 0.2 m, so the line slid with the view: now told
+  from where that water rests, the whole pattern moved in by the nearest crest's lean (under the drawn
+  crest, and no light added; test: its brightest under the drawn crest's top, red without the shift),
+  1.21%. And the floor it was read at came from the eye's ray bent through every ripple, which at `side`'s
+  grazing angle moves it about 5 cm from pixel to pixel: now through the wave's face alone, the ripples'
+  net dancing over it as before, 0.91%. The band keeps its soft edges.
 - The rest of the review's plan (B4 to B7 and C) is open.
 
 Open after leg 2 (an outside review's findings and the user's look, less what was fixed after them):
