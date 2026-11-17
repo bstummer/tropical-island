@@ -74,8 +74,16 @@ fn seaFoamCover(foam: f32, xz: vec2f, way: vec2f, along: f32, drifting: f32, wid
 // the level sea, still lights it. Its thin tops and spray let some of the sun through,
 // mostly onwards: seen against a low sun it glows rather than standing dark against
 // the sky the sea mirrors. beam: the sun's light on a surface facing it; view: to the eye.
-fn foamLight(beam: vec3f, sky: vec3f, view: vec3f) -> vec3f {
+// Where it is shaped (`shaped`, 0 to 1), as a wave's roller is, it is lit as facing `n`, its
+// sky's light `shade` of what an open surface facing that way gets; the light it scatters
+// within reaches round into its shade (FOAM_WRAP), which is blue-grey, never black.
+const FOAM_WRAP: f32 = 0.5;
+
+fn foamLight(beam: vec3f, sky: vec3f, view: vec3f, n: vec3f, shade: f32, shaped: f32) -> vec3f {
   let g = water.uFoamBacklit.y;
   let onwards = (1.0 - g * g) / (4.0 * PI * pow(1.0 + g * g + 2.0 * g * dot(view, frame.uSunDirection), 1.5));
-  return water.uFoamAlbedo * (beam * (mix(water.uFoamFacing, 1.0, max(frame.uSunDirection.y, 0.0)) / PI + water.uFoamBacklit.x * onwards) + sky / PI);
+  let wrapped = max(dot(n, frame.uSunDirection) + FOAM_WRAP, 0.0) / (1.0 + FOAM_WRAP);
+  let facing = mix(mix(water.uFoamFacing, 1.0, max(frame.uSunDirection.y, 0.0)), wrapped, shaped);
+  let open = mix(1.0, shade * (0.5 + 0.5 * n.y), shaped);
+  return water.uFoamAlbedo * (beam * (facing / PI + water.uFoamBacklit.x * onwards) + open * sky / PI);
 }

@@ -8,7 +8,7 @@ import { createRandom } from '../src/core/random.js';
 import { createIsland } from '../src/world/island.js';
 import { buildHeightmap } from '../src/world/heightmap.js';
 import { buildSeaMap } from '../src/water/sea-map.js';
-import { createSwash, highest, swellWay } from '../src/water/swash.js';
+import { createSwash, filmCovers, highest, swellWay } from '../src/water/swash.js';
 import { createSurface } from '../src/water/surface.js';
 import { buildSpectrum } from '../src/water/spectrum.js';
 
@@ -154,6 +154,37 @@ test('where the edge stands over the ground there is water over it and the groun
   }
 });
 
+test('a wave runs up the sand as a thin wedge, millimetres deep just behind its tip, that thins as it runs', () => {
+  const beach = gameBeach();
+  const out = {};
+  let seen = 0;
+  for (const [x, z0] of alongCove(beach)) {
+    // How deep the water stands 0.3 m behind its tip as it passes points further and further up the beach.
+    const deep = [];
+    for (const inland of [0.4, 0.9, 1.4]) {
+      const z = z0 - inland;
+      const ground = beach.heightmap.heightAt(x, z);
+      const rise = (beach.heightmap.heightAt(x, z - 0.5) - beach.heightmap.heightAt(x, z + 0.5)) / 1;
+      let short = false;
+      for (let t = 300; t < 300 + 2 * period; t += 0.01) {
+        beach.at(x, z, t, out);
+        // Running up past it, as its tip comes 0.3 m further up the beach.
+        const past = out.level - ground >= 0.3 * rise;
+        if (short && past) {
+          deep.push(out.cover);
+          break;
+        }
+        short = !past;
+      }
+    }
+    if (deep.length < 3) continue;
+    seen++;
+    assert.ok(deep.every((d) => d < 0.004), `at ${x}: 0.3 m behind its tip the sheet is ${deep.map((d) => (1000 * d).toFixed(1))} mm deep`);
+    assert.ok(deep[2] <= deep[0], `at ${x}: 0.3 m behind its tip the sheet is ${deep.map((d) => (1000 * d).toFixed(1))} mm deep as it runs up`);
+  }
+  assert.ok(seen > 8, `only ${seen} run-ups seen`);
+});
+
 test('no film is left over the top of a run-up, where it soaks in as it stops, and neither the film nor the soaking ends in a line where a pixel holds two centimetres', () => {
   const beach = gameBeach();
   const { soaks } = config.water.swash;
@@ -184,6 +215,34 @@ test('no film is left over the top of a run-up, where it soaks in as it stops, a
     }
   }
   assert.ok(tops > 50, `only ${tops} times past a run-up's turn`);
+});
+
+test('as the film drains it lies in the sand\'s hollows and breaks into patches, the crests drying first, and covers as much as it did on average', () => {
+  // The sand's heights per their deviation, near enough normal (chunks/rumples.wgsl rumplesFilm: within
+  // half a percent of their spread): a pixel holds what it can of them, and what it can't varies by `lost`.
+  const r = createRandom(1)('film cover');
+  const heights = Array.from({ length: 20000 }, () => r.normal());
+  for (const lost of [0.05, 0.3, 0.7, 1]) {
+    const held = Math.sqrt(1 - lost * lost);
+    for (const film of [0.03, 0.2, 0.5, 0.8, 0.97]) {
+      const covers = heights.map((h) => filmCovers(film, held * h, lost));
+      const mean = covers.reduce((sum, c) => sum + c, 0) / covers.length;
+      assert.ok(Math.abs(mean - film) < 0.03, `${film} of film covers ${mean.toFixed(3)} on average where a pixel can't hold ${lost} of the sand`);
+      // Where a pixel holds the sand, it is glassy or bare, not a veil.
+      const veiled = covers.filter((c) => c > 0.1 && c < 0.9).length / covers.length;
+      if (lost <= 0.05) assert.ok(veiled < 0.1, `${(100 * veiled).toFixed(0)}% of pixels holding the sand are a veil at ${film} of film`);
+    }
+  }
+  // A pixel that holds none of it is covered as much as the film.
+  for (const film of [0, 0.01, 0.4, 0.99, 1]) assert.ok(Math.abs(filmCovers(film, 0, 1) - film) < 1e-12, `${film} of film covers ${filmCovers(film, 0, 1)}`);
+  // The crests dry first: higher sand is covered less, and less as the film drains.
+  for (const lost of [0.05, 0.5]) {
+    for (let h = -2.5; h < 2.5; h += 0.25) {
+      assert.ok(filmCovers(0.5, h + 0.25, lost) <= filmCovers(0.5, h, lost), `sand ${h + 0.25} up is covered more than at ${h}`);
+      assert.ok(filmCovers(0.4, h, lost) <= filmCovers(0.5, h, lost), `sand ${h} up is wetter as the film drains`);
+    }
+    assert.ok(filmCovers(0.5, -1, lost) > 0.8 && filmCovers(0.5, 1, lost) < 0.2, `half the film covers a hollow ${filmCovers(0.5, -1, lost).toFixed(2)}, a crest ${filmCovers(0.5, 1, lost).toFixed(2)}`);
+  }
 });
 
 test('low on the beach, below the seepage face\'s top, the sand stays glassy between waves', () => {
@@ -738,6 +797,45 @@ test('no wave comes in to break over shallows far from any beach, as over a reef
     } else if (here.shore < within[0] && most > 0.01) near++;
   }
   assert.ok(far >= 100 && near >= 20, `${far} points far from a beach, ${near} near one with waves coming in`);
+});
+
+test('a breaking wave\'s foam rides with its front: in its roller its pattern moves inland nearly as fast as the wave, then slows behind it, never back out to sea', () => {
+  const beach = gameBeach();
+  const { rides } = config.water.swash.bore;
+  const b = {};
+  let rollers = 0;
+  for (const point of alongCove(beach).filter((_, i) => i % 2 === 0)) {
+    const [ox, oz] = outward(beach, ...point);
+    for (const out of [1, 2, 3]) {
+      const [x, z] = [point[0] + out * ox, point[1] + out * oz];
+      // The foam's pattern u m inland of here, as the water draws it (water.wgsl: m inland less how far it has moved).
+      const at = (u, t) => boreAt(beach, x - u * ox, z - u * oz, t, b);
+      const pattern = (u, t) => u - at(u, t).along;
+      // How fast something moves inland here: how fast it changes in time, per how fast in space.
+      const [dt, du] = [0.005, 0.005];
+      const speed = (value, t) => -(value(0, t + dt) - value(0, t)) / dt / ((value(du, t) - value(-du, t)) / (2 * du));
+      const lands = beach.map.at(...beach.island.toCove(x, z)).lands;
+      for (let k = 30; k < 33; k++) {
+        // Its roller passes as its foam is thickest.
+        let roller = { t: 0, foam: 0 };
+        for (let t = lands + k * period - 6; t < lands + k * period + 2; t += 0.02) {
+          const { foam } = boreAt(beach, x, z, t, b);
+          if (foam > roller.foam) roller = { t, foam };
+        }
+        if (roller.foam < 0.3) continue;
+        rollers++;
+        // The wave's own speed there: its phase's.
+        const wave = speed((u, t) => at(u, t).phase, roller.t + 0.05);
+        const there = speed(pattern, roller.t);
+        assert.ok(there > (rides - 0.15) * wave && there < 1.05 * wave, `${out} m out at ${point}, wave ${k}: its roller's foam moves in at ${there.toFixed(2)} m/s, the wave at ${wave.toFixed(2)}`);
+        for (let after = 0.25; after < 5; after += 0.25) {
+          const behind = speed(pattern, roller.t + after);
+          assert.ok(behind > 0 && behind < 1.05 * wave, `${out} m out at ${point}, wave ${k}: ${after} s behind its roller its foam moves in at ${behind.toFixed(2)} m/s, the wave at ${wave.toFixed(2)}`);
+        }
+      }
+    }
+  }
+  assert.ok(rollers > 20, `only ${rollers} rollers seen`);
 });
 
 test('a wave coming in is a lens: a bright line on the floor under its crest, a dim band under its face\'s foot, and no more light than level water lets through', () => {

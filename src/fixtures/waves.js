@@ -13,7 +13,7 @@
 // only has to be near. And the surf, its foam and its height, where it breaks, against
 // water/surf.js; its mistake a time off. And the beach's water where the waves wash,
 // its edge, its depth, its foam and its film, against water/swash.js (ctx.water.swashAt);
-// its mistake a time off. And the waves coming in over the last of the shallows, their height,
+// its mistake a time off; and how much of a pixel its film covers (filmCovers). And the waves coming in over the last of the shallows, their height,
 // their slope, their foam (ctx.water.boreAt) and the light they gather on the floor; its mistake a time off. And the light the
 // ripples gather on the floor (water/caustics.js), at points of any depth and pixel width; its
 // mistake a time off.
@@ -26,7 +26,7 @@ import { wave } from '../water/spectrum.js';
 import { createSurface } from '../water/surface.js';
 import { createSurf } from '../water/surf.js';
 import { surfUniforms } from '../water/water.js';
-import { swashUniforms, swellWay } from '../water/swash.js';
+import { filmCovers, swashUniforms, swellWay } from '../water/swash.js';
 import { causticUniforms } from '../water/caustics.js';
 
 const TIMES = [0, 7.3, 3 * 3600 + 1.1];
@@ -261,6 +261,15 @@ export function create(ctx) {
       result.swash.moving = Math.max(result.swash.moving, Math.abs(washTwin.level - washLater.level));
     });
     washInput.destroy();
+    // How much of a pixel the film covers, at films, sand's heights and what the pixel can't hold of it.
+    const covering = Array.from({ length: AT_POINTS }, () => [r.range(-0.05, 1.05), r.range(-3, 3), r.range(0.02, 1), 0]);
+    const coverInput = new Texture(gpu, { name: 'fixture-waves film points', width: AT_POINTS, height: 1, format: 'rgba32float', data: true, sampler: { mag: 'nearest', min: 'nearest' } });
+    coverInput.upload(new Float32Array(covering.flat()));
+    material.uniforms.uPoints.value = coverInput;
+    const coverSeen = await run(9);
+    material.uniforms.uPoints.value = input;
+    result.swash.covers = Math.max(...covering.map(([film, height, lost], n) => Math.abs(coverSeen[4 * n] - filmCovers(film, height, lost))));
+    coverInput.destroy();
 
     // The waves coming in over the last of the shallows, at points of the beaches' shallows.
     const coming = [];

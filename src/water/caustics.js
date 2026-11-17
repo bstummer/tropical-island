@@ -10,7 +10,9 @@
 // it. In ankle-deep water the shortest ripples gather it into a fine bright net; deeper, they have
 // crossed past their focus and blur, and the longer ones draw a wider, softer net: each ripple
 // blurs out `beyond` times as deep as it gathers the light. The sun's own size blurs it too, the
-// more the deeper. Longer waves carry the ripples to and fro, so they never lie in a lattice.
+// more the deeper. The ripples come in groups, as the wind's do: a slow noise carries them to and
+// fro and makes each stronger in some places and weaker in others, so their net is no lattice and
+// is a little different everywhere (eight plane waves alone weave a cloth that repeats).
 //
 // A pixel too wide to hold a ripple's net drops it, the shortest first (`fade` of its length), so
 // further off the net coarsens and melts into even light. Each floor point is lit by the light that
@@ -28,19 +30,24 @@
 // strength (water-caustics.wgsl causticLight).
 
 import { Vector4 } from '../maths/index.js';
+import { seededNoise } from '../world/noise.js';
 
 const G = 9.81;
 const TENSION = 7.3e-5; // m3/s2: water's surface tension per its density, which speeds the shortest ripples
+// The seeds of the noise that carries the ripples to and fro and makes them stronger and weaker: along x, then z.
+const GROUP_SEED = 7877;
 
-// The ripples: [wavelength m, steepness (amplitude x wave number), degrees off the wind] each.
-export function causticWaves({ ripples }, [wx, wz], loop) {
+// The ripples: [wavelength m, steepness (amplitude x wave number), degrees off the wind] each; and
+// how much stronger each grows per unit of the groups' noise along x and z (`group`), each turned
+// another way, so where some are strongest others are weakest.
+export function causticWaves({ ripples, groups }, [wx, wz], loop) {
   return ripples.map(([length, steepness, degrees], i) => {
     const k = (2 * Math.PI) / length;
     const t = (degrees * Math.PI) / 180;
     const [dx, dz] = [wx * Math.cos(t) - wz * Math.sin(t), wx * Math.sin(t) + wz * Math.cos(t)];
     // Capillary-gravity waves: whole turns in the loop, so nothing jumps as the time wraps.
     const w = Math.round((Math.sqrt(G * k + TENSION * k ** 3) * loop) / (2 * Math.PI)) * ((2 * Math.PI) / loop);
-    return { kx: k * dx, kz: k * dz, a: steepness / k, w, phase: 2.399963 * i };
+    return { kx: k * dx, kz: k * dz, a: steepness / k, w, phase: 2.399963 * i, group: [groups * Math.cos(2.399963 * i + 1), groups * Math.sin(2.399963 * i + 1)] };
   });
 }
 
@@ -59,22 +66,23 @@ export function createCaustics(settings, wind, loop, ior) {
   const waves = causticWaves(settings, wind, loop);
   const bend = 1 - 1 / ior;
   const [blur, blurDeeper] = settings.blur;
-  const [carried, over] = settings.wander;
-  const turn = (2 * Math.PI) / over;
+  const [carried, across] = settings.wander;
   const reach = new Float64Array(waves.length);
 
   // The light reaching the floor `depth` m down where it went in at x, z, at time t (the waves'
   // time, wrapped), with `dropped` of the shortest ripples left out, as drawn before its mean.
   function raw(x, z, depth, t, dropped) {
     const d = bend * depth;
+    // The groups: a slow noise along x and z.
+    const [nx, nz] = [seededNoise(x / across, z / across, GROUP_SEED), seededNoise(x / across, z / across, GROUP_SEED + 1)];
     // How much of each ripple's tilt reaches the floor this deep: a ripple gathers the light
-    // 1 / (a k^2) down, as the water bends it, and blurs out `beyond` times as deep; and none of a
-    // ripple the pixel drops.
-    waves.forEach(({ a, kx, kz }, i) => {
-      reach[i] = Math.exp(-(((d * a * (kx * kx + kz * kz)) / settings.beyond) ** 2)) * Math.min(Math.max(i + 1 - dropped, 0), 1);
+    // 1 / (a k^2) down, as the water bends it, and blurs out `beyond` times as deep; none of a
+    // ripple the pixel drops; and more or less of it as its groups go.
+    waves.forEach(({ a, kx, kz, group: [ax, az] }, i) => {
+      reach[i] = Math.max(1 + ax * nx + az * nz, 0) * Math.exp(-(((d * a * (kx * kx + kz * kz)) / settings.beyond) ** 2)) * Math.min(Math.max(i + 1 - dropped, 0), 1);
     });
-    // Carried to and fro by the longer waves.
-    const [cx, cz] = [x + carried * Math.sin(turn * (0.8 * x + 0.6 * z) + 1.3), z + carried * Math.sin(turn * (-0.6 * x + 0.8 * z) - 0.7)];
+    // Carried to and fro by them.
+    const [cx, cz] = [x + carried * nx, z + carried * nz];
     // Where it went in: the water bends the light up the slope it goes in by, so a step down it
     // from straight above.
     let gx = 0;
@@ -144,9 +152,10 @@ export function causticUniforms(settings, { waves, means }, ior) {
   return {
     uCausticWaves: { value: waves.map(({ kx, kz, a, w }) => new Vector4(kx, kz, a, w)) },
     uCausticPhases: { value: fours(waves.map(({ phase }) => phase)) },
+    uCausticGroups: { value: fours(waves.flatMap(({ group }) => group)) },
     uCausticMeans: { value: fours(means.flat()) },
     uCaustic: { value: new Vector4(...settings.blur, settings.beyond, settings.deepest) },
-    uCausticWander: { value: new Vector4(settings.wander[0], (2 * Math.PI) / settings.wander[1], settings.strength, 1 - 1 / ior) },
+    uCausticWander: { value: new Vector4(settings.wander[0], 1 / settings.wander[1], settings.strength, 1 - 1 / ior) },
     uCausticFade: { value: new Vector4(fade * ripples[0][0], Math.log2(ripples.at(-1)[0] / ripples[0][0]) / (ripples.length - 1), settings.peak, settings.shaded) },
     uCausticCalm: { value: new Vector4(settings.churned, ...settings.face) },
   };

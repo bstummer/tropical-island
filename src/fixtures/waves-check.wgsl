@@ -7,7 +7,8 @@
 // waves coming in over the last of the shallows there (swashBore), and the light they gather on the
 // floor (swashLens), at that time; 7, the light
 // the ripples gather on the floor (water-caustics.wgsl causticAt) at each point's x, z, depth and
-// ripples dropped (uPoints' four channels), at uSeconds.
+// ripples dropped (uPoints' four channels), at uSeconds; 9, how much of a pixel the film covers
+// (chunks/rumples.wgsl filmCovers) at each point's film, sand's height and what the pixel can't hold.
 
 #include "/chunks/fullscreen.wgsl"
 #include "/chunks/frame.wgsl"
@@ -16,6 +17,7 @@
 #include "../water/water-surf.wgsl"
 #include "../water/swash.wgsl"
 #include "../water/water-caustics.wgsl"
+#include "/chunks/rumples.wgsl"
 
 struct Check {
   uMode: i32,
@@ -40,6 +42,9 @@ fn fragmentMain(in: Fullscreen) -> @location(0) vec4f {
   let point = textureLoad(uPoints, vec2i(in.position.xy), 0);
   if (check.uMode == 7) {
     return vec4f(causticAt(point.xy, point.z, check.uSeconds, point.w), 0.0, 0.0, 1.0);
+  }
+  if (check.uMode == 9) {
+    return vec4f(filmCovers(point.x, point.y, point.z), 0.0, 0.0, 1.0);
   }
   let xz = point.xy;
   let sea = seaAt(xz);

@@ -26,7 +26,7 @@ struct SwashSettings {
   // m from the waterline nearest over which it fades out, from and to; m its water moves inland per m it
   // stands; from how many times as deep as it breaks its face steepens
   uSwashBoreWithin: vec4f,
-  uSwashBoreRoll: vec2f, // the share of its period the roller at its front takes; how much of its foam the trail behind holds
+  uSwashBoreRoll: vec3f, // the share of its period the roller at its front takes; how much of its foam the trail behind holds; how fast its foam rides on as it breaks off the crest, per the wave's speed
   // Its face (water.wgsl): the slopes over which it stands (rise per m, from and to); m of water under its
   // crest's top through which the eye still sees what lies behind; how much sand it lifts into its foot
   uSwashBoreLook: vec4f,
@@ -65,6 +65,11 @@ const SWASH_BORE_NEXT: f32 = 0.9;
 // much at most it must bend the light to be worked out, in full from twice that.
 const SWASH_LENS_ROUND: f32 = 0.5;
 const SWASH_LENS_LEAST: f32 = 0.05;
+// The roller at a wave's front (swashRoller): how far its foam turns, rad above the way inland,
+// at its foot and its back; how much of the sky's light its foot gets, under the roller over it;
+// how much foam makes a roller, from and to: a few bits on a face are lit as foam lying flat.
+const SWASH_ROLLER = vec3f(0.2, 1.9, 0.7);
+const SWASH_ROLLER_FOAM = vec2f(0.2, 0.6);
 // How the sea's mesh gathers its vertices at a wave's face (swashGather, water/swash.js GATHER): how much
 // closer at most; how far in front of its crest's top, per its face's width, and over how many face widths
 // either side, they lie closest; with how many quads across its face it needs none; over how far (m) from
@@ -124,6 +129,15 @@ struct SwashWave {
   top: f32, // as high as it wets the ground: its edge running up, then its run-up, while it lasts
 }
 
+// How thick the sheet of a wave that runs up r m, `tau` s after it landed, is `b` m in height
+// behind its edge on a beach rising `rise` per m, per its thickest: a wedge that thins as it
+// runs (water/swash.js wedge).
+fn swashWedge(b: f32, tau: f32, r: f32, rise: f32) -> f32 {
+  let sheet = swash.uSwashSheet;
+  let long = sheet.y * r + 3.0 * tau * clamp(rise, SWASH_LEAST, SWASH_STEEPEST) * sqrt(SWASH_G * sheet.x * r);
+  return b * b / (b * b + long * long);
+}
+
 // The foam at the front of the sheet, `behind` m in height behind its edge (- ahead of it).
 fn swashFrontFoam(behind: f32, width: f32) -> f32 {
   let soft = max(width, 1e-4);
@@ -161,7 +175,7 @@ fn swashWave(tau: f32, r: f32, d: f32, rise: f32, g: f32, patches: f32, width: f
     let behind = w.tip - g;
     let under = smoothstep(-soft, soft, behind);
     let b = max(behind, 0.0);
-    w.thick = under * sheet.x * r * (1.0 - exp(-b / (sheet.y * r)));
+    w.thick = under * sheet.x * r * swashWedge(b, tau, r, rise);
     // Its front carries on the foam its bore broke into.
     w.foam = white * (1.0 - 0.6 * s) * swashFrontFoam(behind, width);
     w.film = under;
@@ -194,7 +208,7 @@ fn swashWave(tau: f32, r: f32, d: f32, rise: f32, g: f32, patches: f32, width: f
       soaked = max(exp(-since / swash.uSwashFilm.w), seeping) * mix(swash.uSwashSoaks.z, 1.0, below) * reached;
       drag = reached * swash.uSwashMore.x * (1.0 - s) * exp(-max(r - g, 0.0) / (foamLook.y + 0.5 * (r - max(w.tip, -d))));
     }
-    w.thick = under * sheet.x * r * (1.0 - 0.7 * s) * (1.0 - exp(-b / (sheet.y * r)));
+    w.thick = under * sheet.x * r * (1.0 - 0.7 * s) * swashWedge(b, tau, r, rise);
     w.milk = under * swash.uSwashLook.x * 0.5 * (1.0 - s) * (1.0 - s) * exp(-b / behindFront);
     w.film = under + (1.0 - under) * film;
     w.soaked = under + (1.0 - under) * soaked;
@@ -351,12 +365,29 @@ fn swashFrom(place: SwashPlace, ground: f32, width: f32, swell: f32, fill: f32) 
   return out;
 }
 
+// How far (m) a wave's foam has moved inland `age` s after its crest passed (less: ahead of it on
+// its face), the wave coming in at `c` m/s, its foam riding on at `rides` of its speed as it breaks
+// off its crest and slowing over `roller` s to a drift at `drift` m/s (water/swash.js foamAlong).
+fn swashFoamAlong(age: f32, roller: f32, c: f32, drift: f32, rides: f32) -> f32 {
+  let lags = c - drift;
+  let kept = rides * c - drift;
+  if (age <= 0.0) {
+    return rides * c / (1.0 - rides) * age;
+  }
+  var left = min(age / (1.0 - rides), (c * age + kept * roller) / lags);
+  for (var i = 0; i < 2; i++) {
+    let e = exp(-left / roller);
+    left -= (lags * left - kept * roller * (1.0 - e) - c * age) / (lags - kept * e);
+  }
+  return kept * roller * (1.0 - exp(-left / roller)) + drift * left;
+}
+
 struct SwashBore {
   height: f32, // m above the still sea
   slope: f32, // how it rises per m further out, as its face leans in
   foam: f32, // how much foam its break leaves, as the beach's
   milk: f32, // how white with sand and bubbles the water it broke in is
-  along: f32, // m its foam has drifted inland
+  along: f32, // m its foam has moved inland (swashFoamAlong)
   lean: f32, // m the water here has moved inland, its top outrunning its foot
   drift: f32, // m what the last wave to pass stirred up has drifted inland with it
   wave: f32, // that wave's number
@@ -444,16 +475,31 @@ fn swashBore(place: SwashPlace, shore: f32, depth: f32) -> SwashBore {
   // It breaks whiter in places along the beach, where the foam it strands gathers too.
   out.foam = (trails + leads) * (0.4 + 0.6 * place.gathers);
   out.milk = appear * swash.uSwashLook.w * min(broke.x * white.x * share.x * exp(-f / (2.0 * foam.y)), 1.0);
-  // The foam drifts with the wave that made it: the next one's on its face, ahead of it, once
-  // what the last one left has gone (a blend of the two would stretch it across the front).
+  // The foam rides with the wave that made it: with its front in its roller, slowing behind to a
+  // drift inland; the next one's on its face, ahead of it, once what the last one left has gone
+  // (a blend of the two would stretch it across the front).
+  out.along = swashFoamAlong(select(f, f - 1.0, f > SWASH_BORE_NEXT) * period, roll.x * period, c, foam.w * c0, roll.z);
   let since = frame.uWaveSeconds - place.lands - k * period;
-  out.along = foam.w * c0 * select(since, since - period, f > SWASH_BORE_NEXT);
   out.drift = foam.w * c0 * since;
   out.wave = k;
   // The edge drawn down after the last wave fills as the next one's face passes; once its crest
   // has passed, until it lands at the waterline, it stays full.
   out.fill = select(before, 1.0, k > floor((frame.uWaveSeconds - place.lands + face.y * period) / period));
   return out;
+}
+
+// The roller at the front of a wave coming in, `inland` the way inland (world, unit): a cylinder
+// of foam lying along its crest, rolling over towards the shore, from its foot ahead of the crest
+// on its face, facing the shore, over its top behind the crest, to its back,
+// facing up and a little out to sea; past that the foam left behind lies flat. Its normal, how
+// much of the sky's light its foot gets under the roller over it, and how much it is the roller.
+fn swashRoller(bore: SwashBore, inland: vec2f) -> vec3f {
+  // How far behind the crest, in the roller's widths (less: ahead of it, on the face).
+  let q = select(bore.phase, bore.phase - 1.0, bore.phase > SWASH_BORE_NEXT) / swash.uSwashBoreRoll.x;
+  let turned = mix(SWASH_ROLLER.x, SWASH_ROLLER.y, smoothstep(-0.6, 1.2, q));
+  let shade = mix(SWASH_ROLLER.z, 1.0, smoothstep(-0.5, 0.3, q));
+  let shaped = (1.0 - smoothstep(1.0, 2.5, q)) * smoothstep(SWASH_ROLLER_FOAM.x, SWASH_ROLLER_FOAM.y, bore.foam);
+  return vec3f(turned, shade, shaped);
 }
 
 // How a wave coming in rises along the way out, per share of its period, phase f into the period

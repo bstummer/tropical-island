@@ -833,8 +833,10 @@ export const water = {
   // `lobes`, each wave its own: [share, m along the beach]. Its uprush takes `pace`
   // times as long as a stone thrown up the slope at its speed, setting off at its bore's speed
   // and speeding up to that over `collapses` s, its backwash `back` times as long, and it draws the water at the edge down by `draws` of how
-  // high a full wave runs there. Its sheet stands `sheet` of that thick behind its edge, thinning to the edge over
-  // `edge` of it (in height). The edge frays by `fray` m in height, at `frayAcross` m.
+  // high a full wave runs there. Its sheet stands `sheet` of that thick behind its edge, thinning to the edge as a
+  // wedge, as the square of how far behind it, as water running up a beach does (Shen and Meyer), `edge` of it
+  // long (in height) as it sets off and longer the longer it runs, so it thins as it runs: millimetres at its tip,
+  // a centimetre or two behind. The edge frays by `fray` m in height, at `frayAcross` m.
   // The glassy `film` it leaves lasts s, longest at the bottom, a share
   // `filmPatches` more or less in patches `filmAcross` m across; none over the top `soaks` of its
   // run-up, which sinks into the sand as it stops, leaving it `soakedTop` wet (1 soaked: wet but
@@ -905,14 +907,16 @@ export const water = {
     // steepening from `steepens` times as deep as that; it falls behind its crest over `back` of
     // it; its water moves inland `lean` m per m it stands, so its face leans in. Its break leaves
     // `foam`, thick in the roller at its front over `roll` of its period, `holds` of that trailing
-    // behind it over `trail` of it, and running `toe` of it ahead on its face, drifting inland at
-    // `flow` times its speed; and the water it broke in holds `milk` of the sand it stirs up.
+    // behind it over `trail` of it, and running `toe` of it ahead on its face; it rides on with the
+    // wave at `rides` of its speed as it breaks off the crest, slowing over the roller's time to a
+    // drift inland at `flow` times the speed it lands at; and the water it broke in holds `milk` of
+    // the sand it stirs up.
     // Through a face as steep as `stands` (rise per m, from and to) the eye sees the floor where
     // its ray bends to, there too where the beach's water shows the ground under it as it is; it
     // sees through the face what lies behind only near its top, where its ray crosses less than
     // about `lip` m of water under the crest's top; and the backwash meeting a face lifts sand into
     // its foot, `foot` as much as a break stirs up, most low on it.
-    bore: { height: 0.6, breaks: 1.15, bores: 0.8, surges: [3, 3.6], from: boresFrom, within: boresWithin, faces: [0.035, 0.012], steepens: 2.5, back: 0.12, lean: 0.9, spread: 0.3, foam: 1.6, roll: 0.04, holds: 0.35, trail: 0.25, toe: 0.02, flow: 0.5, milk: 0.4, stands: [0.1, 0.4], lip: 0.04, foot: 0.2 },
+    bore: { height: 0.6, breaks: 1.15, bores: 0.8, surges: [3, 3.6], from: boresFrom, within: boresWithin, faces: [0.035, 0.012], steepens: 2.5, back: 0.12, lean: 0.9, spread: 0.3, foam: 1.6, roll: 0.04, holds: 0.35, trail: 0.25, toe: 0.02, flow: 0.5, rides: 0.8, milk: 0.4, stands: [0.1, 0.4], lip: 0.04, foot: 0.2 },
     // The sand the waves stir up clouds the water near the shore, `always` per m the eye's ray goes
     // through it, gone by `within` m from the waterline, and `broken` per m more as much as a wave
     // just broke there (its `milk`), in clouds `clouds` m across; water thick with it sends back
@@ -926,7 +930,9 @@ export const water = {
   // ripples that gather it, [wavelength m, steepness, degrees off the wind], each turning a whole
   // number of times in the waves' loop; how soft its net is, and how much softer per m of depth
   // (the sun's size); how many times as deep as a ripple gathers the light it blurs out (`beyond`);
-  // how far the longer waves carry the ripples to and fro, m, over how far (`wander`); the ripples go
+  // how far a slow noise carries the ripples to and fro, m per unit of it, over patches how wide, m
+  // (`wander`), and how much stronger and weaker it makes each, per unit, as wind ripples come in
+  // groups (`groups`): their net is no lattice and differs a little everywhere; the ripples go
   // from the shortest up, their lengths evenly in ratio, as a pixel wider than `fade` of a
   // ripple's length drops it, and with it its share of the net; its brightest lines are held to about
   // `peak` times as bright as even light; its mean at `depths` depths to `deepest` m, past which the light is even;
@@ -944,7 +950,8 @@ export const water = {
     ripples: [[0.04, 0.07, -40], [0.055, 0.066, 25], [0.075, 0.062, -15], [0.1, 0.058, 50], [0.14, 0.054, -65], [0.19, 0.05, 10], [0.26, 0.046, 35], [0.36, 0.042, -25]],
     blur: [0.15, 0.35],
     beyond: 2.5,
-    wander: [0.06, 1.1],
+    wander: [0.1, 0.5],
+    groups: 0.7,
     depths: 16,
     deepest: 4,
     strength: 0.45,
@@ -1180,12 +1187,12 @@ export const capture = {
   // in JS (m: 0.031 on SwiftShader, the texels' bilinear read; 0.137 half a texel
   // off), and from the game's smaller sum, which leaves out the small waves (`inJs`:
   // 0.157, 2% of the swell's power); the beach's water from its twin (`swash`: its
-  // edge and depth, m; its foam and film, shares); the waves coming in (`bore`: m, per m, a
+  // edge and depth, m; its foam and film, shares, and how much of a pixel its film covers); the waves coming in (`bore`: m, per m, a
   // share: the foam on a wave's face changes by 8 a second, and the GPU reads the sea map's
   // distances and depths as half floats, which moves it a few ms; the light they gather, a share;
   // where the sea's mesh gathers its vertices at them, m); the light the ripples gather on
   // the floor (`caustics`, at 98% of the points). Each one's mistake must land further.
-  waves: { fields: 0.01, mips: 0.002, looped: 0.002, map: 0.02, surface: 0.06, inJs: 0.25, least: 100, surf: { foam: 0.05, height: 0.05, slope: 0.05, time: 0.2 }, swash: { level: 0.005, cover: 0.005, foam: 0.02, film: 0.02 }, bore: { height: 0.005, slope: 0.02, foam: 0.1, lens: 0.02, gather: 0.005 }, caustics: 0.02 },
+  waves: { fields: 0.01, mips: 0.002, looped: 0.002, map: 0.02, surface: 0.06, inJs: 0.25, least: 100, surf: { foam: 0.05, height: 0.05, slope: 0.05, time: 0.2 }, swash: { level: 0.005, cover: 0.005, foam: 0.02, film: 0.02, covers: 0.005 }, bore: { height: 0.005, slope: 0.02, foam: 0.1, lens: 0.02, gather: 0.005 }, caustics: 0.02 },
   // The sea's surface must have no holes: at these times, in `view`'s frame from `below`
   // rows under the rim of the sea down, the far sea's levels of detail too, nothing lies on the far plane.
   seaHoles: { view: 'air-pass', times: [15.5, 120.25], below: 2 },

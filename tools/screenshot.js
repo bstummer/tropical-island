@@ -734,7 +734,7 @@ function toolCheckTasks(context, fileUrl, query, outDir) {
         `the sea's map at ${w.map.points} points off its twin by ${w.map.gpu.toExponential(1)}, ${w.map.off.toFixed(2)} half a texel off; ` +
         `the surface off the whole sum of its waves by ${w.surface.gpu.toFixed(3)} m, ${w.surface.time.toFixed(2)} m at a time off, ${w.surface.texel.toFixed(3)} m half a texel off; off the game's sum by ${w.surface.inJs.toFixed(3)} m; ` +
         `the surf at ${w.surf.points} points off its twin by ${w.surf.foam.toFixed(4)} in foam, ${w.surf.height.toFixed(4)} m high, ${w.surf.slope.toFixed(4)} in slope, ${w.surf.time.toFixed(2)} at a time off; ` +
-        `the beach's water at ${w.swash.points} points off its twin by ${w.swash.level.toFixed(4)} m at its edge, ${w.swash.cover.toFixed(4)} m deep, ${w.swash.foam.toFixed(4)} in foam, ${w.swash.film.toFixed(4)} in film; ` +
+        `the beach's water at ${w.swash.points} points off its twin by ${w.swash.level.toFixed(4)} m at its edge, ${w.swash.cover.toFixed(4)} m deep, ${w.swash.foam.toFixed(4)} in foam, ${w.swash.film.toFixed(4)} in film, ${w.swash.covers.toFixed(4)} in how much of a pixel it covers; ` +
         `the waves coming in at ${w.bore.points} points off their twin by ${w.bore.height.toFixed(4)} m high, ${w.bore.slope.toFixed(4)} in slope, ${w.bore.foam.toFixed(4)} in foam, ${w.bore.lens.toFixed(4)} in the light they gather, ${w.bore.gather.toFixed(4)} m in where the mesh gathers at them; ` +
         `the floor's light at ${w.caustics.points} points off its twin by ${w.caustics.off.toFixed(4)} at most, ${w.caustics.time.toFixed(2)} at a time off`
       );
@@ -1168,7 +1168,7 @@ export function wavesProblems(w, { fields, mips, looped, map, surface, inJs, lea
   if (!(w?.surf?.slope <= surf.slope)) problems.push(`the surf's slope is off its JS twin by ${w?.surf?.slope} (limit ${surf.slope})`);
   if (!(w?.surf?.time >= surf.time)) problems.push(`the surf's foam at a time off is only ${w?.surf?.time} off: the check misses it`);
   if (!(w?.swash?.points >= least)) problems.push(`only ${w?.swash?.points} points of the beach judged (at least ${least})`);
-  for (const key of ['level', 'cover', 'foam', 'film']) {
+  for (const key of ['level', 'cover', 'foam', 'film', 'covers']) {
     if (!(w?.swash?.[key] <= swash[key])) problems.push(`the beach's water's ${key} is off its JS twin by ${w?.swash?.[key]} (limit ${swash[key]})`);
   }
   if (!(w?.swash?.time > swash.level)) problems.push(`the beach's water's edge at a time off is only ${w?.swash?.time} m off: the check misses it`);

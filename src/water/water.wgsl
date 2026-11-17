@@ -388,7 +388,12 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
     reach.z = max(reach.z, beach * mix(water.uShoreRipples.y, water.uShoreRipples.x, smoothstep(0.0, 0.01, wash.cover)));
   }
   // How much of this is water: the sea's, the sheet's and the film's, and none of the bare beach.
-  let wet = mix(1.0, wash.film, beach);
+  // The film lies in the sand's hollows, as much as the terrain's sheen doesn't show (terrain.wgsl).
+  var covers = wash.film;
+  if (WATER_SHORE && beach > 0.0) {
+    covers = rumplesFilm(wash.film, seen.xz, sqrt(longest), water.uShoreRumples.x);
+  }
+  let wet = mix(1.0, covers, beach);
   // The gusts fade out far off, where at a grazing angle their patches read as hills of water.
   let gusts = mix(seaGusts(in.vRest, water.uGustSeconds), 1.0, smoothstep(water.uGustFades.x, water.uGustFades.y, length(in.vRest - frame.cameraPosition.xz)));
   reach.z *= gusts;
@@ -411,7 +416,7 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
   // The film the sheet leaves on the sand lies over its rumples: so does what it mirrors.
   var rumpled = vec3f(0.0);
   if (WATER_SHORE && beach > 0.0) {
-    let lies = beach * wash.film * (1.0 - smoothstep(0.0, 0.01, wash.cover));
+    let lies = beach * covers * (1.0 - smoothstep(0.0, 0.01, wash.cover));
     rumpled = lies * rumples(seen.xz, sqrt(longest), water.uShoreRumples.x, water.uShoreRumples.y);
     slopes.x += rumpled.x;
     slopes.y += rumpled.y;
@@ -603,16 +608,19 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
   }
   // Near its top a wave coming in is thin: on the face turned to the eye, where its ray crosses
   // only centimetres of water under the crest's top before it leaves through the back, the eye
-  // sees through it what lies behind, the sky and against a low sun its glow, dimmed by the water
-  // it crosses, and the sand stirred up in it sends on the sun's light that crosses it towards the
-  // eye. Lower its ray bends down to the floor. A wave too low for a top that thin has none.
+  // sees through it what lies behind, and against a low sun its glow, dimmed by the water it
+  // crosses, and the sand stirred up in it sends on the sun's light that crosses it towards the
+  // eye. What lies behind is the sky where its ray leaves upwards, from an eye below the crest's
+  // top; from above it, the water beyond, which looks as this water does (the sky's haze at the
+  // horizon there drew a dark line along every crest seen from the beach). Lower its ray bends
+  // down to the floor. A wave too low for a top that thin has none.
   if (WATER_SHORE && bore.crest > 0.0) {
     let lip = swash.uSwashBoreLook.z;
     let crossed = bore.under * down;
     let thin = wet * smoothstep(0.0, 0.1, bore.slope * dot(inland, view.xz)) * smoothstep(lip, 2.0 * lip, max(bore.shape.x, bore.shape.y)) * exp(-crossed / lip);
     if (thin > SEEN_THROUGH_LEAST) {
       let beyond = normalize(vec3f(-view.x, max(-view.y, 0.02), -view.z));
-      let behindIt = seaSkyRadiance(beyond) + beam * sunGlow(beyond, water.uAureole, blur);
+      let behindIt = mix(mix(leaving, skyPart, mirrored), seaSkyRadiance(beyond), smoothstep(-0.03, 0.03, -view.y)) + beam * sunGlow(beyond, water.uAureole, blur);
       let forth = (1.0 - onwards.y * onwards.y) / pow(1.0 + onwards.y * onwards.y - 2.0 * onwards.y * dot(beyond, frame.uSunDirection), 1.5);
       let sent = swash.uSwashStirredAlbedo * (sky + beam * mix(1.0, forth, onwards.x)) / PI;
       leaving = mix(leaving, mix(behindIt * exp(-optics.uDimming * crossed), sent, 1.0 - exp(-stirred * crossed)), thin);
@@ -635,8 +643,16 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
     // Sharper than the pixel's longer side, or it smears across the eye's line.
     let lace = seaFoamCover(foam + ashoreFoam, in.vRest, select(surf.uSurfWay.xy, inland, onBeach), select(0.0, moves, onBeach), select(frame.uWaveSeconds, 0.0, onBeach), wide * exp2(-min(0.5 * stretch, 1.5)), wide);
     foamCover = lace.x;
+    // A wave's roller is lit as the cylinder it is, its foot in its own shade (swashRoller).
+    var rollerNormal = up;
+    var roller = vec3f(0.0, 1.0, 0.0);
+    if (onBeach && bore.foam > 0.0) {
+      roller = swashRoller(bore, inland);
+      rollerNormal = vec3f(inland.x * cos(roller.x), sin(roller.x), inland.y * cos(roller.x));
+      roller.z *= bore.foam / (foam + ashoreFoam);
+    }
     // Wet, its bubbles mirror a little of what the water does.
-    radiance = mix(radiance, lace.y * foamLight(beam, sky, view) + water.uFoamSheen * mirrored * skyPart, foamCover);
+    radiance = mix(radiance, lace.y * foamLight(beam, sky, view, rollerNormal, roller.y, roller.z) + water.uFoamSheen * mirrored * skyPart, foamCover);
   }
 
   // What it mirrors of the land comes through the air on screen as it is: the air

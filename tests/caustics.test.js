@@ -72,7 +72,7 @@ test('the net moves with time and comes round with the waves\' loop, nothing jum
 
 test('a crest gathers the light under it and a trough spreads it', () => {
   // One ripple along x, carried nowhere: its crests where its phase is a quarter turn.
-  const one = { ...settings, ripples: [[0.2, 0.05, 0]], wander: [0, 1], blur: [0.05, 0] };
+  const one = { ...settings, ripples: [[0.2, 0.05, 0]], wander: [0, 1], groups: 0, blur: [0.05, 0] };
   const net = createCaustics(one, [1, 0], loop, config.water.ior);
   const [{ kx, w, phase }] = net.waves;
   const t = 12.3;
@@ -82,4 +82,30 @@ test('a crest gathers the light under it and a trough spreads it', () => {
   const depth = 1;
   const [under, between] = [net.at(crest, 0, depth, t), net.at(trough, 0, depth, t)];
   assert.ok(under > 1.3 && between < 0.85, `under a crest ${under.toFixed(3)}, under a trough ${between.toFixed(3)}`);
+});
+
+test('the net is no lattice: a patch of it is unlike itself anywhere from 0.3 to 1.2 m away', () => {
+  // The net on a grid 1.5 cm apart, and how alike a patch 0.6 m across is to itself moved: eight
+  // plane waves alone weave a cloth that repeats (0.35 to 0.41 ankle-deep at these places).
+  const [cell, n, most, least] = [0.015, 40, 80, 20];
+  const size = n + 2 * most;
+  const correlation = (a, b) => {
+    const [ma, mb] = [meanOf(a), meanOf(b)];
+    let [c, va, vb] = [0, 0, 0];
+    a.forEach((x, k) => {
+      c += (x - ma) * (b[k] - mb);
+      va += (x - ma) ** 2;
+      vb += (b[k] - mb) ** 2;
+    });
+    return c / Math.sqrt(va * vb);
+  };
+  for (const [x, z] of [[11.7, -4.3], [-23.1, 8.8], [3.3, 30.2]]) {
+    const grid = [];
+    for (let j = 0; j < size; j++) for (let i = 0; i < size; i++) grid.push(caustics.at(x + (i - most) * cell, z + (j - most) * cell, 0.2, 41.9));
+    const patch = (u, v) => Array.from({ length: n * n }, (_, k) => grid[(Math.floor(k / n) + most + v) * size + (k % n) + most + u]);
+    const here = patch(0, 0);
+    let alike = -1;
+    for (let v = -most; v <= most; v += 2) for (let u = -most; u <= most; u += 2) if (Math.hypot(u, v) >= least) alike = Math.max(alike, correlation(here, patch(u, v)));
+    assert.ok(alike < 0.3, `at ${x}, ${z} the net moved matches itself by ${alike.toFixed(2)}`);
+  }
 });

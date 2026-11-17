@@ -11,7 +11,8 @@
 // (water/surf.js) and by lobes along the beach, each wave its own. It runs up as a stone
 // thrown up the slope would, fast at first and slowing (Shen and Meyer's swash), in a time
 // that grows with the root of R and with how gentle the beach is, and drains back slower,
-// gathering speed. Its sheet is a few centimetres thick, thinning to nothing at its edge;
+// gathering speed. Its sheet is a few centimetres thick, thinning to nothing at its edge as a
+// wedge that thins as it runs;
 // its front carries foam, which it strands where it turns and partly drags back down. The
 // ground it leaves keeps a glassy film for seconds, from the top down and in patches, and
 // is soaked for longer; what a wave did fades within two waves, by when the ground's own
@@ -42,7 +43,9 @@
 //           the sea's edge drawn down
 //   foam    how much foam moves with the water here, 0 to about 1: at the sheet's front, and dragged back
 //   line    how much foam a wave stranded where it turned lies here, which stays where it lies
-//   film    0 to 1: how much of the ground a glassy film of water covers, 1 under the water
+//   film    0 to 1: how much of the ground a glassy film of water covers, 1 under the water: as
+//           it drains it lies in the sand's hollows, the crests drying first, so up close it breaks
+//           into glassy patches and specks (filmCovers), and this is how much it covers on average
 //   soaked  0 to 1: how wet the waves have left the ground, 1 under them and just after
 //   milk    0 to 1: how white with bubbles and sand the sheet over the ground is: just behind its front
 //   runs    m: how high a full wave runs up this beach
@@ -82,6 +85,36 @@ const smoothstep = (a, b, x) => {
   return t * t * (3 - 2 * t);
 };
 
+// How much of a pixel the film covers, `film` of it on average, where the sand under it stands
+// `height` above its mean and what the pixel can't hold of it varies by `lost`, both per the
+// deviation of all of it: the hollows hold it and the crests dry first. A logistic law, the
+// sand's heights being near enough one, so a pixel that holds none of them (height 0, lost 1) is
+// covered `film`. chunks/rumples.wgsl filmCovers is its twin, and its rumplesFilm the heights.
+export function filmCovers(film, height, lost) {
+  if (!(film > 0 && film < 1)) return Math.min(Math.max(film, 0), 1);
+  return 1 / (1 + Math.exp(Math.min(Math.max((1.8138 * height - Math.log(film / (1 - film))) / Math.max(lost, 1e-3), -60), 60)));
+}
+
+// How far (m) a wave's foam has moved inland `age` s after its crest passed (less: ahead of it on
+// its face), the wave coming in at `c` m/s: its foam rides on with it at `rides` of its speed as
+// it breaks off its crest, then slows over `roller` s to a drift inland at `drift` m/s, as foam
+// left behind does. So its pattern rides with its front in its roller, bunched up along the crest,
+// and drifts behind (bunching a little: the older moved in further). What lies `c age` m behind
+// the crest left it as long ago as it takes to fall behind that far: found by Newton's steps,
+// from the nearer of where it would be had it slowed at once and had it not slowed at all.
+// swash.wgsl swashFoamAlong is its twin.
+export function foamAlong(age, roller, c, drift, rides) {
+  const lags = c - drift;
+  const kept = rides * c - drift;
+  if (age <= 0) return ((rides * c) / (1 - rides)) * age;
+  let left = Math.min(age / (1 - rides), (c * age + kept * roller) / lags);
+  for (let i = 0; i < 2; i++) {
+    const e = Math.exp(-left / roller);
+    left -= (lags * left - kept * roller * (1 - e) - c * age) / (lags - kept * e);
+  }
+  return kept * roller * (1 - Math.exp(-left / roller)) + drift * left;
+}
+
 // The highest a wave can run up a beach, per a full wave's run-up there: the largest of
 // a set, at the top of every lobe.
 export function highest({ sizes, lobes }, { least }) {
@@ -114,7 +147,7 @@ export function swashUniforms(settings, surf, way, period, loop) {
     uSwashBoreFace: { value: new Vector4(...settings.bore.faces, settings.bore.back, settings.bore.spread) },
     uSwashBoreFoam: { value: new Vector4(settings.bore.foam, settings.bore.trail, settings.bore.toe, settings.bore.flow) },
     uSwashBoreWithin: { value: new Vector4(...settings.bore.within, settings.bore.lean, settings.bore.steepens) },
-    uSwashBoreRoll: { value: new Vector2(settings.bore.roll, settings.bore.holds) },
+    uSwashBoreRoll: { value: new Vector3(settings.bore.roll, settings.bore.holds, settings.bore.rides) },
     uSwashBoreLook: { value: new Vector4(...settings.bore.stands, settings.bore.lip, settings.bore.foot) },
     uSwashStirred: { value: new Vector4(settings.stirred.always, settings.stirred.broken, settings.stirred.clouds, settings.stirred.within) },
     uSwashStirredAlbedo: { value: new Vector3(...settings.stirred.albedo) },
@@ -155,6 +188,16 @@ export function createSwash(settings, surf, way, period, loop) {
     return { at, white: 1 - smoothstep(settings.bore.surges[0], settings.bore.surges[1], similar) };
   }
 
+  // How thick the sheet of a wave that runs up R m, `tau` s after it landed, is `b` m in height
+  // behind its edge on a beach rising `rise` per m, per its thickest: a wedge, as thin as water
+  // running up a beach is at its tip, as the square of how far behind it (Shen and Meyer's swash,
+  // h = s^2 / (9 g t^2) at s m behind its tip t s after it set off), `edge` of R long in height as
+  // it sets off and longer the longer it has run, so it thins as it runs.
+  function wedge(b, tau, R, rise) {
+    const long = edge * R + 3 * tau * Math.min(Math.max(rise, LEAST), STEEPEST) * Math.sqrt(G * sheet * R);
+    return (b * b) / (b * b + long * long);
+  }
+
   // Wave k, landed tau s ago at the still waterline, where its bore arrived at `arrives` m/s
   // as white as `white` times a full one's front, having broken `broke` white (0 as it surged up),
   // run up R m and drained back to D m below the still sea, where every wave of this beach
@@ -188,7 +231,7 @@ export function createSwash(settings, surf, way, period, loop) {
       const behind = tip - g;
       const under = smoothstep(-soft, soft, behind);
       const b = Math.max(behind, 0);
-      thick = under * sheet * R * (1 - Math.exp(-b / (edge * R)));
+      thick = under * sheet * R * wedge(b, tau, R, rise);
       // Its front carries on the foam its bore broke into.
       foam = white * (1 - 0.6 * s) * frontFoam(behind, width);
       wet = soaked = under;
@@ -218,7 +261,7 @@ export function createSwash(settings, surf, way, period, loop) {
         soakedLeft = Math.max(Math.exp(-since / dries), seeping) * (soakedTop + (1 - soakedTop) * below) * reached;
         drag = reached * dragged * (1 - s) * Math.exp(-Math.max(R - g, 0) / (frontWidth + 0.5 * (R - Math.max(tip, -D))));
       }
-      thick = under * sheet * R * (1 - 0.7 * s) * (1 - Math.exp(-b / (edge * R)));
+      thick = under * sheet * R * (1 - 0.7 * s) * wedge(b, tau, R, rise);
       milky = under * milk * 0.5 * (1 - s) * (1 - s) * Math.exp(-b / behindFront);
       wet = under + (1 - under) * filmLeft;
       soaked = under + (1 - under) * soakedLeft;
@@ -247,7 +290,7 @@ export function createSwash(settings, surf, way, period, loop) {
   // into out, { height, slope, foam, milk, along, lean, drift, wave, crest, across, fill }: m above the still sea; how
   // it rises per m further out, as its face leans in; how much foam its break leaves, as the
   // beach's; how much of the sand it stirs up the water it broke in holds; how far (m) that foam
-  // has drifted inland with it; how far (m) the water at a, o has moved inland, its top outrunning
+  // has moved inland with it (foamAlong); how far (m) the water at a, o has moved inland, its top outrunning
   // its foot; how far (m) what the last wave to pass stirred up has drifted in, and its number;
   // how near the top of the nearest crest the water stands, 0 to 1, and m under its top; how much
   // of the edge the last backwash drew down the next wave has refilled here (at()); and its shape,
@@ -264,7 +307,7 @@ export function createSwash(settings, surf, way, period, loop) {
   // its front, and runs ahead on its face.
   function bore(here, a, o, t, out = {}) {
     const { lands, shore, depth, inlandA, inlandO } = here;
-    const { height: tall, breaks, bores, from, within, faces, back: falls, spread, foam: foamy, roll, holds, trail, toe, flow, milk: milky, lean, steepens } = settings.bore;
+    const { height: tall, breaks, bores, from, within, faces, back: falls, spread, foam: foamy, roll, holds, trail, toe, flow, rides, milk: milky, lean, steepens } = settings.bore;
     out.height = out.slope = out.foam = out.milk = out.along = out.lean = out.drift = out.wave = out.crest = out.under = out.fill = 0;
     out.tallNow = out.tallNext = out.frontNow = out.frontNext = out.phase = out.perMetre = 0;
     if (depth >= from[0] || shore >= within[1]) return out;
@@ -330,10 +373,11 @@ export function createSwash(settings, surf, way, period, loop) {
     const gathers = 0.4 + 0.6 * Math.max(0.35 + 0.9 * seededNoise(a / linePatches, o / linePatches, LINE_SEED), 0);
     out.foam = (trails + leads) * gathers;
     out.milk = appear * milky * Math.min(now.broke * now.white * now.share * Math.exp(-f / (2 * trail)), 1);
-    // The foam drifts with the wave that made it: the next one's on its face, ahead of it, once
-    // what the last one left has gone (a blend of the two would stretch it across the front).
+    // The foam rides with the wave that made it: with its front in its roller, slowing behind to a
+    // drift inland; the next one's on its face, ahead of it, once what the last one left has gone
+    // (a blend of the two would stretch it across the front).
+    out.along = foamAlong((f > BORE_NEXT ? f - 1 : f) * period, roll * period, c, flow * c0, rides);
     const since = t - lands - k * period;
-    out.along = flow * c0 * (f > BORE_NEXT ? since - period : since);
     out.drift = flow * c0 * since;
     out.wave = k;
     // The edge drawn down after the last wave fills as the next one's face passes; once its crest

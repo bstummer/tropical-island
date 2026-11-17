@@ -3,12 +3,15 @@
 // coarsening into even light where a pixel can't hold its net, and deeper than it reaches;
 // causticCalm() how much of its net the water over it lets show. Needs `frame` (the waves' time).
 
+#include "/chunks/noise.wgsl"
+
 struct CausticSettings {
   uCausticWaves: array<vec4f, 8>, // per ripple, shortest first: its wave numbers along world x and z (rad/m), its amplitude (m), how fast it turns (rad/s)
   uCausticPhases: array<vec4f, 2>, // where each starts, rad
+  uCausticGroups: array<vec4f, 4>, // how much stronger each grows per unit of the groups' noise along x and z, two ripples a vec4
   uCausticMeans: array<vec4f, 36>, // its light's mean at each of 16 depths, evenly from 0 to the deepest, for each whole number of ripples dropped, 0 to 8
   uCaustic: vec4f, // how soft its net is, and how much softer per m of depth; how many times as deep as a ripple gathers the light it blurs out; the deepest of the depths, m
-  uCausticWander: vec4f, // how far the longer waves carry the ripples to and fro, m, and 2 pi over how far; how much of its net shows; how much the water bends the light (1 - 1 / ior)
+  uCausticWander: vec4f, // how far the groups carry the ripples to and fro, m, per unit of their noise, and 1 over how wide its patches are, m; how much of its net shows; how much the water bends the light (1 - 1 / ior)
   // How wide a pixel (m) starts to drop the shortest ripple; log2 of the ratio from one ripple's length to the next;
   // about how much brighter than even light its brightest lines are; how much of the sun's light each unit of foam keeps from the floor
   uCausticFade: vec4f,
@@ -20,6 +23,7 @@ struct CausticSettings {
 const CAUSTIC_WAVES: i32 = 8; // water/caustics.js holds the counts to these
 const CAUSTIC_DEPTHS: i32 = 16;
 const CAUSTIC_LEAST: f32 = 0.005; // of its net shown, under which it isn't drawn: its brightest lines a hundredth over even light
+const CAUSTIC_GROUP_SEED: u32 = 7877u; // water/caustics.js GROUP_SEED: the groups' noise along x, and + 1 along z
 
 // How many of the shortest ripples a pixel `footprint` m wide drops (water/caustics.js droppedBy).
 fn causticDropped(footprint: f32) -> f32 {
@@ -47,18 +51,21 @@ fn causticMean(depth: f32, dropped: f32) -> f32 {
 // with `dropped` of the shortest ripples left out, per its mean (water/caustics.js at()).
 fn causticAt(xz: vec2f, depth: f32, t: f32, dropped: f32) -> f32 {
   let d = caustic.uCausticWander.w * depth;
-  // Carried to and fro by the longer waves.
-  let turn = caustic.uCausticWander.y;
-  let carried = xz + caustic.uCausticWander.x * vec2f(sin(turn * dot(xz, vec2f(0.8, 0.6)) + 1.3), sin(turn * dot(xz, vec2f(-0.6, 0.8)) - 0.7));
+  // The groups: a slow noise along x and z, which carries the ripples to and fro.
+  let across = xz * caustic.uCausticWander.y;
+  let groups = vec2f(seededNoise(across, CAUSTIC_GROUP_SEED), seededNoise(across, CAUSTIC_GROUP_SEED + 1u));
+  let carried = xz + caustic.uCausticWander.x * groups;
   // How much of each ripple's tilt reaches the floor this deep: it blurs out `beyond` times as
-  // deep as it gathers the light; none of what the pixel drops. Where the light went in: the water
-  // bends the light up the slope it goes in by, so a step down it from straight above.
+  // deep as it gathers the light; none of what the pixel drops; more or less as its groups go.
+  // Where the light went in: the water bends the light up the slope it goes in by, so a step down
+  // it from straight above.
   var reach: array<f32, CAUSTIC_WAVES>;
   var g = vec2f(0.0);
   for (var i = 0; i < CAUSTIC_WAVES; i++) {
     let w = caustic.uCausticWaves[i];
     let focus = d * w.z * dot(w.xy, w.xy) / caustic.uCaustic.z;
-    reach[i] = exp(-focus * focus) * clamp(f32(i + 1) - dropped, 0.0, 1.0);
+    let group = select(caustic.uCausticGroups[i / 2].xy, caustic.uCausticGroups[i / 2].zw, i % 2 == 1);
+    reach[i] = max(1.0 + dot(group, groups), 0.0) * exp(-focus * focus) * clamp(f32(i + 1) - dropped, 0.0, 1.0);
     g += reach[i] * w.z * cos(dot(w.xy, carried) - w.w * t + caustic.uCausticPhases[i / 4][i % 4]) * w.xy;
   }
   let p = carried - d * g;

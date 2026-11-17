@@ -197,8 +197,9 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
   var diffuse = cover.y * r.albedo + rest * gr.albedo;
   diffuse += cover.x * s.albedo;
   var radiance = diffuse / PI * (sunLight(vWorldPos, n) + skyIrradiance(vWorldPos, n));
-  // Under the waves' sheet and the glassy film it leaves, the water mirrors (water/water.wgsl).
-  let shines = overSea * (1.0 - w.film);
+  // Under the waves' sheet and the glassy film it leaves, the water mirrors (water/water.wgsl):
+  // the film in the sand's hollows, as it covers there.
+  let shines = overSea * (1.0 - rumplesFilm(w.film, vWorldPos.xz, max(length(pdx), length(pdy)), sandParams.uSandRumples.x));
   if (TERRAIN_SAND || TERRAIN_WET) {
     if (cover.x > 0.0) {
       radiance += shines * cover.x * sandShine(s, vWorldPos, n, view, kernel);
