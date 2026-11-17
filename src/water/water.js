@@ -6,7 +6,8 @@
 // reaches a point (sea-map.js), and JS knows where it stands (surface.js).
 //
 // Puts ctx.water on the context: { ready, heightAt(x, z, t), over(x, y, z, t),
-// surfAt(x, z, t), swashAt(x, z, t), boreAt(x, z, t), boreLens(bore, ahead, d, soft, peak), map (sea-map.js's, once ready), surface
+// surfAt(x, z, t), swashAt(x, z, t), boreAt(x, z, t), boreLens(bore, ahead, d, soft, peak),
+// boreGather(bore, top, spacing, shore) and boreTopOf(bore), map (sea-map.js's, once ready), surface
 // (surface.js's, once ready) }. heightAt and over() take in the beach's water (water/swash.js).
 // heightAt is 0 and surfAt none until ready, and t defaults to the clock's. Needs the
 // terrain's grids, so comes after it in WORLD_SYSTEMS; the terrain reads over() each frame.
@@ -33,7 +34,7 @@ import { causticUniforms, createCaustics } from './caustics.js';
 import { createSpray } from './spray.js';
 
 const MAX_NODES = 2048;
-const LOD_MAX = 18; // water.wgsl's arrays hold this many levels
+const LOD_MAX = 16; // water.wgsl's arrays hold this many levels
 const SURF_WANDERS = 5; // water-surf.wgsl's uSurfWander
 
 // The uniforms of water-optics.wgsl, from config.water.
@@ -290,6 +291,14 @@ export function create(ctx) {
     // The light they gather on the floor, as a lens, told by boreAt() (water/swash.js lens); 1 until ready.
     boreLens(bore, ahead, d, soft, peak) {
       return swash ? swash.lens(bore, ahead, d, soft, peak) : 1;
+    },
+    // How far out the mesh moves a vertex to draw them, told by boreAt() here and at the top of its
+    // crest, `shore` m out (water/swash.js gather, topOf); 0 until ready.
+    boreGather(bore, top, spacing, shore) {
+      return swash ? swash.gather(bore, top, spacing, shore) : 0;
+    },
+    boreTopOf(bore) {
+      return swash ? swash.topOf(bore) : 0;
     },
     // The surf at world x, z: { foam, height, slope } (water/surf.js), for sound: on the reef,
     // and at the beach the waves breaking as they come in (water/swash.js bore) and the foam at

@@ -605,28 +605,58 @@ test('a wave coming in leans in: its face steepens as it nears where it breaks, 
   assert.ok(steepest > 1, `the steepest face rises ${steepest.toFixed(2)} per m`);
 });
 
-// How far from a wave's profile along the line out the sea's mesh draws it, for quads `spacing` m
-// apart, at most over its top and face, wherever a row of its vertices falls along that line.
+// How far out to sea the sea's mesh moves a vertex `spacing` m from its neighbours at cove a, o
+// and time t, as water.wgsl does: gathered round the top of its nearest crest.
+function gatheredAt({ map, swash }, a, o, t, spacing) {
+  const wrapped = t - loop * Math.floor(t / loop);
+  const here = map.at(a, o);
+  const bore = swash.bore(here, a, o, wrapped, {});
+  const top = swash.topOf(bore);
+  const [ta, to] = [a - here.inlandA * top, o - here.inlandO * top];
+  const there = map.at(ta, to);
+  return swash.gather(bore, swash.bore(there, ta, to, wrapped, {}), spacing, there.shore);
+}
+
+// The way straight out to sea at world x, z (world, unit): across the crests coming in there.
+function outward({ island, map }, x, z) {
+  const [a, o] = island.toCove(x, z);
+  const here = map.at(a, o);
+  const [sx, sz] = island.fromCove(a - here.inlandA, o - here.inlandO);
+  const out = Math.hypot(sx - x, sz - z);
+  return [(sx - x) / out, (sz - z) / out];
+}
+
+// How far from a wave's profile along the way out the sea's mesh draws it, for quads `spacing` m
+// apart, at most over its top and face, wherever a row of its vertices falls along that way: each
+// moved out as gather() says, where its own water rests, and drawn at its height there.
 function drawnOff(beach, [x, z], t, spacing) {
   const b = {};
-  const h = (dz) => boreAt(beach, x, z + dz, t, b).height;
-  const [from, to, step] = [-0.4, 0.4, 0.002];
+  const [ox, oz] = outward(beach, x, z);
+  const h = (u) => boreAt(beach, x + u * ox, z + u * oz, t, b).height;
+  const vertex = (u) => {
+    const moves = gatheredAt(beach, ...beach.island.toCove(x + u * ox, z + u * oz), t, spacing);
+    return [u + moves, h(u + moves)];
+  };
+  const [from, to, step] = [-0.5, 0.5, 0.002];
   const profile = [];
-  for (let dz = from; dz <= to; dz += step) profile.push(h(dz));
+  for (let u = from; u <= to; u += step) profile.push(h(u));
   let worst = 0;
   for (let offset = 0; offset < spacing; offset += spacing / 16) {
-    for (let v = from - offset; v < to; v += spacing) {
-      const [h0, h1] = [h(v), h(v + spacing)];
-      for (let i = Math.max(0, Math.ceil((v - from) / step)); i < profile.length && from + i * step <= v + spacing; i++) {
-        const f = (from + i * step - v) / spacing;
-        worst = Math.max(worst, Math.abs(profile[i] - (h0 + f * (h1 - h0))));
-      }
-    }
+    const vertices = [];
+    for (let v = from - 4 - offset; v < to + 4; v += spacing) vertices.push(vertex(v));
+    for (let i = 0; i + 1 < vertices.length; i++) assert.ok(vertices[i + 1][0] > vertices[i][0], `at ${x}, ${z.toFixed(2)}, t ${t}: a vertex moved past the next`);
+    let j = 0;
+    profile.forEach((height, i) => {
+      const u = from + i * step;
+      while (vertices[j + 1][0] < u) j++;
+      const [[u0, h0], [u1, h1]] = [vertices[j], vertices[j + 1]];
+      worst = Math.max(worst, Math.abs(height - (h0 + ((u - u0) / (u1 - u0)) * (h1 - h0))));
+    });
   }
   return worst;
 }
 
-test('by the eye the sea\'s mesh holds a wave\'s face standing up: it draws a steep crest within half a centimetre of its shape wherever its vertices fall, so its top runs straight along the crest', () => {
+test('by the eye the sea\'s mesh holds a wave\'s face standing up: gathered at it, its vertices draw a steep crest within a centimetre of its shape wherever they fall, so its top runs straight along the crest', () => {
   const beach = gameBeach();
   const preset = config.quality.presets[config.quality.default];
   const spacing = config.water.mesh.leaf / preset.waterGrid;
@@ -642,17 +672,47 @@ test('by the eye the sea\'s mesh holds a wave\'s face standing up: it draws a st
       }
       if (when === null) continue;
       // Only a face steeper than 45 degrees by it: a wave about to break.
+      const [ox, oz] = outward(beach, x, z);
       let steepest = 0;
-      for (let dz = -0.5; dz < 0.5; dz += 0.01) steepest = Math.max(steepest, boreAt(beach, x, z + dz, when, b).slope);
+      for (let u = -0.5; u < 0.5; u += 0.01) steepest = Math.max(steepest, boreAt(beach, x + u * ox, z + u * oz, when, b).slope);
       if (steepest < 1) continue;
       judged++;
       worst = Math.max(worst, drawnOff(beach, [x, z], when, spacing));
     }
   }
   assert.ok(judged >= 10, `${judged} steep crests judged`);
-  // Half a centimetre: two or three pixels from a crouch a couple of metres off. As a crest's
-  // place along it moves between rows of vertices, its top and face zigzag by as much.
-  assert.ok(worst < 0.005, `on the ${config.quality.default} preset's finest quads (${spacing} m) a crest drawn ${(100 * worst).toFixed(1)} cm off its shape`);
+  // As a crest's place moves between rows of vertices, its top and face zigzag by as much: three
+  // quarters of a centimetre is a few pixels from a crouch a couple of metres off, where the mesh's
+  // own quads drew it 3.5 cm off.
+  assert.ok(worst < 0.0075, `on the ${config.quality.default} preset's finest quads (${spacing} m) a crest drawn ${(100 * worst).toFixed(1)} cm off its shape`);
+});
+
+test('on every seed\'s beaches the sea\'s mesh gathers its vertices at the waves coming in without moving one past the next', () => {
+  const spacing = config.water.mesh.leaf / config.quality.presets[config.quality.default].waterGrid;
+  const step = 0.01;
+  let moved = 0;
+  for (const seed of SEEDS) {
+    const { map, swash } = seedBeach(seed);
+    const r = createRandom(seed)('test/gather');
+    const span = (map.samples - 1) * map.texel;
+    let judged = 0;
+    for (let tries = 0; tries < 200000 && judged < 300; tries++) {
+      const a = map.origin[0] + r.range(0.02, 0.98) * span;
+      const o = map.origin[1] + r.range(0.02, 0.98) * span;
+      const here = map.at(a, o);
+      if (!(here.depth > 0 && here.shore < config.water.swash.bore.within[1])) continue;
+      judged++;
+      const t = r.range(0, loop);
+      // A vertex here and one a centimetre further out, each moved as gather() says.
+      const gathered = (out) => gatheredAt({ map, swash }, a - here.inlandA * out, o - here.inlandO * out, t, spacing);
+      const [here0, there] = [gathered(0), gathered(step)];
+      assert.ok(Number.isFinite(here0), `seed ${seed} at ${a.toFixed(1)}, ${o.toFixed(1)}, t ${t.toFixed(2)}: ${here0}`);
+      assert.ok(step + there - here0 > 0, `seed ${seed} at ${a.toFixed(1)}, ${o.toFixed(1)}, t ${t.toFixed(2)}: moved ${here0.toFixed(4)} m, the next ${there.toFixed(4)} m`);
+      if (here0 !== 0) moved++;
+    }
+    assert.ok(judged >= 100, `seed ${seed}: ${judged} points where the waves come in`);
+  }
+  assert.ok(moved >= 200, `${moved} vertices gathered`);
 });
 
 test('no wave comes in to break over shallows far from any beach, as over a reef\'s flat', () => {

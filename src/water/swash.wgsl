@@ -65,6 +65,12 @@ const SWASH_BORE_NEXT: f32 = 0.9;
 // much at most it must bend the light to be worked out, in full from twice that.
 const SWASH_LENS_ROUND: f32 = 0.5;
 const SWASH_LENS_LEAST: f32 = 0.05;
+// How the sea's mesh gathers its vertices at a wave's face (swashGather, water/swash.js GATHER): how much
+// closer at most; how far in front of its crest's top, per its face's width, and over how many face widths
+// either side, they lie closest; with how many quads across its face it needs none; over how far (m) from
+// the waterline it fades.
+const SWASH_GATHER = vec4f(0.7, 0.8, 1.5, 5.0);
+const SWASH_GATHER_FADES: f32 = 1.0;
 
 struct Swash {
   level: f32,
@@ -486,4 +492,34 @@ fn swashLens(bore: SwashBore, ahead: f32, d: f32, soft: f32, peak: f32) -> f32 {
   let j = 1.0 + d * (swashRises(bore, entered + half) - swashRises(bore, entered - half)) * k * k / (2.0 * half);
   let g = sqrt((1.0 + soft * soft) / (j * j + soft * soft));
   return 1.0 + (g / (1.0 + g / peak) * (1.0 + 1.0 / peak) - 1.0) * smoothstep(SWASH_LENS_LEAST, 2.0 * SWASH_LENS_LEAST, most);
+}
+
+// How far out to sea (m) the top of the crest nearest the water swashBore() told lies.
+fn swashTopOf(bore: SwashBore) -> f32 {
+  return select(0.0, -select(bore.phase, bore.phase - 1.0, bore.phase > 0.5) / bore.perMetre, bore.perMetre > 0.0);
+}
+
+// How far (m, out to sea) the sea's mesh moves a vertex `spacing` m from its neighbours, where
+// swashBore() told the wave (`here`), given the same at the top of its nearest crest (`top`,
+// `shore` m out from the waterline; swashTopOf()): gathered at its face just in front of its top,
+// so its quads, wider than the face, draw its top running straight (water/swash.js gather, which
+// says what it is).
+fn swashGather(here: SwashBore, top: SwashBore, spacing: f32, shore: f32) -> f32 {
+  let k = here.perMetre;
+  if (k <= 0.0 || top.perMetre <= 0.0) {
+    return 0.0;
+  }
+  let front = swash.uSwashBoreFace.y;
+  let wide = front / top.perMetre;
+  let fades = smoothstep(0.02, 0.06, select(top.shape.x, top.shape.y, top.phase > 0.5)) * smoothstep(0.0, SWASH_GATHER_FADES, shore);
+  let strength = fades * min(max(1.0 - wide / (SWASH_GATHER.w * spacing), 0.0), SWASH_GATHER.x);
+  if (strength <= 0.0) {
+    return 0.0;
+  }
+  let reach = SWASH_GATHER.z * wide / (0.6 * (1.0 - strength));
+  let v = (select(here.phase, here.phase - 1.0, here.phase > 0.5) + SWASH_GATHER.y * front) / k / reach;
+  if (abs(v) >= 2.0) {
+    return 0.0;
+  }
+  return -strength * reach * v * exp(-v * v * v * v);
 }

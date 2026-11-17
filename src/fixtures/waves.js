@@ -36,6 +36,7 @@ const MISTAKE = { time: 0.05, surfaceTime: 2.5, surfTime: 2, texels: 1, layout: 
 const SURFACE_TIME = 12.5;
 const SWASH_TIME = 437.3; // s, the waves' time, wrapped
 const BORE_LENS = [0.05, 0.06, 0.2, 4]; // waves-check.wgsl's: ahead, d, soft, peak
+const BORE_GATHER = 0.25; // waves-check.wgsl's: m between the mesh's vertices
 
 export function create(ctx) {
   const { renderer, gpu, config } = ctx;
@@ -267,7 +268,7 @@ export function create(ctx) {
       const a = map.origin[0] + r.range(0.02, 0.98) * span2;
       const o = map.origin[1] + r.range(0.02, 0.98) * span2;
       const here = map.at(a, o);
-      if (here.shore > 0 && here.shore < 25 && here.depth > 0 && here.depth < config.water.swash.bore.from[0]) coming.push({ xz: island.fromCove(a, o) });
+      if (here.shore > 0 && here.shore < 25 && here.depth > 0 && here.depth < config.water.swash.bore.from[0]) coming.push({ xz: island.fromCove(a, o), out: island.fromCove(a - here.inlandA, o - here.inlandO) });
     }
     const boreInput = new Texture(gpu, { name: 'fixture-waves bore points', width: AT_POINTS, height: 1, format: 'rgba32float', data: true, sampler: { mag: 'nearest', min: 'nearest' } });
     const boreData = new Float32Array(4 * AT_POINTS);
@@ -276,12 +277,13 @@ export function create(ctx) {
     material.uniforms.uPoints.value = boreInput;
     seconds.value = SWASH_TIME;
     const boreSeen = await run(6);
+    const gatherSeen = await run(8);
     seconds.value = was;
     material.uniforms.uPoints.value = input;
-    result.bore = { points: coming.length, height: 0, slope: 0, foam: 0, lens: 0, time: 0 };
+    result.bore = { points: coming.length, height: 0, slope: 0, foam: 0, lens: 0, gather: 0, time: 0 };
     const boreTwin = {};
     const boreLater = {};
-    coming.forEach(({ xz }, n) => {
+    coming.forEach(({ xz, out }, n) => {
       ctx.water.boreAt(xz[0], xz[1], SWASH_TIME, boreTwin);
       ctx.water.boreAt(xz[0], xz[1], SWASH_TIME + MISTAKE.swashTime, boreLater);
       const seen = boreSeen.slice(4 * n, 4 * n + 4);
@@ -289,6 +291,13 @@ export function create(ctx) {
       result.bore.slope = Math.max(result.bore.slope, Math.abs(seen[1] - boreTwin.slope));
       result.bore.foam = Math.max(result.bore.foam, Math.abs(seen[2] - boreTwin.foam));
       result.bore.lens = Math.max(result.bore.lens, Math.abs(seen[3] - ctx.water.boreLens(boreTwin, ...BORE_LENS)));
+      // Where the mesh gathers at it: round the top of its crest, out to sea from here.
+      const top = ctx.water.boreTopOf(boreTwin);
+      const way = Math.hypot(out[0] - xz[0], out[1] - xz[1]);
+      const [tx, tz] = [xz[0] + (top * (out[0] - xz[0])) / way, xz[1] + (top * (out[1] - xz[1])) / way];
+      const crest = ctx.water.boreAt(tx, tz, SWASH_TIME, {});
+      const shore = map.at(...island.toCove(tx, tz)).shore;
+      result.bore.gather = Math.max(result.bore.gather, Math.abs(gatherSeen[4 * n] - ctx.water.boreGather(boreTwin, crest, BORE_GATHER, shore)));
       result.bore.time = Math.max(result.bore.time, Math.abs(seen[0] - boreLater.height));
     });
     boreInput.destroy();

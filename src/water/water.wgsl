@@ -41,7 +41,7 @@ const WATER_LUMINANCE = vec3f(0.2126, 0.7152, 0.0722);
 struct Water {
   uPatches: vec3f, // 1 / each cascade's patch, m (water/spectrum.js)
   uFineSlopes: f32, // the variance of the slopes of waves too small for any cascade, per axis
-  uMorph: array<vec4f, 18>, // per level, .xy: the distances over which it morphs into the next
+  uMorph: array<vec4f, 16>, // per level, .xy: the distances over which it morphs into the next
   uUnresolved: array<vec4f, 6>, // per cascade, two of them: the variance its mip levels 0 to 7 have lost, both axes together
   uWaveTexels: f32, // texels across a patch of the waves' texture
   uSunCeiling: f32, // the most the sun's light in the water may reach once exposed
@@ -149,7 +149,25 @@ fn vertexMain(in: VertexIn) -> Varyings {
   let flat = in.aNode.xy + grid * in.aNode.z;
   let k = clamp((length(flat - frame.cameraPosition.xz) - water.uMorph[level].x) / (water.uMorph[level].y - water.uMorph[level].x), 0.0, 1.0);
   grid -= fract(grid * 0.5) * 2.0 * k;
-  let rest = in.aNode.xy + grid * in.aNode.z;
+  var rest = in.aNode.xy + grid * in.aNode.z;
+  // Near the eye the vertices gather at each wave coming in over the shallows, whose face standing
+  // up is narrower than the quads (water/swash.js gather): its top runs straight along its crest.
+  // Gone well before the finest level morphs into the next, so the levels' seams still meet.
+  if (WATER_SHORE) {
+    let near = 1.0 - smoothstep(0.6 * water.uMorph[0].x, 0.9 * water.uMorph[0].x, length(rest - frame.cameraPosition.xz));
+    if (near > 0.0) {
+      let sea = seaAt(rest);
+      let shore = seaShoreAt(rest);
+      let bore = swashBore(swashPlace(rest, sea.x, shore.xy), sea.x, sea.y);
+      if (bore.perMetre > 0.0) {
+        let out = -normalize(terrainWorld(shore.xy) + vec2f(1e-6, 0.0));
+        let top = rest + out * swashTopOf(bore);
+        let seaTop = seaAt(top);
+        let crest = swashBore(swashPlace(top, seaTop.x, seaShoreAt(top).xy), seaTop.x, seaTop.y);
+        rest += out * near * swashGather(bore, crest, in.aNode.z, seaTop.x);
+      }
+    }
+  }
 
   // Each cascade at the mip that holds no finer waves than this mesh can draw, and
   // on its way to the next level's as the vertices are: at a seam the two levels'

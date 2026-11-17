@@ -25,7 +25,8 @@
 // as tall there as the sheet it runs up as, refilling the edge the last backwash drew down as
 // its face passes, and its run-up starts from the waterline as it lands there, carrying its
 // foam on up the sand. Each is a lens too: at.lens() says how it gathers the sun's light on
-// the floor under it.
+// the floor under it. at.gather() says where the sea's mesh gathers its vertices to draw it, round
+// the top of its crest at.topOf() finds.
 //
 // createSwash(settings, surf, way, period, loop) -> at(here, a, o, ground, t, out, width, swell, fill),
 // at.runs(here), how high a full wave runs up there, at.bore(here, a, o, t, out), the waves
@@ -71,6 +72,10 @@ const BORE_NEXT = 0.9;
 // in full from twice that.
 const LENS_ROUND = 0.5;
 const LENS_LEAST = 0.05;
+// How the sea's mesh gathers its vertices at a wave's face (gather()): how much closer at most; how far
+// in front of its crest's top, per its face's width, and over how many face widths either side, they
+// lie closest; with how many quads across its face it needs none; over how far (m) from the waterline it fades.
+const GATHER = [0.7, 0.8, 1.5, 5, 1];
 
 const smoothstep = (a, b, x) => {
   const t = Math.min(Math.max((x - a) / (b - a), 0), 1);
@@ -445,9 +450,42 @@ export function createSwash(settings, surf, way, period, loop) {
     return 1 + ((g / (1 + g / peak)) * (1 + 1 / peak) - 1) * smoothstep(LENS_LEAST, 2 * LENS_LEAST, most);
   }
 
+  // Near the eye the sea's mesh gathers its vertices at each wave coming in (water.wgsl): its quads
+  // are wider than a face standing up, whose top would zigzag along their rows, and finer quads
+  // all round would shade every pixel on their edges once more for each. How far (m, out to sea)
+  // a vertex `spacing` m from its neighbours moves, where bore() told the wave (`here`, its out),
+  // given the same at the top of its nearest crest (`top`, `shore` m out from the waterline;
+  // topOf() says where): 1 / (1 - GATHER[0]) times as close together, from its face's foot to just
+  // past its top alike (GATHER[1] and [2]), as its face is narrower than GATHER[3] quads; spread
+  // out again over the water round that, which can spare them: the flat water in front and the
+  // crest's long back. Sized by its face as steep as a wave's gets (`faces[1]`), and as tall as a
+  // few centimetres and gone over the last GATHER[4] m to the waterline, all at its top: so the
+  // vertices round a crest gather alike, and none moves up to the next, though how the waves stand
+  // changes within a few tenths of a metre where they break or come up a steep shelf. Smooth in
+  // place and in time.
+  function gather(here, top, spacing, shore) {
+    const [k, kTop] = [here.perMetre, top.perMetre];
+    if (!(k > 0 && kTop > 0)) return 0;
+    const [most, ahead, either, across, last] = GATHER;
+    const front = settings.bore.faces[1];
+    const wide = front / kTop;
+    const fades = smoothstep(0.02, 0.06, top.phase > 0.5 ? top.tallNext : top.tallNow) * smoothstep(0, last, shore);
+    const strength = fades * Math.min(Math.max(1 - wide / (across * spacing), 0), most);
+    if (!(strength > 0)) return 0;
+    // Where they lie closest, the flat middle of v exp(-v^4), its |v| under 0.6, gathered.
+    const reach = (either * wide) / (0.6 * (1 - strength));
+    const v = ((here.phase > 0.5 ? here.phase - 1 : here.phase) + ahead * front) / k / reach;
+    if (!(Math.abs(v) < 2)) return 0;
+    return -strength * reach * v * Math.exp(-(v ** 4));
+  }
+  // How far out to sea (m) the top of the crest nearest the water bore() told (`here`) lies.
+  const topOf = (here) => (here.perMetre > 0 ? -(here.phase > 0.5 ? here.phase - 1 : here.phase) / here.perMetre : 0);
+
   at.runs = runsAt;
   at.bore = bore;
   at.lens = lens;
+  at.gather = gather;
+  at.topOf = topOf;
   return at;
 }
 

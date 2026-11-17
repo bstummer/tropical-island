@@ -27,6 +27,8 @@ struct Check {
 // The light the waves coming in gather on the floor is told `ahead` m further out, the light going `d` m
 // sideways per their rise per m, as soft as `soft`, held to `peak` (waves.js BORE_LENS).
 const BORE_LENS = vec4f(0.05, 0.06, 0.2, 4.0);
+// How far apart the sea's mesh's vertices are that gather at them (waves.js BORE_GATHER).
+const BORE_GATHER: f32 = 0.25;
 
 @group(1) @binding(0) var<uniform> check: Check;
 @group(1) @binding(1) var uPoints: texture_2d<f32>;
@@ -48,8 +50,14 @@ fn fragmentMain(in: Fullscreen) -> @location(0) vec4f {
     let wash = swashAt(xz, terrainHeight(terrainCove(xz), 0), sea.x, seaShoreAt(xz).xy, 0.0);
     return vec4f(wash.level, wash.cover, wash.foam + wash.line, wash.film);
   }
-  if (check.uMode == 6) {
+  if (check.uMode == 6 || check.uMode == 8) {
     let bore = swashBore(swashPlace(xz, sea.x, seaShoreAt(xz).xy), sea.x, sea.y);
+    if (check.uMode == 8) {
+      let top = xz - normalize(terrainWorld(seaShoreAt(xz).xy) + vec2f(1e-6, 0.0)) * swashTopOf(bore);
+      let seaTop = seaAt(top);
+      let crest = swashBore(swashPlace(top, seaTop.x, seaShoreAt(top).xy), seaTop.x, seaTop.y);
+      return vec4f(swashGather(bore, crest, BORE_GATHER, seaTop.x), 0.0, 0.0, 1.0);
+    }
     return vec4f(bore.height, bore.slope, bore.foam, swashLens(bore, BORE_LENS.x, BORE_LENS.y, BORE_LENS.z, BORE_LENS.w));
   }
   if (check.uMode == 2) {
