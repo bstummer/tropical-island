@@ -693,6 +693,34 @@ fake. An outside review traced each to its cause and left a costed plan, A1 to C
   +0.5%, `beach` +0.9%. `verify` green on 6a869f2. The waves fixture holds the GPU's lens 0.0004 off its twin.
   Shimmer warnings: `side` 0.66% turning and 0.91% moving, against 0.65% and 0.83% before B1. `knee` moving
   is 15.9%, as before.
+- What B1 to B3 left open outside the review's plan, fixed at the user's ask (2026-11-17):
+  - The crest's top zigzagged along the mesh's rows by the eye (`side`). The water's quads, 0.25 m within
+    24 m of the eye, are wider than a steep face (about 0.2 m), so they drew a crest's top and face up to
+    3.5 cm off its shape, more or less as it lay between rows. A mesh four times as fine there drew it
+    straight but cost SwiftShader 18 to 27% where the shore fills the frame: with 4x MSAA each pixel on a
+    triangle's edge runs the water's fragment shader once per triangle, and small quads put most pixels on
+    one (fewer vertices but finer by the eye still cost 14%). Instead the vertex shader gathers the quads'
+    vertices round each wave coming in, within 15 m of the eye (`swash.js gather`, its twin
+    `swashGather`): 3.3 times as close from its face's foot to just past its top, taken from the flat water
+    in front and the crest's long back. Sized and faded at the crest's top, so the vertices round a crest
+    gather alike: told at each vertex they passed each other where a wave steepens as it breaks, or comes
+    up a steep shelf. Tests: a steep crest on the cove drawn within 0.75 cm of its shape (3.5 cm without),
+    and on seeds 1-20 no vertex moved past the next (red with it told at each vertex); the waves fixture
+    holds the GPU's gather to its twin. Side-on the crest's top now runs straight.
+  - The floor's ripples ran in rows like corduroy (`ankle`), from the feet out through the wave's face.
+    Where the waves break and run in they plane the sand: the ripples come in from 0.2 to 0.55 m deep,
+    past where this beach's waves break (`chunks/sea-ripples.wgsl`); seaward their crests are peaked over
+    broad troughs, wander more, and rise and fade along their length. `ankle` shows smooth sand under the
+    net by the feet and a clean glassy face; its brief says so now.
+  - The mirror's cells are a pixel on high (was 2), the pick the user left to the session: the headland's
+    reflection in `beach` and `into-the-sun` steps half as much, and the beige patches of mirrored land
+    side-on shrink.
+  - Cost, SwiftShader's GPU time at 960x540, before and after alternated twice a view. The gather and the
+    ripples: `ankle` -2.4%, `side` -1.0%, `sand` -0.6%, `beach` -5.8%, `into-the-sun` -6.5%, `swash`
+    -2.2%, `air-swash` +0.7%, `knee` +6.3% (the gather's two more reads of the bore at its shore vertices,
+    and its floor's ripples, none planed 0.7 m deep): the planed floor gives back more than they take.
+    With the 1-px cells too: -1.8%, +0.8%, +3.6%, -4.3%, -0.6%, -3.6%, +1.4%, +6.7%, the median as before.
+    Unchecked on a GPU, where the mirror's pass reads four times the cells.
 - The rest of the review's plan (B4 to B7 and C) is open.
 
 Open after leg 2 (an outside review's findings and the user's look, less what was fixed after them):
@@ -702,8 +730,7 @@ Open after leg 2 (an outside review's findings and the user's look, less what wa
   From the beach the reef's white line pulses with the sets and goes dark in a lull, where Stage 6's band
   held it steady (the user's pick then): a pick for 7.8, with how much foam.
 - The shore break: no lip is thrown over: an upright face turns into the roller's foam, which is flat white
-  with no relief up close; the hero's glow is a thin line along each crest. In `ankle` horizontal
-  stripes run through the water behind the bore: the floor's wave ripples (found after A8).
+  with no relief up close; the hero's glow is a thin line along each crest.
 - `knee`: the water's colour is still Stage 6's; the surf zone's haze over it is gone (A6).
 - The camera-move shimmer can't follow refraction: it reads the floor's net, which moves with its apparent
   depth through the water, as shimmer (`knee` 37%, `swimmer` 10%); as the camera turns, 0.02%.
@@ -1140,6 +1167,9 @@ Made with the user. Don't reopen them unless the user does.
 - **The capture budget is 10 s a SwiftShader frame**, raised with the user's leave as the shadows, the
   sea and the beach's waves came (2.5, 4, 6, 8, then 10 s), as long as everything stays as cheap as it can.
   (2026-10-30, 10 s 2026-11-13)
+- **The mirror's cells are a pixel on high** (`waterMirror` 1), the pick the user left to the session: the
+  headland's reflection steps half as much, for about 1% of the frame at the median, which the planed
+  floor's ripples gave back. Two pixels was the alternative. (2026-11-17)
 - **CI checks, it doesn't measure**: it runs `verify` with `--no-measurements`, every check that can fail
   but none of the views' measurements, which only warn; sessions measure in their own `verify`. Splitting
   the captures across parallel jobs and publishing before the screenshots finish were the alternatives.
