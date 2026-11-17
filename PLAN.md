@@ -728,7 +728,56 @@ fake. An outside review traced each to its cause and left a costed plan, A1 to C
     `verify` green on fd3c3dc (e7cb26a's code): the waves fixture holds the GPU's gather 3.4 mm off its
     twin (limit 5); the mirror's check at 1, 3 and 4 pixels a cell. Shimmer warnings: `side` 0.59% turning
     and 0.74% moving (were 0.66% and 0.91%), `knee` 15.9% moving, as before.
-- The rest of the review's plan (B4 to B7 and C) is open.
+- B4 to B8, the rest of the review's batch B (2026-11-17, at the user's ask):
+  - B4, the caustics' lattice: eight plane waves weave a net that repeats, and the sine wander that carried
+    them was itself periodic. The ripples now come in groups: a slow noise, patches `wander` 0.5 m across,
+    carries them up to 0.1 m to and fro and makes each `groups` 0.7 stronger or weaker per unit, each its
+    own way (`water/caustics.js`, its twin), so the net's cells change size and grain from place to place.
+    Tried and dropped: varying the amplitudes alone (the woven grid stayed), six ripples (a weave again).
+    Ankle-deep a patch of the net moved 0.3 to 1.2 m matched itself by 0.35 to 0.41 (correlation); now at
+    most 0.26 (test under 0.3, red without the groups at 0.93). The two noises come from one hash per
+    lattice corner (`seededNoise2`, its JS twin bit for bit in its lattice), a third of two seededNoise's.
+  - B5, the film's patches: as it drains it lies in the hollows of the sand's rumples, and the grains' a
+    third the size of their finest, and drains off their crests first: a logistic law of the heights a
+    pixel holds (`chunks/rumples.wgsl rumplesFilmOver`, `filmCovers` its JS twin, held to it by the waves
+    fixture) gives how much of it the film covers, `film` of it on average and exactly `film` where a pixel
+    holds none, the same in the water and the terrain. `sand`'s wet band breaks into glassy patches of the
+    sun's glare over matte wet sand where it was an even veil; `swash`'s into darker patches of mirrored sky
+    on the gold; from 25 m (`air-swash`) as before. Tests: its mean within 0.03 of the film, glassy or bare
+    and not a veil where a pixel holds the sand, crests drier (red with the sign flipped or the law's scale
+    halved). It takes the rumples' own noise reads for their heights (`rumplesAt`), adding only the grains'.
+  - B6, the whitewater's motion and light: a break's foam drifted in at 0.69 m/s through a white band moving
+    at 1.6 to 2.4, so its pattern slid backwards through it. Parcels of it now ride on at `rides` 0.8 of the
+    wave's speed as they break off its crest and slow over the roller's time to that drift (`foamAlong`, its
+    twin; Newton's steps find how long ago what lies there left the crest, within 0.2 mm), so the roller's
+    foam bunches into streaks along the crest and moves in with it. The review's own formula, a function of
+    the time since the crest passed, moved it at about half the wave's speed. Test: its pattern moves in at
+    0.71 to 0.85 of the wave's speed in the roller (0.35 to 0.56 before, red), never back out. The roller is
+    lit as a cylinder along the crest (`swashRoller`): its top in the sun, its foot facing the shore in a
+    blue-grey shade, foam's light wrapping round into it, only where its foam is thick. First tried with the
+    foot facing down and in deep shade: black specks at a face's toe and a black line along the white's front.
+  - B7, a thin uprush: its sheet thickens behind its tip as the square of how far (Shen and Meyer), the
+    wedge `edge` of a run-up long as it sets off and longer as it runs, so it thins as it runs. 0.3 m behind
+    its tip it is under 4 mm deep (test; 14.6 mm before, red), and thinner further up the beach.
+  - B8, the crest's dark line from the beach: confirmed with a debug build, not the review's guess (the
+    shading normal never faced away there): B1's see-through near the lip showed the sky just over the
+    horizon, but from an eye above the crest's top the ray goes on down to the water beyond, which looks as
+    this water does. Now it does so; the sky stays for an eye below the crest, and the sun's glow through
+    the lip for both. From the water's edge (the review's camera, 11:00) the crest's top reads (141, 181,
+    168) against (143, 183, 175) round it, where it was (132, 147, 155); in `ankle` the line is gone.
+  - Cost, SwiftShader's GPU time at 960x540, the build before and after alternated twice a view: `beach`
+    -0.7%, `into-the-sun` +1.0%, `sand` +1.3%, `swash` +1.3%, `ankle` +1.9%, `side` -0.1%, `knee` +0.4%,
+    `air-swash` +2.6%: the median view about 1% up, within what two runs of one build differ by (round to
+    round 5%). For the caustics' groups and the film's patches, paid back by the paired noise and by the
+    film taking the rumples' reads (`sand` +6.1% and +3.5% in two runs before that, +1.3% after). `ankle`
+    measured +7.3% over four rounds once and -2.4% over three another time: pooled +5% before the payback.
+    Unchecked on a GPU.
+  - Seen in SwiftShader captures against before: `knee` cells varying in size and grain where they lay in
+    rows of diagonal bands; `sand` and `swash` as above; `side` a soft grey foot along the white band's
+    front and its foam in streaks along the crest; the dark line gone along every crest from the beach. Not
+    seen: motion at frame rate, which is what B6 is for.
+  - `verify` on 39150cf: running.
+- C1 and C2 (a face that curls over; waves carried out to sea) are open.
 
 Open after leg 2 (an outside review's findings and the user's look, less what was fixed after them):
 - The reef from 30 m: where a wave breaks along the whole crest at once its whitewater is a band, heaped
@@ -736,8 +785,8 @@ Open after leg 2 (an outside review's findings and the user's look, less what wa
   a telephoto (`reef`) the white stood in flat wedges between its lumps before they came, unchecked since.
   From the beach the reef's white line pulses with the sets and goes dark in a lull, where Stage 6's band
   held it steady (the user's pick then): a pick for 7.8, with how much foam.
-- The shore break: no lip is thrown over: an upright face turns into the roller's foam, which is flat white
-  with no relief up close; the hero's glow is a thin line along each crest.
+- The shore break: no lip is thrown over (C1): an upright face turns into the roller's foam, lit as a
+  cylinder now but with no relief up close; the hero's glow is a thin line along each crest.
 - `knee`: the water's colour is still Stage 6's; the surf zone's haze over it is gone (A6).
 - The camera-move shimmer can't follow refraction: it reads the floor's net, which moves with its apparent
   depth through the water, as shimmer (`knee` 37%, `swimmer` 10%); as the camera turns, 0.02%.
