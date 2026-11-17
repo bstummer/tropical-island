@@ -28,7 +28,7 @@ export const quality = {
   presets: {
     low: { renderScale: 0.67, maxPixelRatio: 1, terrainDetail: 18, terrainRatio: 2, groundDetail: 0.6, surfaceTexture: 512, rockPixels: 3, shadeTexel: 4, shadowMaps: { size: 1024, splits: [10, 50] }, waterMirror: 4, waterSize: 64, waterDetail: 18, waterGrid: 16 },
     medium: { renderScale: 0.85, maxPixelRatio: 1.5, terrainDetail: 14.4, terrainRatio: 2.5, groundDetail: 0.8, surfaceTexture: 1024, rockPixels: 2.5, shadeTexel: 2, shadowMaps: { size: 1536, splits: [6, 24, 80] }, waterMirror: 3, waterSize: 128, waterDetail: 18, waterGrid: 16 },
-    high: { renderScale: 1, maxPixelRatio: 2, terrainDetail: 20.5, terrainRatio: 2.5, groundDetail: 1, surfaceTexture: 1024, rockPixels: 2, shadeTexel: 2, shadowMaps: { size: 2048, splits: [5, 16, 45, 100] }, waterMirror: 2, waterSize: 128, waterDetail: 24, waterGrid: 32 },
+    high: { renderScale: 1, maxPixelRatio: 2, terrainDetail: 20.5, terrainRatio: 2.5, groundDetail: 1, surfaceTexture: 1024, rockPixels: 2, shadeTexel: 2, shadowMaps: { size: 2048, splits: [5, 16, 45, 100] }, waterMirror: 1, waterSize: 128, waterDetail: 24, waterGrid: 32 },
   },
 };
 
