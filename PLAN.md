@@ -721,6 +721,13 @@ fake. An outside review traced each to its cause and left a costed plan, A1 to C
     and its floor's ripples, none planed 0.7 m deep): the planed floor gives back more than they take.
     With the 1-px cells too: -1.8%, +0.8%, +3.6%, -4.3%, -0.6%, -3.6%, +1.4%, +6.7%, the median as before.
     Unchecked on a GPU, where the mirror's pass reads four times the cells.
+  - Seen in SwiftShader frames against before: `side` the crest's top straight; `ankle` smooth sand by
+    the feet and no rows through the face; `into-the-sun` the fine diagonal hatching in the near water
+    beside the sun's path gone (the review's: the floor's ripples seen at a grazing angle, now planed); the
+    headland's reflection in finer steps, still steps, with two single bright pixels in it in `beach`.
+    `verify` green on fd3c3dc (e7cb26a's code): the waves fixture holds the GPU's gather 3.4 mm off its
+    twin (limit 5); the mirror's check at 1, 3 and 4 pixels a cell. Shimmer warnings: `side` 0.59% turning
+    and 0.74% moving (were 0.66% and 0.91%), `knee` 15.9% moving, as before.
 - The rest of the review's plan (B4 to B7 and C) is open.
 
 Open after leg 2 (an outside review's findings and the user's look, less what was fixed after them):
