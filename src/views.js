@@ -143,7 +143,7 @@ const all = [
     pitch: -25,
     fov: 60,
     timeOfDay: 15,
-    brief: "Mid-afternoon standing ankle-deep at the edge of the lagoon, looking down and out at the next wave coming in: clear water over rippled sand netted with sunlight, a wave standing up and breaking a few metres out, its foam running in past your feet, the sun high ahead on the right.",
+    brief: "Mid-afternoon standing ankle-deep at the edge of the lagoon, looking down and out at the next wave coming in: clear water over sand the waves have planed smooth, netted with sunlight, its ripples coming in past where they break, a wave standing up and breaking a few metres out, its foam running in past your feet, the sun high ahead on the right.",
     crops: { feet: [0.5, 0.85] },
     run: { seconds: 12, step: 0.75, line: [[0.5, 1], [0.5, 0.3]] },
   },

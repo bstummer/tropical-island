@@ -23,12 +23,12 @@ export const quality = {
   // The sea (water/): waterMirror, pixels a cell of what it mirrors of the land;
   // waterSize, texels across each cascade of its waves;
   // waterDetail and waterGrid, its mesh as terrainDetail has the terrain's, each level reaching twice as far
-  // as the last, a node waterGrid quads across, 8 m across at its finest
-  // (config.water.mesh).
+  // as the last, a node waterGrid quads across, 2 m across at its finest
+  // (config.water.mesh): a wave's face standing up by the eye is about 0.2 m wide.
   presets: {
-    low: { renderScale: 0.67, maxPixelRatio: 1, terrainDetail: 18, terrainRatio: 2, groundDetail: 0.6, surfaceTexture: 512, rockPixels: 3, shadeTexel: 4, shadowMaps: { size: 1024, splits: [10, 50] }, waterMirror: 4, waterSize: 64, waterDetail: 18, waterGrid: 16 },
-    medium: { renderScale: 0.85, maxPixelRatio: 1.5, terrainDetail: 14.4, terrainRatio: 2.5, groundDetail: 0.8, surfaceTexture: 1024, rockPixels: 2.5, shadeTexel: 2, shadowMaps: { size: 1536, splits: [6, 24, 80] }, waterMirror: 3, waterSize: 128, waterDetail: 18, waterGrid: 16 },
-    high: { renderScale: 1, maxPixelRatio: 2, terrainDetail: 20.5, terrainRatio: 2.5, groundDetail: 1, surfaceTexture: 1024, rockPixels: 2, shadeTexel: 2, shadowMaps: { size: 2048, splits: [5, 16, 45, 100] }, waterMirror: 2, waterSize: 128, waterDetail: 24, waterGrid: 32 },
+    low: { renderScale: 0.67, maxPixelRatio: 1, terrainDetail: 18, terrainRatio: 2, groundDetail: 0.6, surfaceTexture: 512, rockPixels: 3, shadeTexel: 4, shadowMaps: { size: 1024, splits: [10, 50] }, waterMirror: 4, waterSize: 64, waterDetail: 4.5, waterGrid: 16 },
+    medium: { renderScale: 0.85, maxPixelRatio: 1.5, terrainDetail: 14.4, terrainRatio: 2.5, groundDetail: 0.8, surfaceTexture: 1024, rockPixels: 2.5, shadeTexel: 2, shadowMaps: { size: 1536, splits: [6, 24, 80] }, waterMirror: 3, waterSize: 128, waterDetail: 4.5, waterGrid: 16 },
+    high: { renderScale: 1, maxPixelRatio: 2, terrainDetail: 20.5, terrainRatio: 2.5, groundDetail: 1, surfaceTexture: 1024, rockPixels: 2, shadeTexel: 2, shadowMaps: { size: 2048, splits: [5, 16, 45, 100] }, waterMirror: 2, waterSize: 128, waterDetail: 6, waterGrid: 32 },
   },
 };
 
@@ -733,10 +733,13 @@ export const water = {
   // across, reaching `reach` m from side to side, centred on the world's origin: past
   // the far plane (camera.far) from anywhere the island can be seen from, and so past the
   // horizon from any eye under about 800 m, where the far plane cuts it first;
-  // its nodes morph over their band's last `morph`; `tallest`: m, the most the
+  // its nodes morph over their band's last `morph`; as the levels reach twice as far
+  // each, their quads span the same angle from the eye, which a leaf this small keeps
+  // down to a metre or two from it: a wave's crest by the eye, sharper than the mesh, would
+  // zigzag along the quads' rows; `tallest`: m, the most the
   // waves move a point any way, for culling; `over`: m over the surface as JS sums it
   // a point has to stand to be surely over the surface drawn (past config.capture.waves.inJs, how far that may lie from JS's sum).
-  mesh: { leaf: 8, reach: 240000, morph: 0.3, tallest: 6, over: 0.3 },
+  mesh: { leaf: 2, reach: 240000, morph: 0.3, tallest: 6, over: 0.3 },
   // The variance per axis of the slopes of waves too small for any cascade,
   // which a mirror of the sun always spreads by. `glitterCeiling`: the most the
   // sun's light in the water may reach once exposed, so it keeps its colour.

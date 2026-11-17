@@ -41,7 +41,7 @@ const WATER_LUMINANCE = vec3f(0.2126, 0.7152, 0.0722);
 struct Water {
   uPatches: vec3f, // 1 / each cascade's patch, m (water/spectrum.js)
   uFineSlopes: f32, // the variance of the slopes of waves too small for any cascade, per axis
-  uMorph: array<vec4f, 16>, // per level, .xy: the distances over which it morphs into the next
+  uMorph: array<vec4f, 18>, // per level, .xy: the distances over which it morphs into the next
   uUnresolved: array<vec4f, 6>, // per cascade, two of them: the variance its mip levels 0 to 7 have lost, both axes together
   uWaveTexels: f32, // texels across a patch of the waves' texture
   uSunCeiling: f32, // the most the sun's light in the water may reach once exposed

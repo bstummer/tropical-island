@@ -605,6 +605,56 @@ test('a wave coming in leans in: its face steepens as it nears where it breaks, 
   assert.ok(steepest > 1, `the steepest face rises ${steepest.toFixed(2)} per m`);
 });
 
+// How far from a wave's profile along the line out the sea's mesh draws it, for quads `spacing` m
+// apart, at most over its top and face, wherever a row of its vertices falls along that line.
+function drawnOff(beach, [x, z], t, spacing) {
+  const b = {};
+  const h = (dz) => boreAt(beach, x, z + dz, t, b).height;
+  const [from, to, step] = [-0.4, 0.4, 0.002];
+  const profile = [];
+  for (let dz = from; dz <= to; dz += step) profile.push(h(dz));
+  let worst = 0;
+  for (let offset = 0; offset < spacing; offset += spacing / 16) {
+    for (let v = from - offset; v < to; v += spacing) {
+      const [h0, h1] = [h(v), h(v + spacing)];
+      for (let i = Math.max(0, Math.ceil((v - from) / step)); i < profile.length && from + i * step <= v + spacing; i++) {
+        const f = (from + i * step - v) / spacing;
+        worst = Math.max(worst, Math.abs(profile[i] - (h0 + f * (h1 - h0))));
+      }
+    }
+  }
+  return worst;
+}
+
+test('by the eye the sea\'s mesh holds a wave\'s face standing up: it draws a steep crest within half a centimetre of its shape wherever its vertices fall, so its top runs straight along the crest', () => {
+  const beach = gameBeach();
+  const preset = config.quality.presets[config.quality.default];
+  const spacing = config.water.mesh.leaf / preset.waterGrid;
+  const b = {};
+  let [judged, worst] = [0, 0];
+  for (const point of alongCove(beach).filter((_, i) => i % 2 === 0)) {
+    for (const [x, z] of outFrom(beach, point, 0.5).slice(0, 6)) {
+      // The moment the tallest crest over a minute stands over this point.
+      let [when, tallest] = [null, 0.05];
+      for (let t = 100; t < 160; t += 0.05) {
+        boreAt(beach, x, z, t, b);
+        if (b.height > tallest) [when, tallest] = [t, b.height];
+      }
+      if (when === null) continue;
+      // Only a face steeper than 45 degrees by it: a wave about to break.
+      let steepest = 0;
+      for (let dz = -0.5; dz < 0.5; dz += 0.01) steepest = Math.max(steepest, boreAt(beach, x, z + dz, when, b).slope);
+      if (steepest < 1) continue;
+      judged++;
+      worst = Math.max(worst, drawnOff(beach, [x, z], when, spacing));
+    }
+  }
+  assert.ok(judged >= 10, `${judged} steep crests judged`);
+  // Half a centimetre: two or three pixels from a crouch a couple of metres off. As a crest's
+  // place along it moves between rows of vertices, its top and face zigzag by as much.
+  assert.ok(worst < 0.005, `on the ${config.quality.default} preset's finest quads (${spacing} m) a crest drawn ${(100 * worst).toFixed(1)} cm off its shape`);
+});
+
 test('no wave comes in to break over shallows far from any beach, as over a reef\'s flat', () => {
   const beach = gameBeach();
   const { map, island } = beach;

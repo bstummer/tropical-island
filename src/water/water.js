@@ -33,7 +33,7 @@ import { causticUniforms, createCaustics } from './caustics.js';
 import { createSpray } from './spray.js';
 
 const MAX_NODES = 2048;
-const LOD_MAX = 16; // water.wgsl's arrays hold this many levels
+const LOD_MAX = 18; // water.wgsl's arrays hold this many levels
 const SURF_WANDERS = 5; // water-surf.wgsl's uSurfWander
 
 // The uniforms of water-optics.wgsl, from config.water.
