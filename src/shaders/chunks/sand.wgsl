@@ -39,6 +39,7 @@ struct Sand {
   f0: f32,
   spread: f32, // what rumples too small for the pixel add to its roughness (as GGX's alpha squared)
   rumple: vec2f, // the slope of the rumples the pixel holds, which tilt what the sand mirrors
+  rumpled: vec3f, // their heights, as the film over them takes them (Rumples' height and unheld), and 1 where they were read
 }
 
 // The light sand mirrors towards the eye, beyond its diffuse share: a little
@@ -189,9 +190,10 @@ fn sand(position: vec3f, aboveSea: f32, n: vec3f, w: Wet, dry: vec3f, wet: vec3f
   // Wet sand isn't flat: the backwash leaves it rumpled (chunks/rumples.wgsl).
   let rumpled = sandRumpled(w.wetness);
   if (rumpled * near > 0.0) {
-    let r = rumples(xz, footprint, sandParams.uSandRumples.x, sandParams.uSandRumples.y);
-    s.rumple = rumpled * near * r.xy;
-    s.spread = rumpled * mix(rumplesSpread(sandParams.uSandRumples.y), r.z, near);
+    let r = rumplesAt(xz, footprint, sandParams.uSandRumples.x, sandParams.uSandRumples.y);
+    s.rumple = rumpled * near * r.slope;
+    s.spread = rumpled * mix(rumplesSpread(sandParams.uSandRumples.y), r.lost, near);
+    s.rumpled = vec3f(r.height, r.unheld, 1.0);
   }
   return s;
 }

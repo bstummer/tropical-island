@@ -388,10 +388,13 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
     reach.z = max(reach.z, beach * mix(water.uShoreRipples.y, water.uShoreRipples.x, smoothstep(0.0, 0.01, wash.cover)));
   }
   // How much of this is water: the sea's, the sheet's and the film's, and none of the bare beach.
-  // The film lies in the sand's hollows, as much as the terrain's sheen doesn't show (terrain.wgsl).
+  // The film lies in the hollows of the sand's rumples, as much as the terrain's sheen doesn't show
+  // (terrain.wgsl), and tilts with them.
   var covers = wash.film;
+  var sandUnder = Rumples(vec2f(0.0), 0.0, 0.0, 0.0);
   if (WATER_SHORE && beach > 0.0) {
-    covers = rumplesFilm(wash.film, seen.xz, sqrt(longest), water.uShoreRumples.x);
+    sandUnder = rumplesAt(seen.xz, sqrt(longest), water.uShoreRumples.x, water.uShoreRumples.y);
+    covers = rumplesFilmOver(wash.film, sandUnder, seen.xz, sqrt(longest), water.uShoreRumples.x);
   }
   let wet = mix(1.0, covers, beach);
   // The gusts fade out far off, where at a grazing angle their patches read as hills of water.
@@ -417,7 +420,7 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
   var rumpled = vec3f(0.0);
   if (WATER_SHORE && beach > 0.0) {
     let lies = beach * covers * (1.0 - smoothstep(0.0, 0.01, wash.cover));
-    rumpled = lies * rumples(seen.xz, sqrt(longest), water.uShoreRumples.x, water.uShoreRumples.y);
+    rumpled = lies * vec3f(sandUnder.slope, sandUnder.lost);
     slopes.x += rumpled.x;
     slopes.y += rumpled.y;
   }
