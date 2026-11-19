@@ -381,9 +381,9 @@ export function create(ctx) {
         const size = node.spacing * (node.quarter ? quality.waterGrid / 2 : quality.waterGrid);
         const [x, z] = [node.x + size / 2, node.z + size / 2];
         const [a, o] = island.toCove(x, z);
-        const reach = size * Math.SQRT1_2 + map.texel;
+        const reach = size * Math.SQRT1_2;
         const { shore } = map.at(a, o, here);
-        node.shore = Math.abs(shore) < reach + settings.swash.reach;
+        node.shore = Math.abs(shore) < reach + map.texel + settings.swash.reach;
         node.near = Math.hypot(x - cam[0], z - cam[2]) < reach + settings.caustics.reach;
         node.surf = nodeReef(node.x, node.z, size);
       }

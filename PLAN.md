@@ -798,10 +798,9 @@ fake. An outside review traced each to its cause and left a costed plan, A1 to C
     that), glints 3 / 4, the beach's sheet and film 3, caustics 2 / 0, the gather 2, the rest 1% or under
     each. The water's pass is 75 / 82% of the frame there.
   - The reef's surf leaves nothing past 7 times the longer of the lengths it dies over and its foam does
-    inside its crest (210 m, a thousandth of it): it fades out over the last 30% of that and its code
-    stops there (`water-surf.wgsl SURF_GONE`, its twin `surf.js`). What the foam's lace made of so little
-    stood as faint specks over the inner lagoon, to 5 to 8 levels (`air-swash`, `knee`); cut off, they
-    ended along a straight edge. The pieces of the sea it can't reach leave it out (`WATER_SURF`, a variant of
+    inside its crest (210 m, a thousandth of it): it fades out over the last 30% of that, so the foam's
+    lace has no edge there, and its code stops there (`water-surf.wgsl SURF_GONE`, its twin `surf.js`).
+    The pieces of the sea it can't reach leave it out (`WATER_SURF`, a variant of
     each of the four: 56 pipelines). They are picked by a count of the sea map's cells it reaches, summed
     over the map (`sea-map.js reefWithin`), as the reef's distance jumps by up to 24 m a metre in places.
     Tests: just short of where it stops, under a hundred-thousandth of its height and foam on the crest
@@ -818,17 +817,21 @@ fake. An outside review traced each to its cause and left a costed plan, A1 to C
   - Cost, SwiftShader's GPU time at 1600×900, HEAD and the change alternated twice: `into-the-sun` water
     -3.4%, terrain -14%, frame -5.9%; `ankle` -7.5%, -6%, -7.0%; `sand` -9.9%, -28%, -15.8%. That puts
     them about 2 to 3% under the review's commit on SwiftShader, where the rule asks some 20% under it.
-    The captures' frames (1600×900, wall time): `beach` 8.5 to 8.1 s, `into-the-sun` 9.5 to 9.1, `sand`
-    6.8 to 6.1, `swash` 8.8 to 8.0, `ankle` 9.5 to 9.2, `side` 9.9 to 9.1, `knee` 4.4 to 4.0,
-    `air-swash` 6.6 to 6.0. Unmeasured on a GPU, which skips the surf where the swell doesn't reach
+    The captures' frames (1600×900, wall time): `beach` 8.5 to 7.6 s, `into-the-sun` 9.5 to 8.9, `sand`
+    6.8 to 5.9, `swash` 8.8 to 7.7, `ankle` 9.5 to 9.1, `side` 9.9 to 9.1, `knee` 4.4 to 3.9,
+    `air-swash` 6.6 to 5.8. Unmeasured on a GPU, which skips the surf where the swell doesn't reach
     anyway: likely less than that.
   - Seen against the B4 to B8 captures: no view looks different. At most 0.01% of a view's pixels differ
-    by more than 2 levels (`side`: the mirrored land's steps where a pixel took one ray for three), but
-    for the specks' patch in `air-swash` (0.4%, to 8 levels).
+    by more than 2 levels (`side`: the mirrored land's steps where a pixel took one ray for three). A first
+    try widened the pieces that draw the caustics by 4 m, which showed as a patch of their net in
+    `air-swash` ending at a piece's edge, as it always does at 25 m; put back.
   - What could win the rest, each changing the look, the user's pick: the mirror's cells back to 2
     pixels on high (cost +6% in `into-the-sun` on SwiftShader when made 1); the floor's ripples and grain
     only within a few metres of the eye, and the caustics' net within 12 m rather than 25 (the review's
     estimates: 0.5 to 1.5 ms and 0.6 to 0.9 on the GPU); two rays through the waves where three are taken.
+  - `verify` green on the change: the waves fixture holds the surf to its twin as before (0.0003 m, the
+    floor's light 0.0020). Shimmer warnings as before: `side` 0.59% turning and 0.64% moving, `knee`
+    16.3% moving.
 - C1 and C2 (a face that curls over; waves carried out to sea) are open: C1 waits on the user's benchmark.
 
 Open after leg 2 (an outside review's findings and the user's look, less what was fixed after them):
