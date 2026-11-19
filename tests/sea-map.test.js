@@ -9,9 +9,9 @@ import { createRandom } from '../src/core/random.js';
 import { createIsland } from '../src/world/island.js';
 import { buildHeightmap, layoutLevel } from '../src/world/heightmap.js';
 import { fromHalfFloat, toHalfFloatNearest } from '../src/maths/index.js';
-import { buildSeaMap, crestSpots, seaMapLevels, waveSpeed } from '../src/water/sea-map.js';
+import { buildSeaMap, crestSpots, reefWithin, seaMapLevels, waveSpeed } from '../src/water/sea-map.js';
 import { createSurface } from '../src/water/surface.js';
-import { createSurf } from '../src/water/surf.js';
+import { createSurf, surfGone } from '../src/water/surf.js';
 
 const side = config.world.island.cove.headlandSide;
 const SEEDS = Array.from({ length: 20 }, (_, i) => i + 1);
@@ -332,6 +332,47 @@ test('a wave of the surf runs in: its foam\'s front lies further inside the cres
     assert.ok(most > 0.1 && edge < 0.01, `seaward of the crest at most ${most} foam, ${edge} 0.1 m short of ${settings.ahead} m out`);
   }
 });
+
+test('deep inside the reef the surf leaves the lagoon\'s water alone: it fades out to where it stops, with no edge there', () => {
+  const settings = config.water.surf;
+  const surf = createSurf(settings, gameWay);
+  const here = (reef) => ({ swell: 1, depth: 2, breaks: 1, reef, late: 0, speed: 4 });
+  // How high it stands and how much foam it leaves at most over a set.
+  const most = (reef) => {
+    let [height, foam] = [0, 0];
+    for (let t = 0; t < SET * settings.period; t += settings.period / 16) {
+      const s = surf(here(reef), 0, 0, t);
+      [height, foam] = [Math.max(height, Math.abs(s.height)), Math.max(foam, s.foam)];
+    }
+    return [height, foam];
+  };
+  const [crest, crestFoam] = most(0);
+  let stops = -50;
+  while (stops > -2000 && most(stops).some((v) => v > 0)) stops -= 2;
+  const [height, foam] = most(stops + 2);
+  assert.ok(stops > -2000, 'it runs on into the lagoon');
+  assert.ok(height < 1e-5 * crest && foam < 1e-5 * crestFoam, `${-stops} m inside, ${height} m high (${crest} on the crest) and ${foam} foam (${crestFoam}) just short of where it stops`);
+});
+
+test('the pieces of the sea that leave out the reef\'s surf lie only where it leaves nothing, and inside the lagoon they do', () => eachSea(({ seed, name, map }) => {
+  const settings = config.water.surf;
+  const [from, to] = [-surfGone(settings), settings.fades[1]];
+  const reaches = reefWithin(map, from, to, config.water.map.open.reef);
+  const r = createRandom(seed)('test/sea-map/surf-pieces');
+  const span = map.samples * map.texel;
+  let without = 0;
+  for (let n = 0; n < 1500; n++) {
+    const size = 2 ** r.range(1, 10);
+    const [a0, o0] = [map.origin[0] + r.range(-0.1, 1.1) * span, map.origin[1] + r.range(-0.1, 1.1) * span];
+    if (reaches(a0, o0, a0 + size, o0 + size)) continue;
+    without++;
+    for (let k = 0; k < 20; k++) {
+      const { reef } = map.at(a0 + r.range(0, size), o0 + r.range(0, size));
+      assert.ok(reef <= from || reef >= to, `${name}: the surf reaches ${reef.toFixed(1)} m from the reef's crest in a piece ${size.toFixed(1)} m across that leaves it out`);
+    }
+  }
+  assert.ok(without > 150, `${name}: ${without} pieces of 1500 leave out the surf`);
+}));
 
 test('foam fades out where the swell runs out, and the wave with it, with no edge where they stop', () => {
   const settings = config.water.surf;

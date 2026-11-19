@@ -28,6 +28,16 @@ const LUMP_SEED = 7867;
 // from 0 either way, near enough: heaped by it, it stands no taller than `stands`.
 const HEAP_SEED = 7877;
 const NOISE_MOST = 1.4;
+// How far inside the reef's crest, in the longer of the lengths it dies over (`fall`) and its foam
+// does (`run`), it leaves nothing: a thousandth of it is left, gone over the last FADES of that, so
+// what the foam's lace makes of so little has no edge.
+const GONE = 7;
+const FADES = 0.7;
+
+// How far (m) inside the reef's crest the surf leaves nothing, from config.water.surf.
+export function surfGone({ fall, run }) {
+  return GONE * Math.max(fall, run);
+}
 
 // A wave's share of a full one, in its set and along its length (m across the way it
 // runs). All the periods divide the waves' loop (config.water.waves), so the sets go on
@@ -47,6 +57,7 @@ export function createSurf(settings, [wayX, wayZ]) {
   const { period, height, shoals, limit, dips, fades, back, front: open, fall, ahead, run, always, wave, trail, toe, stands, lumps: [lumpy, lumpSize], heaps: [heapy, heapSize], lean: [leans, narrows], loop } = settings;
   const deep = waveSpeed(Infinity, period);
   const waves = Math.round(loop / period);
+  const gone = surfGone(settings);
   // How much more or less of wave n breaks at x, z: lumps along its crest, each wave its own.
   const lumps = (n, x, z) => 1 + lumpy * seededNoise(x / lumpSize, z / lumpSize, LUMP_SEED + n - waves * Math.floor(n / waves));
   // How tall its whitewater stands at x, z, per `stands`: heaped up in places along the crest.
@@ -56,7 +67,8 @@ export function createSurf(settings, [wayX, wayZ]) {
     out.height = 0;
     out.slope = 0;
     out.lean = 0;
-    if (swell <= 0 || reef >= fades[1]) return out;
+    if (swell <= 0 || reef >= fades[1] || reef <= -gone) return out;
+    const left = 1 - edge(FADES * gone, gone, -reef);
     // How far along in its wave this place is. Its front wanders a few metres, at sizes from hundreds of metres to a few.
     let wander = 0;
     for (const [m, kx, kz] of settings.wander) wander += m * Math.sin(x * kx + z * kz);
@@ -74,7 +86,7 @@ export function createSurf(settings, [wayX, wayZ]) {
     const nowTall = Math.min(rises * Math.min(now, held), most);
     const nextTall = Math.min(rises * Math.min(next, held), most);
     const mean = nowTall + (nextTall - nowTall) * f;
-    const dies = Math.exp(Math.min(reef, 0) / fall) * (1 - edge(fades[0], fades[1], reef));
+    const dies = left * Math.exp(Math.min(reef, 0) / fall) * (1 - edge(fades[0], fades[1], reef));
     // A long round wave at sea; by the reef a peak with a steep face, narrowing as it peaks, and
     // flat water ahead of it; round again as it dies on the flat.
     const peak = edge(0.15, 0.6, 1 - speed / deep) * Math.exp(Math.min(reef, 0) / fall);
@@ -97,7 +109,7 @@ export function createSurf(settings, [wayX, wayZ]) {
     const last = Math.exp(-trail);
     const fading = (Math.exp(-f * trail) - last) / (1 - last);
     const coming = Math.exp(-(((1 - f) / toe) ** 2));
-    const breaking = breaks * edge(ahead, 0, reef) * edge(0, 0.05, swell) * Math.exp(Math.min(reef, 0) / run);
+    const breaking = left * breaks * edge(ahead, 0, reef) * edge(0, 0.05, swell) * Math.exp(Math.min(reef, 0) / run);
     const [behindLost, aheadLost] = breaking > 0 ? [Math.max(now - swell, 0) * lumps(n, x, z), Math.max(next - swell, 0) * lumps(n + 1, x, z)] : [0, 0];
     const lost = behindLost * fading + aheadLost * coming;
     out.foam = breaking * (always + wave * lost);

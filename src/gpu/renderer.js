@@ -54,6 +54,7 @@ export function createRenderer(gpu) {
   const camera = {
     projectionMatrix: { value: new Matrix4() },
     viewMatrix: { value: new Matrix4() },
+    viewProjection: { value: new Matrix4() },
     cameraPosition: { value: new Vector3() },
   };
   let globals = { ...camera };
@@ -359,6 +360,7 @@ export function createRenderer(gpu) {
   function setCamera(cam, eye) {
     camera.projectionMatrix.value.copy(cam.projectionMatrix);
     camera.viewMatrix.value.copy(cam.matrixWorldInverse);
+    camera.viewProjection.value.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse);
     if (eye) camera.cameraPosition.value.copy(eye);
     else camera.cameraPosition.value.setFromMatrixPosition(cam.matrixWorld);
   }

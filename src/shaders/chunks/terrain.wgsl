@@ -110,28 +110,21 @@ fn terrainGround(ao: vec2f, dx: vec2f, dy: vec2f, info: ptr<function, vec4f>, co
   if (frame.uTerrainReady < 0.5) {
     return;
   }
+  // The fine level where it has its say, the coarse one (the last of TERRAIN_LEVELS) the rest:
+  // written out, as a loop over the levels picking each one's texture would read both at each
+  // level on hardware that runs both sides of a branch (SwiftShader).
   let footprint = sqrt(max(dot(dx, dx), dot(dy, dy)));
-  var left = 1.0; // the share still to fill, finest level first
-  for (var k = 0; k < TERRAIN_LEVELS; k++) {
-    var w = 1.0;
-    if (k != TERRAIN_LEVELS - 1) {
-      w = terrainWeight(k, ao);
-    }
-    if (w <= 0.0) {
-      continue;
-    }
-    let uv = (terrainGrid(k, ao) + 0.5) / frame.uTerrainLevels[k].w;
-    let lod = log2(max(footprint / frame.uTerrainLevels[k].z, 1e-6));
-    if (k == 0) {
-      *info += left * w * textureSampleLevel(uTerrainSurface, uTerrainSurfaceSampler, uv, 0, lod);
-      *cover += left * w * textureSampleLevel(uTerrainSurface, uTerrainSurfaceSampler, uv, 1, lod);
-    } else {
-      *info += left * w * textureSampleLevel(uTerrainSurfaceCoarse, uTerrainSurfaceCoarseSampler, uv, 0, lod);
-      *cover += left * w * textureSampleLevel(uTerrainSurfaceCoarse, uTerrainSurfaceCoarseSampler, uv, 1, lod);
-    }
-    left *= 1.0 - w;
-    if (left <= 0.0) {
-      break;
-    }
+  let fine = terrainWeight(0, ao);
+  if (fine > 0.0) {
+    let uv = (terrainGrid(0, ao) + 0.5) / frame.uTerrainLevels[0].w;
+    let lod = log2(max(footprint / frame.uTerrainLevels[0].z, 1e-6));
+    *info = fine * textureSampleLevel(uTerrainSurface, uTerrainSurfaceSampler, uv, 0, lod);
+    *cover = fine * textureSampleLevel(uTerrainSurface, uTerrainSurfaceSampler, uv, 1, lod);
+  }
+  if (fine < 1.0) {
+    let uv = (terrainGrid(1, ao) + 0.5) / frame.uTerrainLevels[1].w;
+    let lod = log2(max(footprint / frame.uTerrainLevels[1].z, 1e-6));
+    *info += (1.0 - fine) * textureSampleLevel(uTerrainSurfaceCoarse, uTerrainSurfaceCoarseSampler, uv, 0, lod);
+    *cover += (1.0 - fine) * textureSampleLevel(uTerrainSurfaceCoarse, uTerrainSurfaceCoarseSampler, uv, 1, lod);
   }
 }

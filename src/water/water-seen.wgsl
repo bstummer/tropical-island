@@ -72,8 +72,8 @@ fn seenBelow(surface: vec3f, bent: vec3f, size: vec2f, deepest: f32, guess: f32,
   let seabed = clamp(seabedDepthAt(out.xz, footprint), 0.0, deepest);
   out.depth = seabed;
   out.on = vec4f(0.0);
-  let start = frame.projectionMatrix * frame.viewMatrix * vec4f(surface, 1.0);
-  let perMetre = frame.projectionMatrix * frame.viewMatrix * vec4f(bent * down, 0.0);
+  let start = frame.viewProjection * vec4f(surface, 1.0);
+  let perMetre = frame.viewProjection * vec4f(bent * down, 0.0);
   var last = -0.3;
   var at = min(SEEN_FIRST, seabed);
   for (var i = 0; i < select(0, SEEN_STEPS, takes > 0.0); i++) {

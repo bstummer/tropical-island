@@ -67,7 +67,7 @@ fn landFarther(pixel: vec2f, away: f32, eyeW: f32) -> f32 {
 fn landImageUv(p: vec3f, dir: vec3f, far: f32) -> vec3f {
   let q = p + dir * far;
   let image = vec3f(q.x, q.y - 2.0 * (q.y + planetDrop(q.xz)), q.z);
-  let clip = frame.projectionMatrix * frame.viewMatrix * vec4f(image, 1.0);
+  let clip = frame.viewProjection * vec4f(image, 1.0);
   return vec3f(clip.xy / max(clip.w, 1e-4) * vec2f(0.5, -0.5) + 0.5, clip.w);
 }
 

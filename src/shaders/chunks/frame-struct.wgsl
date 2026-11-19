@@ -5,6 +5,7 @@
 struct Frame {
   projectionMatrix: mat4x4f,
   viewMatrix: mat4x4f,
+  viewProjection: mat4x4f, // projectionMatrix * viewMatrix: a shader multiplying by both pays for the product at every vertex or pixel
   cameraPosition: vec3f,
   uExposure: f32,
   uSunDirection: vec3f, // towards the sun

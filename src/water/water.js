@@ -21,12 +21,12 @@ import { Mesh } from '../gpu/scene.js';
 import { Texture } from '../gpu/texture.js';
 import { gridGeometry } from '../world/terrain-nodes.js';
 import { lodRanges } from '../world/lod.js';
-import { buildSeaMap, SEA_MAP_LAYERS, seaMapLevels, waveSpeed } from './sea-map.js';
+import { buildSeaMap, reefWithin, SEA_MAP_LAYERS, seaMapLevels, waveSpeed } from './sea-map.js';
 import { buildSpectrum, unresolvedSlopes } from './spectrum.js';
 import { createSurface } from './surface.js';
 import { createWaves } from './waves.js';
 import { createMirror } from './mirror.js';
-import { createSurf } from './surf.js';
+import { createSurf, surfGone } from './surf.js';
 import { selectSea } from './water-nodes.js';
 import { createSwash, swashUniforms, swellWay as coveSwellWay } from './swash.js';
 import { alongDrifting, twoDrifting } from './drift.js';
@@ -36,6 +36,7 @@ import { createSpray } from './spray.js';
 const MAX_NODES = 2048;
 const LOD_MAX = 16; // water.wgsl's arrays hold this many levels
 const SURF_WANDERS = 5; // water-surf.wgsl's uSurfWander
+const SURF_SLACK = 2; // m: how far a piece of the sea's vertices may move from where they rest (water.wgsl)
 
 // The uniforms of water-optics.wgsl, from config.water.
 export function opticsUniforms({ dimming, body, through, ior, seabedFade }) {
@@ -204,15 +205,17 @@ export function create(ctx) {
       uWaves: { value: waves.texture },
     },
     // The island's shade alone: the water reads no shadow maps, so the rocks' shadows fall on neither it nor the seabed it draws.
-    overrides: { SHADE_ONCE: true, SHADOW_MAP: false, WATER_SHORE: false, WATER_NEAR: false },
+    overrides: { SHADE_ONCE: true, SHADOW_MAP: false, WATER_SHORE: false, WATER_NEAR: false, WATER_SURF: false },
   });
   // The pieces within reach of a waterline draw the beach's water too (water.wgsl WATER_SHORE),
-  // and those within reach of the eye the light the ripples gather on the floor and its detail
-  // (WATER_NEAR): the rest of the sea leaves out their code, which SwiftShader would run at
-  // every pixel, and a GPU pays for in every pixel of a larger shader.
+  // those within reach of the eye the light the ripples gather on the floor and its detail
+  // (WATER_NEAR), and those within reach of the reef its surf (WATER_SURF): the rest of the sea
+  // leaves out their code, which SwiftShader would run at every pixel, and a GPU pays for in every
+  // pixel of a larger shader.
   const variant = (name, overrides) => new Material({ name, shader, uniforms: material.uniforms, overrides: { ...material.overrides, ...overrides } });
-  // By [shore, near]: [sea, near the eye, shore, shore near the eye].
-  const materials = [material, variant('water-near', { WATER_NEAR: true }), variant('water-shore', { WATER_SHORE: true }), variant('water-shore-near', { WATER_SHORE: true, WATER_NEAR: true })];
+  // By [surf, shore, near]: [sea, near the eye, shore, shore near the eye], and the same by the reef.
+  const lagoon = [material, variant('water-near', { WATER_NEAR: true }), variant('water-shore', { WATER_SHORE: true }), variant('water-shore-near', { WATER_SHORE: true, WATER_NEAR: true })];
+  const materials = [...lagoon, ...lagoon.map((each) => variant(`${each.name}-surf`, { ...each.overrides, WATER_SURF: true }))];
   const nodes = new Attribute(new Float32Array(4 * MAX_NODES), 4, { instance: true });
   // Each variant's whole nodes, then its quarters.
   const meshes = materials.flatMap((drawn) =>
@@ -229,6 +232,7 @@ export function create(ctx) {
 
   let seaTexture = null;
   let map = null;
+  let surfReaches = null;
   let surface = null;
   let surf = null;
   let swash = null;
@@ -248,6 +252,7 @@ export function create(ctx) {
       frame.uniforms.uSeaMap.value = seaTexture;
       frame.uniforms.uSeaLayout.value.set(origin[0] - texel / 2, origin[1] - texel / 2, 1 / (samples * texel), waveSettings.ripplesLeast);
       surf = createSurf(settings.surf, swellWay);
+      surfReaches = reefWithin(map, -surfGone(settings.surf), settings.surf.fades[1], settings.map.open.reef);
       swash = createSwash(settings.swash, settings.surf, coveSwellWay(config), settings.surf.period, waveSettings.loop);
       groundAt = built.heightmap.heightAt;
       spray = createSpray(ctx, map, settings.spray, surfUniforms(settings.surf, swellWay));
@@ -332,6 +337,16 @@ export function create(ctx) {
   const groundRadius = config.sky.atmosphere.groundRadius * 1000;
   const selected = [];
   const here = {};
+  // Whether the reef's surf reaches a piece, by its corners in the cove's frame, and as far round
+  // them as its vertices may move.
+  const nodeReef = (x, z, size) => {
+    let [a0, o0, a1, o1] = [Infinity, Infinity, -Infinity, -Infinity];
+    for (const [cx, cz] of [[x, z], [x + size, z], [x, z + size], [x + size, z + size]]) {
+      const [a, o] = island.toCove(cx, cz);
+      [a0, o0, a1, o1] = [Math.min(a0, a), Math.min(o0, o), Math.max(a1, a), Math.max(o1, o)];
+    }
+    return surfReaches(a0 - SURF_SLACK, o0 - SURF_SLACK, a1 + SURF_SLACK, o1 + SURF_SLACK);
+  };
   const stop = frame.beforeScene(
     () => {
       const wrapped = (loop) => ctx.clock.elapsed - loop * Math.floor(ctx.clock.elapsed / loop);
@@ -359,21 +374,26 @@ export function create(ctx) {
         },
         selected,
       );
-      // Which pieces draw the beach's water and the light on the floor: within reach of a waterline, or of the eye.
+      // Which pieces draw the beach's water and the light on the floor, within reach of a waterline,
+      // or of the eye; and the reef's surf, within reach of it: seaward of its crest it fades into the
+      // open sea, and far inside it leaves nothing.
       for (const node of selected) {
         const size = node.spacing * (node.quarter ? quality.waterGrid / 2 : quality.waterGrid);
         const [x, z] = [node.x + size / 2, node.z + size / 2];
         const [a, o] = island.toCove(x, z);
-        const reach = size * Math.SQRT1_2;
-        node.shore = Math.abs(map.at(a, o, here).shore) < reach + map.texel + settings.swash.reach;
+        const reach = size * Math.SQRT1_2 + map.texel;
+        const { shore } = map.at(a, o, here);
+        node.shore = Math.abs(shore) < reach + settings.swash.reach;
         node.near = Math.hypot(x - cam[0], z - cam[2]) < reach + settings.caustics.reach;
+        node.surf = nodeReef(node.x, node.z, size);
       }
       let count = 0;
       meshes.forEach(({ geometry }, k) => {
-        const [shore, near, quarter] = [k >= 4, Math.floor(k / 2) % 2 === 1, k % 2 === 1];
+        const m = Math.floor(k / 2);
+        const [surfs, shore, near, quarter] = [m >= 4, Math.floor(m / 2) % 2 === 1, m % 2 === 1, k % 2 === 1];
         geometry.firstInstance = count;
         for (const node of selected) {
-          if (node.quarter !== quarter || node.shore !== shore || node.near !== near) continue;
+          if (node.quarter !== quarter || node.shore !== shore || node.near !== near || node.surf !== surfs) continue;
           if (count >= MAX_NODES) throw new Error(`water: more than ${MAX_NODES} nodes`);
           nodes.array.set([node.x, node.z, node.spacing, node.level], 4 * count++);
         }

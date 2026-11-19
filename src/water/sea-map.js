@@ -337,6 +337,42 @@ export function buildSeaMap(heightmap, settings, side, blend = 0) {
   };
 }
 
+// Where the reef is `from` to `to` m off its crest (+ seaward), as the GPU reads it between the
+// map's samples: touches(a0, o0, a1, o1) says whether any of it lies in that box of the cove's
+// frame. Past the map's square the reef goes over to the open sea's, `open.reef` m off, so a box
+// reaching past it touches it where that crosses the range. Water/water.js picks by it which
+// pieces of the sea take the reef's surf.
+export function reefWithin(map, from, to, openReef) {
+  const { samples, texel, origin, reef } = map;
+  const cells = samples - 1;
+  const crosses = (lo, hi) => lo < to && hi > from;
+  // A count of the cells it crosses, summed from the first corner: any box's in four reads.
+  const sums = new Uint32Array((cells + 1) * (cells + 1));
+  for (let j = 0; j < cells; j++) {
+    let row = 0;
+    for (let i = 0; i < cells; i++) {
+      const n = j * samples + i;
+      const corners = [reef[n], reef[n + 1], reef[n + samples], reef[n + samples + 1]];
+      row += crosses(Math.min(...corners), Math.max(...corners)) ? 1 : 0;
+      sums[(j + 1) * (cells + 1) + i + 1] = sums[j * (cells + 1) + i + 1] + row;
+    }
+  }
+  let beyond = false;
+  for (let k = 0; k < samples && !beyond; k++) {
+    for (const n of [k, (samples - 1) * samples + k, k * samples, k * samples + samples - 1]) beyond ||= crosses(Math.min(reef[n], openReef), Math.max(reef[n], openReef));
+  }
+  const cell = (u) => Math.floor(u / texel);
+  return (a0, o0, a1, o1) => {
+    const [i0, i1, j0, j1] = [cell(a0 - origin[0]), cell(a1 - origin[0]), cell(o0 - origin[1]), cell(o1 - origin[1])];
+    const past = i0 < 0 || j0 < 0 || i1 >= cells || j1 >= cells;
+    if (past && beyond) return true;
+    const [c0, c1, r0, r1] = [Math.max(i0, 0), Math.min(i1, cells - 1), Math.max(j0, 0), Math.min(j1, cells - 1)];
+    if (c0 > c1 || r0 > r1) return false;
+    const at = (i, j) => sums[j * (cells + 1) + i];
+    return at(c1 + 1, r1 + 1) - at(c0, r1 + 1) - at(c1 + 1, r0) + at(c0, r0) > 0;
+  };
+}
+
 // The map's samples on the reef's crest, under water, where the surf breaks at least
 // `breaks` hard: [a, o] in the cove's frame (water/spray.js throws spray off them).
 export function crestSpots(map, breaks) {

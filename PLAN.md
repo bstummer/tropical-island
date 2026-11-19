@@ -780,7 +780,56 @@ fake. An outside review traced each to its cause and left a costed plan, A1 to C
     twin and the floor's light 0.0020 (limit 0.02). SwiftShader frames all under 10 s (`side` 9.9, `ankle`
     9.5: 13.2 before the payback). Shimmer warnings: `side` 0.59% turning and 0.63% moving (were 0.59% and
     0.74%), `knee` 16.3% moving (15.9%): the floor's net read through refraction, as before.
-- C1 and C2 (a face that curls over; waves carried out to sea) are open.
+- The water's cost before C1 (2026-11-19). The user asked for C1 only once the water's performance is
+  back; the review's rule is `into-the-sun` and `ankle` under 16.7 ms on the user's desktop at 2562×1237
+  (20.1 and 19.5 at the review, 0.3 to 0.8 more since that look). Not reached as far as can be told here,
+  so C1 is not started:
+  - The session has no GPU, and SwiftShader stands in for one poorly. It runs an `if`'s code at every
+    pixel whether any pixel takes it or not: the reef's surf, never taken, still cost 7% of the water's
+    pass (640×360, `into-the-sun`); left out of the shader, 9%. Loops round the branches didn't help (18%
+    slower). The review's GPU times per view are 2.6 to 5.3 times SwiftShader's (`beach` and `swash`
+    cheap on the GPU, `sand` and `knee` dear). And the detail that shows only where a pixel can hold it
+    (the caustics' net, the floor's ripples and grain, the waves' finest reads) reaches further from the
+    eye the more pixels a frame has. HEAD against the review's commit: +4% of SwiftShader's GPU time in
+    both views (960×540).
+  - Where the water's pass goes on SwiftShader, each part left out of the shader (640×360,
+    `into-the-sun` / `ankle`, a run differing by 2 to 4%): the mirror's three rays 10 / 10%, all the
+    mirror 16 / 10, the reef's surf 9 / 2, the seabed 9 / 7 (the terrain's surfaces read for it 5 of
+    that), glints 3 / 4, the beach's sheet and film 3, caustics 2 / 0, the gather 2, the rest 1% or under
+    each. The water's pass is 75 / 82% of the frame there.
+  - The reef's surf leaves nothing past 7 times the longer of the lengths it dies over and its foam does
+    inside its crest (210 m, a thousandth of it): it fades out over the last 30% of that and its code
+    stops there (`water-surf.wgsl SURF_GONE`, its twin `surf.js`). What the foam's lace made of so little
+    stood as faint specks over the inner lagoon, to 5 to 8 levels (`air-swash`, `knee`); cut off, they
+    ended along a straight edge. The pieces of the sea it can't reach leave it out (`WATER_SURF`, a variant of
+    each of the four: 56 pipelines). They are picked by a count of the sea map's cells it reaches, summed
+    over the map (`sea-map.js reefWithin`), as the reef's distance jumps by up to 24 m a metre in places.
+    Tests: just short of where it stops, under a hundred-thousandth of its height and foam on the crest
+    is left (red without the fade);
+    on seeds 1-20 and the game's map no piece that leaves it out holds any of it (red where a cell the
+    range only passes through goes uncounted).
+  - The terrain works out the beach's water's place (`swashPlace`: when the waves land, the run-ups of
+    six of them, its noises) at its vertices, as the water's mesh does, and its pixels share it but for the
+    edge's fray (`swash-wet.wgsl groundWetAt`): 14 seeded noises fewer a pixel in the wet band.
+  - `terrainGround` reads the fine level and then the coarse one, written out: a loop picking each
+    level's texture read both at each level on SwiftShader.
+  - The mirror takes three rays only where they land 4 pixels apart (was 2 cells): with 1-px cells they
+    were taken twice as readily as with 2. The water reads `frame.viewProjection`, the camera's product.
+  - Cost, SwiftShader's GPU time at 1600×900, HEAD and the change alternated twice: `into-the-sun` water
+    -3.4%, terrain -14%, frame -5.9%; `ankle` -7.5%, -6%, -7.0%; `sand` -9.9%, -28%, -15.8%. That puts
+    them about 2 to 3% under the review's commit on SwiftShader, where the rule asks some 20% under it.
+    The captures' frames (1600×900, wall time): `beach` 8.5 to 8.1 s, `into-the-sun` 9.5 to 9.1, `sand`
+    6.8 to 6.1, `swash` 8.8 to 8.0, `ankle` 9.5 to 9.2, `side` 9.9 to 9.1, `knee` 4.4 to 4.0,
+    `air-swash` 6.6 to 6.0. Unmeasured on a GPU, which skips the surf where the swell doesn't reach
+    anyway: likely less than that.
+  - Seen against the B4 to B8 captures: no view looks different. At most 0.01% of a view's pixels differ
+    by more than 2 levels (`side`: the mirrored land's steps where a pixel took one ray for three), but
+    for the specks' patch in `air-swash` (0.4%, to 8 levels).
+  - What could win the rest, each changing the look, the user's pick: the mirror's cells back to 2
+    pixels on high (cost +6% in `into-the-sun` on SwiftShader when made 1); the floor's ripples and grain
+    only within a few metres of the eye, and the caustics' net within 12 m rather than 25 (the review's
+    estimates: 0.5 to 1.5 ms and 0.6 to 0.9 on the GPU); two rays through the waves where three are taken.
+- C1 and C2 (a face that curls over; waves carried out to sea) are open: C1 waits on the user's benchmark.
 
 Open after leg 2 (an outside review's findings and the user's look, less what was fixed after them):
 - The reef from 30 m: where a wave breaks along the whole crest at once its whitewater is a band, heaped

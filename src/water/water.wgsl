@@ -35,6 +35,9 @@
 // and the floor's detail (water.js).
 override WATER_SHORE: bool = true;
 override WATER_NEAR: bool = true;
+// Whether it lies within reach of the reef's surf: deep inside the lagoon the surf leaves nothing
+// (water-surf.wgsl SURF_GONE), and the pieces there leave out its code (water.js).
+override WATER_SURF: bool = true;
 // Luminance of linear Rec. 709.
 const WATER_LUMINANCE = vec3f(0.2126, 0.7152, 0.0722);
 
@@ -117,6 +120,10 @@ const SEEN_LEAST: f32 = 0.3;
 const SEEN_STEEP = vec2f(0.4, 1.0);
 // How little of a wave's face seen through is none: under it what lies behind isn't worked out.
 const SEEN_THROUGH_LEAST: f32 = 0.004;
+// How far apart (pixels) the rays through what the pixel's waves tilt must land on the image of
+// the land for three to be taken, and at least two of its cells: finer cells read it sharper, not
+// with more rays.
+const MIRROR_RAYS_APART: f32 = 4.0;
 
 struct VertexIn {
   @location(0) position: vec3f,
@@ -184,12 +191,14 @@ fn vertexMain(in: VertexIn) -> Varyings {
   }
 
   let shore = seaShoreAt(rest);
-  let wave = seaWaveAt(rest);
-  let breaking = surfAt(sea, shore, wave, 0.0, rest, frame.uWaveSeconds);
-  moved.y += breaking.height;
-  // By the reef a wave's top outruns its foot, so its face leans on.
-  moved.x += breaking.lean * (wave.y * frame.uTerrainFrame.x + wave.z * frame.uTerrainFrame.z);
-  moved.z += breaking.lean * (wave.y * frame.uTerrainFrame.y + wave.z * frame.uTerrainFrame.w);
+  if (WATER_SURF) {
+    let wave = seaWaveAt(rest);
+    let breaking = surfAt(sea, shore, wave, 0.0, rest, frame.uWaveSeconds);
+    moved.y += breaking.height;
+    // By the reef a wave's top outruns its foot, so its face leans on.
+    moved.x += breaking.lean * (wave.y * frame.uTerrainFrame.x + wave.z * frame.uTerrainFrame.z);
+    moved.z += breaking.lean * (wave.y * frame.uTerrainFrame.y + wave.z * frame.uTerrainFrame.w);
+  }
   let ground = terrainHeight(terrainCove(rest), 0);
   var out: Varyings;
   out.vPlace0 = vec4f(0.0);
@@ -409,7 +418,7 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
   slopes.y -= bore.slope * inland.y;
   // The swell's long waves and how they break, their slope along the way they run.
   var foam = 0.0;
-  if (sea.z > 0.0 && shore.w < surf.uSurfWay.w) {
+  if (WATER_SURF && sea.z > 0.0 && shore.w < surf.uSurfWay.w) {
     let wave = seaWaveAt(in.vRest);
     let breaking = surfAt(sea, shore, wave, sqrt(longest), in.vRest, frame.uWaveSeconds);
     foam = breaking.foam;
@@ -564,11 +573,11 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
   // in front of them: waves it can't see tilt the surface, each way by a share, so
   // on average it mirrors sky from higher up than a flat sea would, far brighter by
   // the horizon than at the height of its mean; three rays through them where that
-  // tells, looking low, and they land more than a few cells apart.
+  // tells, looking low, and they land more than a few pixels apart.
   let mirrored = wet * seaMirrored(facing, variance);
   let towards = reflect(-view, toEye);
   let flat2 = towards.y * towards.y;
-  let eyeW = (frame.projectionMatrix * frame.viewMatrix * vec4f(p, 1.0)).w;
+  let eyeW = (frame.viewProjection * vec4f(p, 1.0)).w;
   let toP = length(frame.cameraPosition - p);
   let toLand = landFarther(in.position.xy, toP, eyeW);
   let far = select(max(sea.x, 0.0) + water.uMirrorBeyond, toLand, toLand > 0.0);
@@ -581,7 +590,7 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
   var skyPart = vec3f(0.0);
   var landPart = vec3f(0.0);
   var landShare = 0.0;
-  if (spread < 2.0 || flat2 > water.uMirrorSteep * variance) {
+  if (spread < max(2.0, MIRROR_RAYS_APART / water.uMirrorCells.z) || flat2 > water.uMirrorSteep * variance) {
     let dir = normalize(vec3f(towards.x, sqrt(flat2 + water.uMirrorTaps.y * variance), towards.z));
     var land = landSmooth(landImageUv(p, dir, far), eyeW, least);
     if (onBeach > 0.0) {

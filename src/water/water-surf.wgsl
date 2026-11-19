@@ -23,6 +23,11 @@ const SURF_LUMP_SEED: u32 = 7867u;
 const SURF_HEAP_SEED: u32 = 7877u;
 // The most seededNoise strays from 0 either way, near enough: whitewater heaped by it stands no taller than uSurfStands.
 const SURF_NOISE_MOST: f32 = 1.4;
+// How far inside the reef's crest, in the longer of the lengths it dies over and its foam does, the surf
+// leaves nothing: a thousandth of it is left, gone over the last of that (water/surf.js GONE, FADES), so
+// what the foam's lace makes of so little has no edge. The lagoon's water skips its code.
+const SURF_GONE: f32 = 7.0;
+const SURF_GONE_FADES: f32 = 0.7;
 
 // How much more or less of wave n breaks at xz: lumps along its crest, each wave its own (water/surf.js).
 fn surfLumps(n: f32, xz: vec2f) -> f32 {
@@ -69,9 +74,11 @@ fn surfBreak(sea: vec4f, shore: vec4f, wave: vec4f, xz: vec2f, t: f32) -> vec3f 
 // along the water (m), 0 for the surface's shape; t: wrapped as the waves' time is.
 fn surfAt(sea: vec4f, shore: vec4f, wave: vec4f, wide: f32, xz: vec2f, t: f32) -> Surf {
   let reef = shore.w;
-  if (sea.z <= 0.0 || reef >= surf.uSurfWay.w) {
+  let gone = SURF_GONE * max(surf.uSurfFoam.x, surf.uSurfFoam.z);
+  if (sea.z <= 0.0 || reef >= surf.uSurfWay.w || reef <= -gone) {
     return Surf(0.0, 0.0, 0.0, 0.0);
   }
+  let left = 1.0 - smoothstep(SURF_GONE_FADES * gone, gone, -reef);
   // Its front wanders a few metres, at sizes from hundreds of metres to a few.
   var wander = 0.0;
   for (var k = 0; k < 5; k++) {
@@ -95,7 +102,7 @@ fn surfAt(sea: vec4f, shore: vec4f, wave: vec4f, wide: f32, xz: vec2f, t: f32) -
   let nowTall = min(rises * min(now, held), most);
   let nextTall = min(rises * min(next, held), most);
   let stands = mix(nowTall, nextTall, f);
-  let dies = exp(min(reef, 0.0) / surf.uSurfFoam.x) * (1.0 - smoothstep(surf.uSurfWay.z, surf.uSurfWay.w, reef));
+  let dies = left * exp(min(reef, 0.0) / surf.uSurfFoam.x) * (1.0 - smoothstep(surf.uSurfWay.z, surf.uSurfWay.w, reef));
   // A long round wave at sea; by the reef a peak with a steep face, narrowing as it peaks, and flat
   // water ahead of it; round again as it dies on the flat.
   let peak = smoothstep(0.15, 0.6, 1.0 - speed / deep) * exp(min(reef, 0.0) / surf.uSurfFoam.x);
@@ -121,7 +128,7 @@ fn surfAt(sea: vec4f, shore: vec4f, wave: vec4f, wide: f32, xz: vec2f, t: f32) -
   let swell = sea.z;
   // A pixel across more than a good part of a wave sees what it holds on average, or it would blink as each goes by.
   let melts = smoothstep(0.15, 0.7, wide / (speed * period));
-  let breaking = shore.z * (1.0 - smoothstep(0.0, surf.uSurfFoam.y, reef)) * smoothstep(0.0, 0.05, sea.z) * exp(min(reef, 0.0) / surf.uSurfFoam.z);
+  let breaking = left * shore.z * (1.0 - smoothstep(0.0, surf.uSurfFoam.y, reef)) * smoothstep(0.0, 0.05, sea.z) * exp(min(reef, 0.0) / surf.uSurfFoam.z);
   var behindLost = 0.0;
   var aheadLost = 0.0;
   if (breaking > 0.0) {

@@ -60,6 +60,11 @@ struct Varyings {
   // The same at the pixel's centre, for derivatives: a centroid varying's are
   // off wherever a triangle's edge crosses the pixels they are taken over.
   @location(1) vCentre: vec3f,
+  // The beach's water's place (water/swash.wgsl SwashPlace), in pieces with sand or rock: lands,
+  // rise, runs, fray; patches, gathers, the run-ups in slots 4 and 5; the run-ups in slots 0 to 3.
+  @location(2) vPlace0: vec4f,
+  @location(3) vPlace1: vec4f,
+  @location(4) vPlace2: vec4f,
 }
 
 @vertex
@@ -77,6 +82,17 @@ fn vertexMain(in: VertexIn) -> Varyings {
   out.vWorldPos = world;
   out.vCentre = world;
   out.position = frame.projectionMatrix * frame.viewMatrix * vec4f(world, 1.0);
+  out.vPlace0 = vec4f(0.0);
+  out.vPlace1 = vec4f(0.0);
+  out.vPlace2 = vec4f(0.0);
+  if (TERRAIN_SAND || TERRAIN_ROCK || TERRAIN_WET) {
+    // What the beach's water takes from where it is changes only over metres: its pixels share
+    // it, as the water's do (water/water.wgsl), and need none of its noises.
+    let place = swashPlace(world.xz, seaAt(world.xz).x, seaShoreAt(world.xz).xy);
+    out.vPlace0 = vec4f(place.lands, place.rise, place.runs, place.fray);
+    out.vPlace1 = vec4f(place.patches, place.gathers, place.runUp4, place.runUp5);
+    out.vPlace2 = place.runUps;
+  }
   return out;
 }
 
@@ -129,7 +145,8 @@ fn fragmentMain(in: Varyings) -> @location(0) vec4f {
   if (!hidden) {
     // The waves wet sand and rock; a piece of neither has none of their code.
     if (TERRAIN_SAND || TERRAIN_ROCK || TERRAIN_WET) {
-      w = groundWet(vWorldPos.xz, aboveSea, tall);
+      let place = SwashPlace(in.vPlace0.x, in.vPlace0.y, in.vPlace0.z, in.vPlace0.w, in.vPlace1.x, in.vPlace1.y, in.vPlace2, in.vPlace1.z, in.vPlace1.w);
+      w = groundWetAt(place, vWorldPos.xz, aboveSea, tall);
     }
     terrainGround(ao, dx, dy, &info, &cover);
     var slope = terrainWorldSlope(info.xy);
